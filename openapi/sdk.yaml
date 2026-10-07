@@ -448,9 +448,10 @@ paths:
             body''s error_type names the case. UNSUPPORTED_CONTENT_FORMAT: this card
             type doesn''t support content_format=''card_json''; use ''csv'', ''json_records'',
             or ''json_compact'' for that card. PLACEHOLDER_CARD: the card is a placeholder
-            whose data is withheld, and every content format refuses it; search again
-            with variable_cost set to true and request contents for the card that
-            search returns.'
+            whose data is withheld, and every content format refuses it; request it
+            again with variable_cost set to true. VARIABLE_COST_NOT_REQUESTED: the
+            card''s data comes from a variable-cost source; request it again with
+            variable_cost set to true.'
           content:
             application/json:
               schema:
@@ -579,9 +580,15 @@ paths:
       tags:
       - agent
       summary: Dispatch an answer agent run
-      description: Dispatch an answer agent run. Returns 202 with an AnswerAgentRun
-        object. Poll GET /v1/agent/answer/runs/{run_id} until status is 'completed'
-        or 'failed'.
+      description: 'Dispatch an answer agent run. Returns 202 with an AnswerAgentRun
+        object. Poll GET /v1/agent/answer/runs/{run_id} until status is ''completed''
+        or ''failed''. A run that returns data from variable-cost sources, today Semrush
+        web traffic and SEO data, costs at least the source''s minimum price per data
+        unit unless your contract sets other terms: for Semrush, 1 cent per web traffic
+        unit and 0.01 cents per SEO unit, with higher per-unit rates above monthly
+        volume thresholds. The run''s price counts toward that minimum, and any difference
+        is charged to your account as a separate variable-cost charge, which the run''s
+        `usage` doesn''t include. A failed run pays no minimum.'
       operationId: createAnswerAgentRun
       requestBody:
         content:
@@ -752,9 +759,15 @@ paths:
       tags:
       - agent
       summary: Dispatch a retrieval agent run
-      description: Dispatch a retrieval agent run. Returns 202 with a RetrievalAgentRun
-        object. Poll GET /v1/agent/retrieval/runs/{run_id} until status is 'completed'
-        or 'failed'.
+      description: 'Dispatch a retrieval agent run. Returns 202 with a RetrievalAgentRun
+        object. Poll GET /v1/agent/retrieval/runs/{run_id} until status is ''completed''
+        or ''failed''. A run that returns data from variable-cost sources, today Semrush
+        web traffic and SEO data, costs at least the source''s minimum price per data
+        unit unless your contract sets other terms: for Semrush, 1 cent per web traffic
+        unit and 0.01 cents per SEO unit, with higher per-unit rates above monthly
+        volume thresholds. The run''s price counts toward that minimum, and any difference
+        is charged to your account as a separate variable-cost charge, which the run''s
+        `usage` doesn''t include. A failed run pays no minimum.'
       operationId: createRetrievalAgentRun
       requestBody:
         content:
@@ -976,6 +989,7 @@ components:
       - SERVICE_OVERLOADED
       - UNSUPPORTED_CONTENT_FORMAT
       - PLACEHOLDER_CARD
+      - VARIABLE_COST_NOT_REQUESTED
       title: APIErrorType
     AgentAnswerAssumption:
       properties:
@@ -1602,6 +1616,21 @@ components:
             in `related`. Omit this field to disable them. The value sets the maximum
             number of suggestions, from 1 to 20. POST /v1/answer accepts this field
             but ignores it: the answer response has no `related` field.'
+        variable_cost:
+          type: boolean
+          title: Variable Cost
+          description: 'Return data from variable-cost sources, today Semrush web
+            traffic and SEO data. Unless your contract sets other terms, a request
+            that returns such data costs at least the source''s minimum price per
+            data unit: for Semrush, 1 cent per web traffic unit and 0.01 cents per
+            SEO unit. A data unit is the source''s own billing unit: a card''s count
+            depends on the report and the rows it reads. Higher per-unit rates apply
+            above monthly volume thresholds. The request price counts toward that
+            minimum, and any difference is charged to your account as a separate variable-cost
+            charge, which the response''s `usage` object reports as `variable_cost`.
+            Leave it off and each such card is a placeholder with its title and no
+            data points.'
+          default: false
         output_schema:
           anyOf:
           - additionalProperties: true
@@ -2236,6 +2265,16 @@ components:
           default: 1000000
           examples:
           - 50000
+        variable_cost:
+          type: boolean
+          title: Variable Cost
+          description: Export a card whose data comes from a variable-cost source,
+            today Semrush web traffic and SEO data, including a placeholder card a
+            search returned without that data. The export reads the source, and the
+            request pays the source's per-unit minimum above the export's own price,
+            billed as a separate variable-cost charge. Leave it off and such a card
+            is refused with a 422.
+          default: false
         quote_only:
           type: boolean
           title: Quote Only
@@ -4133,6 +4172,21 @@ components:
             in `related`. Omit this field to disable them. The value sets the maximum
             number of suggestions, from 1 to 20. POST /v1/answer accepts this field
             but ignores it: the answer response has no `related` field.'
+        variable_cost:
+          type: boolean
+          title: Variable Cost
+          description: 'Return data from variable-cost sources, today Semrush web
+            traffic and SEO data. Unless your contract sets other terms, a request
+            that returns such data costs at least the source''s minimum price per
+            data unit: for Semrush, 1 cent per web traffic unit and 0.01 cents per
+            SEO unit. A data unit is the source''s own billing unit: a card''s count
+            depends on the report and the rows it reads. Higher per-unit rates apply
+            above monthly volume thresholds. The request price counts toward that
+            minimum, and any difference is charged to your account as a separate variable-cost
+            charge, which the response''s `usage` object reports as `variable_cost`.
+            Leave it off and each such card is a placeholder with its title and no
+            data points.'
+          default: false
       additionalProperties: false
       type: object
       required:
@@ -4809,8 +4863,8 @@ components:
         total_cost_usd:
           type: number
           title: Total Cost Usd
-          description: Total quoted USD cost of this request. Sum of compute cost
-            and data cost.
+          description: 'Total quoted USD cost of this request: the sum of the components
+            present.'
         compute:
           anyOf:
           - $ref: '#/components/schemas/UsageCompute'
@@ -4823,6 +4877,14 @@ components:
           - type: 'null'
           description: Inline-data cost breakdown. Present only when the surface emitted
             billable inline data.
+        variable_cost:
+          anyOf:
+          - $ref: '#/components/schemas/UsageVariableCost'
+          - type: 'null'
+          description: Variable-cost charge. Present only on a search or answer request
+            that set variable_cost, when the data it served had a per-unit minimum
+            above the request's own price. An agent run pays its variable-cost charge
+            when the run completes and doesn't report it here.
       type: object
       required:
       - total_cost_usd
@@ -4877,6 +4939,20 @@ components:
         `datasets` counts billed datasets or content items. `data_points` counts
 
         billed quantitative values in generated answer output.'
+    UsageVariableCost:
+      properties:
+        cost_usd:
+          type: number
+          title: Cost Usd
+          description: USD cost of the variable-cost charge.
+      type: object
+      required:
+      - cost_usd
+      title: UsageVariableCost
+      description: 'The variable-cost charge: the per-unit minimum of a variable-cost
+        source
+
+        the response served, above the response''s own price.'
     WebCategory:
       type: string
       enum:
