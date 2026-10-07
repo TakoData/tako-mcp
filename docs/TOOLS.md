@@ -858,7 +858,7 @@ Description:
 
 Fetch the full content behind a url: a web page's text, or an exportable Tako card's data rows. Batch up to 10 urls in one call — each one is billed and fails on its own.
 
-Fetch only cards that `tako_search` marked `exportable: true`. Rows bill per 1,000 delivered, so set `max_rows` when the recent rows are enough. If a page is long, such as a filing or an annual report, set `query` to a question to get back only the passages that answer it.
+Fetch only cards that `tako_search` marked `exportable: true`. Rows bill per 1,000 delivered, so set `max_rows` when the recent rows are enough. A website-traffic or SEO card also bills a per-unit data minimum that `max_rows` doesn't bound. If a page is long, such as a filing or an annual report, set `query` to a question to get back only the passages that answer it.
 
 Best for: reading one source in full — a page you need to quote, or the rows behind a card you need to compute over.
 
@@ -876,6 +876,7 @@ Fixed request inputs (the caller cannot change these):
 - `mode` = `"inline"` — The content comes back in the response to read. The API default is a presigned download link, which a model cannot use.
 - `content_format` = `"json_compact"` — One row serialization, projected to `rows`. CSV writes a missing cell as an empty field; positional JSON writes null.
 - `max_chars (when omitted)` = `min(100000, 250000 / batch size)` — Per-url character cap for web text. With `query`, the passages use the API's highlights budget instead: 4,000 characters.
+- `variable_cost` = `true` — A website-traffic or SEO card's rows export, and the export bills the source's per-unit minimum. The API default is false, which refuses those cards with a 422.
 - `query` = `(sent as highlights.query)` — Web urls only. The tool drops a `query` with no letter or digit and sends no `highlights` for a Tako url. If the API can't return passages, the tool returns the whole page.
 
 Annotations:
@@ -1432,7 +1433,7 @@ Description:
 
 Search Tako's data graph and the live web in one call: many results at once, as structured cards plus web results, with the top card rendered inline as a chart.
 
-It finds data; `tako_contents` fetches it. Each card carries a headline value, node ids, and a url — pass the url to `tako_contents` for rows (`exportable: true` cards) or a web result's full page text. When `exportable` is false the rows are locked — read the headline value from the card's `description`.
+It finds data; `tako_contents` fetches it. Each card carries a headline value, node ids, and a url — pass the url to `tako_contents` for rows (`exportable: true` cards) or a web result's full page text. When `exportable` is false the rows are locked — read the headline value from the card's `description`. Website-traffic and SEO cards bill a per-unit data minimum above the search price.
 
 Best for: breadth — fan out several narrow queries in parallel. Each query resolves one metric — for one entity, or a comparison set ("Apple revenue", "Nvidia vs AMD gross margin"); several metrics or topics in one query retrieve poorly. To learn what Tako covers, or a metric's canonical name, run `tako_available_data` first, then search on the canonical name it returns.
 
@@ -1447,6 +1448,7 @@ Parameters:
 
 Fixed request inputs (the caller cannot change these):
 
+- `variable_cost (signed-in connections)` = `true` — Website-traffic and SEO cards return their data and bill the source's per-unit minimum. A keyless connection doesn't send it and gets those cards as placeholders. The API default is false.
 - `sources.web.highlights` = `true` — Query-relevant highlight passages per web result, so the excerpt supports choosing a url to fetch. The API default is false.
 
 Annotations:
@@ -1648,7 +1650,7 @@ Annotations:
       "description": "Cost-plus usage for this request (null when not metered)."
     },
     "guidance": {
-      "description": "Zero-card responses only: what this response is evidence about, and the one next action.",
+      "description": "Zero-card verdict and next action, or how a keyless caller unlocks a placeholder card.",
       "type": "string"
     },
     "metric_definitions": {
@@ -1834,7 +1836,7 @@ The chart-widget fields are declared only here; the widget reads them from `wind
       "description": "Cost-plus usage for this request (null when not metered)."
     },
     "guidance": {
-      "description": "Zero-card responses only: what this response is evidence about, and the one next action.",
+      "description": "Zero-card verdict and next action, or how a keyless caller unlocks a placeholder card.",
       "type": "string"
     },
     "metric_definitions": {
@@ -2030,7 +2032,7 @@ Get one citation-backed answer (`include_answer: true`), or search Tako's data g
 
 Only `query` is required; an omitted field takes the server default its description names. Naming a source block (even `{}`) selects it; omit both to search data and web. `data.include_contents` inlines each card's rows, billed per card — cap with `data.max_rows`, or fetch a card's rows with `tako_contents` instead.
 
-Best for: a written answer, not a result list (`include_answer` puts it in `answer`), and a call `tako_search` can't express — a wider count, inline rows, a pinned node, a domain filter, or deep effort. `output_schema` fills a JSON Schema from the evidence into `structured_output`.
+Best for: a written answer (`include_answer` puts it in `answer`), or a call `tako_search` can't express. `output_schema` fills a JSON Schema from the evidence into `structured_output`.
 
 Parameters:
 
@@ -2044,6 +2046,7 @@ Parameters:
 | `timezone` | string | no |  | IANA timezone. It formats dates in rendered card images only. |
 | `output_settings` | object | no |  | Settings that control the response shape. |
 | `include_related` | integer | no |  | Maximum follow-up queries to return in `related`. Ignored when `include_answer` is true. |
+| `variable_cost` | boolean | no |  | Semrush traffic and SEO data, billed at a per-unit minimum. Default true; false gets placeholders. |
 | `data` | object | no |  | Tako data (card) source settings; naming it selects the data graph. |
 | `web` | object | no |  | Web source settings; naming it selects the web. |
 | `include_answer` | boolean | no |  | Set true to synthesize one citation-backed answer from the retrieval into `answer`. |
@@ -2170,6 +2173,10 @@ Annotations:
           "type": "null"
         }
       ]
+    },
+    "variable_cost": {
+      "description": "Semrush traffic and SEO data, billed at a per-unit minimum. Default true; false gets placeholders.",
+      "type": "boolean"
     },
     "data": {
       "description": "Tako data (card) source settings; naming it selects the data graph.",
@@ -2562,7 +2569,7 @@ Annotations:
       "description": "Cost-plus usage for this request (null when not metered)."
     },
     "guidance": {
-      "description": "Zero-card responses only: what this response is evidence about, and the one next action.",
+      "description": "Zero-card verdict and next action, or how a keyless caller unlocks a placeholder card.",
       "type": "string"
     },
     "metric_definitions": {

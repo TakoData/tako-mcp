@@ -179,7 +179,7 @@ export function authRequiredToolResult(
         // in, config-file clients (Cursor et al.) connect with an API
         // key. "Sign in" alone told a config-file user to do something
         // their host has no flow for. `recoveryHint` (the
-        // GENERIC_SIGN_IN_HINT in mcp.ts, or a tool's own rejection
+        // GENERIC_SIGN_IN_HINT in _shared_prose.ts, or a tool's own rejection
         // reason) appends after the base text.
         text: recoveryHint === undefined ? base : `${base} ${recoveryHint}`,
       },

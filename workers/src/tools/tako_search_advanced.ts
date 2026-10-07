@@ -8,10 +8,12 @@
  * any level is a -32602 — all three levels are `.strict()`, and mcp.ts registers
  * the full object, so that holds on the wire and not only in a unit test.
  *
- * ONE value this tool supplies that the caller did not: `sources.web.highlights`
- * defaults to true (see `buildAdvancedSearchBody`). It is a DEFAULT, not a fixed
- * input — `web: {highlights: false}` wins — which is why `fixedInputs` stays
- * empty.
+ * TWO values this tool supplies that the caller did not: `sources.web.highlights`
+ * and `variable_cost` both default to true (see `buildAdvancedSearchBody`). They
+ * are DEFAULTS, not fixed inputs — `web: {highlights: false}` and
+ * `variable_cost: false` win — which is why `fixedInputs` stays empty. This
+ * tool never runs on the free tier, so the variable-cost default needs no tier
+ * check.
  *
  * WHY IT IS OPT-IN. `tako_search` is the tool a model should reach for: every
  * option here is a cost, context or latency knob rather than a statement of
@@ -93,7 +95,7 @@ const DESCRIPTION = [
   "",
   "Only `query` is required; an omitted field takes the server default its description names. Naming a source block (even `{}`) selects it; omit both to search data and web. `data.include_contents` inlines each card's rows, billed per card — cap with `data.max_rows`, or fetch a card's rows with `tako_contents` instead.",
   "",
-  "Best for: a written answer, not a result list (`include_answer` puts it in `answer`), and a call `tako_search` can't express — a wider count, inline rows, a pinned node, a domain filter, or deep effort. `output_schema` fills a JSON Schema from the evidence into `structured_output`.",
+  "Best for: a written answer (`include_answer` puts it in `answer`), or a call `tako_search` can't express. `output_schema` fills a JSON Schema from the evidence into `structured_output`.",
 ].join("\n");
 
 
@@ -229,7 +231,7 @@ const webBlock = z.object(optionalWithoutDefaults(WebSourceSettings.shape, WEB_D
 
 /**
  * Top level: every `SearchRequest` field except `sources` (replaced by the two
- * blocks), optional and default-free. Three keep a hand-written `.describe()`
+ * blocks), optional and default-free. Four keep a hand-written `.describe()`
  * that names the server default in words — the generated text for
  * `country_code` and `locale` does not, and this tool's description promises it.
  */
@@ -318,6 +320,9 @@ const inputSchema = z
     // geo bias still uses country_code only (TAKO-3183 phase 2)". An earlier
     // rewrite here said "bias web results toward", which is the one reading the
     // code rules out.
+    variable_cost: topLevel.variable_cost.describe(
+      "Semrush traffic and SEO data, billed at a per-unit minimum. Default true; false gets placeholders.",
+    ),
     location: topLevel.location.describe(
       "End-user coordinates, for queries whose location is implicit (weather). A location named in the query wins; web results follow country_code.",
     ),
@@ -415,6 +420,11 @@ export function buildAdvancedSearchBody(input: Input): z.input<typeof AnswerRequ
   if (input.timezone !== undefined) body.timezone = input.timezone;
   if (input.output_settings !== undefined) body.output_settings = input.output_settings;
   if (input.include_related !== undefined) body.include_related = input.include_related;
+  // A DEFAULT, like `highlights` below: the caller's explicit `false` wins and
+  // gets placeholders instead of the per-unit minimum. Defaults to true so this
+  // tool matches `tako_search`, which opts in without a field. No tier check:
+  // this tool never executes on the free tier (`FREE_TIER_TOOL_NAMES`).
+  body.variable_cost = input.variable_cost ?? true;
   // `highlights` is the ONE value this tool supplies that the caller did not
   // ask for, and it is a DEFAULT, not a fixed input: spread order lets an
   // explicit `web.highlights: false` win. It exists because `tako_answer` — the

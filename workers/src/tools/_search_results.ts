@@ -12,7 +12,7 @@ import { z } from "zod";
 
 import type { Env } from "../env.js";
 import type { Tier } from "../freetier.js";
-import { AnswerStructuredOutputError, RelatedSuggestion } from "../generated/schemas.js";
+import { AnswerStructuredOutputError, PlaceholderInfo, RelatedSuggestion } from "../generated/schemas.js";
 import { logWireGuardFailure } from "./_log.js";
 import {
   HTTP_URL_REGEX,
@@ -22,7 +22,7 @@ import {
   buildChartUrls,
   withShareOptIn,
 } from "./_chart_widget.js";
-import { PASSAGE_BREAK_DESCRIBE } from "./_shared_prose.js";
+import { GENERIC_SIGN_IN_HINT, PASSAGE_BREAK_DESCRIBE } from "./_shared_prose.js";
 
 // Backend ResultContent (api/ga/content_types.py) — a result's export
 // descriptor + inline data. It rides on every EXPORTABLE result (even when
@@ -192,6 +192,9 @@ export const takoCardSchema = z
       )
       .nullable()
       .optional(),
+    // Set on a card whose data the backend withheld; `withheldDataGuidance`
+    // reads it on a keyless search.
+    placeholder: PlaceholderInfo.nullable().optional(),
   })
   .loose();
 export type TakoCard = z.infer<typeof takoCardSchema>;
@@ -1738,6 +1741,21 @@ export function orderCardsByUsefulness(cards: readonly TakoCard[]): TakoCard[] {
     .map((d) => d.card);
 }
 
+/**
+ * Guidance for a keyless search that returned a placeholder card. A keyless
+ * connection never opts in to variable-cost sources (`buildSearchBody`), so the
+ * backend withholds those cards' data, and the placeholder text says only that
+ * the data "isn't included in this search". Without this the model has no
+ * signal that signing in gets it. `undefined` when no card withholds data.
+ */
+export function withheldDataGuidance(cards: ReadonlyArray<TakoCard>): string | undefined {
+  const sources = [
+    ...new Set(cards.flatMap((c) => (c.placeholder?.withheld_source != null ? [c.placeholder.withheld_source] : []))),
+  ];
+  if (sources.length === 0) return undefined;
+  return `${sources.join(" and ")} data on a placeholder card needs a signed-in connection. ${GENERIC_SIGN_IN_HINT}`;
+}
+
 /** Wire fields that ride into the output when the request asked for them. */
 export type SearchOutputExtras = {
   related?: z.infer<typeof RelatedSuggestion>[];
@@ -1808,6 +1826,7 @@ export function buildSearchOutput(
     projectCard(c, opts.rowCap, { toolName: opts.toolName, requestId }),
   );
   const web = webResults.map((w) => projectWebResult(w, opts.keepWebText));
+  const withheld = withheldDataGuidance(ordered);
   const base: SearchOutput = {
     cards,
     web_results: web,
@@ -1853,6 +1872,8 @@ export function buildSearchOutput(
                   ),
         }
       : {}),
+    // A placeholder is a card, so this never competes with a zero-card verdict.
+    ...(tier === "free" && withheld !== undefined ? { guidance: withheld } : {}),
     // Reference maps LAST so tail-truncating hosts lose prose before data.
     ...(maps.metric_definitions !== undefined
       ? { metric_definitions: maps.metric_definitions }

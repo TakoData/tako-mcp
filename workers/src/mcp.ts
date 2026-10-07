@@ -38,6 +38,7 @@ import {
 import { serverInstructionsFor } from "./instructions.js";
 import { tryResolveOAuthAccessToken } from "./oauth/access.js";
 import { logToolRequestId } from "./tools/_log.js";
+import { GENERIC_SIGN_IN_HINT } from "./tools/_shared_prose.js";
 import { parseToolsParam, readToolsParam } from "./tools/_tools_param.js";
 import { TOOL_REGISTRY } from "./tools/_registry.js";
 import {
@@ -100,16 +101,6 @@ const JSON_SCHEMA_VALIDATOR = new CfWorkerJsonSchemaValidator();
  * `ToolContext` so tools see the right Bearer token + env bindings without
  * having to reach for request state themselves.
  */
-/**
- * The one sign-in sentence appended to `authRequiredToolResult` on the
- * generic surface (spec D17). One generic sentence for every client — the
- * per-UA hint variants died with the User-Agent classifier. Hosts with a
- * linking UI (claude.ai, Claude Code, any OAuth-capable client) sign in;
- * config-file clients connect with an API key. No URLs, no UI deep paths
- * — copy rots (see PAYMENT_REQUIRED_REMEDY_FALLBACK).
- */
-export const GENERIC_SIGN_IN_HINT =
-  "Sign in with your client's MCP authentication, or connect with a Tako API key.";
 
 // Per-surface annotation resolution lives with the tool surface config in
 // `tools/_surface.ts` (each tool declares its own `annotationsBySurface`

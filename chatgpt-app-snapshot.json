@@ -7,7 +7,7 @@
       "output_schema_sha256": "c99944f017b8b94928982d9ac00ed9cd33680441d1d6d60bd50d1e9ec1303270"
     },
     "tako_contents": {
-      "description_sha256": "5b39a0d72ee4afd3a4f1c999fa30d6f1b85e1247ba3ba81e691c5ca81c574a36",
+      "description_sha256": "fe0271fc785a5191959666aa773c4f452de7210e665faa432b21a104db8ec8b4",
       "input_schema_sha256": "75728851915257d988689716112e486eecb43b1f3bd49806182fd9dc68c8cbbb",
       "output_schema_sha256": "6b74038f7d47596c437c112b16dc60ef8780b606efbccfc82b2f4d4d42b820ac"
     },
@@ -17,9 +17,9 @@
       "output_schema_sha256": "3569c618ed16c5e390812f9e4f3e10859fd2fc0b38bf44535b5ed097a9a70b26"
     },
     "tako_search": {
-      "description_sha256": "61a7e902d8b3026d79bc5a77f367610c6ffa8ab157366cf120e8fa33c49aa658",
+      "description_sha256": "e823220aa4b0e9ba191fa4c5ef7ec2239bd0cdecfa0331ece45ce9b72b92ea36",
       "input_schema_sha256": "5c3ea30d240d20a969691082786bc8551833a8f1eb607f19df5a36592bd791dc",
-      "output_schema_sha256": "9942d5da9350326b1fa1b71aafbc669048c40e38b32dadafe8c18747004a549e"
+      "output_schema_sha256": "69b96f11758976ad1e5ea769f2152526de6e9b862d479d82041b0046b830477c"
     },
     "tako_visualize": {
       "description_sha256": "8f5f2862aff0f94e6cbd4cca9436926e3ec4859a7a9c8a6beb690f243389e93d",

@@ -17,6 +17,7 @@
  */
 import { z } from "zod";
 
+import type { Tier } from "../freetier.js";
 import { SearchRequest } from "../generated/schemas.js";
 import {
   buildChartAppUiResourceFromOutputPubId,
@@ -37,7 +38,7 @@ import type { AppUiResource, ToolContentBlock, ToolContext, ToolModule } from ".
 const DESCRIPTION = [
   "Search Tako's data graph and the live web in one call: many results at once, as structured cards plus web results, with the top card rendered inline as a chart.",
   "",
-  "It finds data; `tako_contents` fetches it. Each card carries a headline value, node ids, and a url — pass the url to `tako_contents` for rows (`exportable: true` cards) or a web result's full page text. When `exportable` is false the rows are locked — read the headline value from the card's `description`.",
+  "It finds data; `tako_contents` fetches it. Each card carries a headline value, node ids, and a url — pass the url to `tako_contents` for rows (`exportable: true` cards) or a web result's full page text. When `exportable` is false the rows are locked — read the headline value from the card's `description`. Website-traffic and SEO cards bill a per-unit data minimum above the search price.",
   "",
   // `Best for:` verbatim: AGENTS.md's tool-description rule, and the form the
   // other three default tools already use in docs/TOOLS.md.
@@ -105,7 +106,7 @@ type Output = z.infer<typeof outputSchema>;
  * guard: if the backend request contract changes (new required field, renamed
  * key, changed enum) this line fails to compile — the intended signal.
  */
-export function buildSearchBody(input: Input): z.input<typeof SearchRequest> {
+export function buildSearchBody(input: Input, tier: Tier): z.input<typeof SearchRequest> {
   // Typed against the contract (not Record<string, …>) so a renamed/added
   // `Sources` key or a new required per-source sub-field breaks compilation here.
   const sources: NonNullable<z.input<typeof SearchRequest>["sources"]> = {};
@@ -136,6 +137,11 @@ export function buildSearchBody(input: Input): z.input<typeof SearchRequest> {
     sources.web = { highlights: true };
   }
   const body: z.input<typeof SearchRequest> = { query: input.query, sources };
+  // Signed-in searches opt in to variable-cost sources (Semrush traffic and SEO
+  // cards); without it the backend serves those cards as placeholders. The free
+  // tier stays out: its calls bill the shared free-tier account, so an
+  // anonymous caller would run up per-unit Semrush charges on Tako's account.
+  if (tier !== "free") body.variable_cost = true;
   if (input.country_code !== undefined) body.country_code = input.country_code;
   if (input.locale !== undefined) body.locale = input.locale;
   return body satisfies z.input<typeof SearchRequest>; // ← build-time guard: backend request drift breaks here
@@ -167,6 +173,11 @@ const tako_search = {
   // refuse anonymously, which is the point of the split (spec D4).
   fixedInputs: [
     {
+      field: "variable_cost (signed-in connections)",
+      value: "true",
+      note: "Website-traffic and SEO cards return their data and bill the source's per-unit minimum. A keyless connection doesn't send it and gets those cards as placeholders. The API default is false.",
+    },
+    {
       field: "sources.web.highlights",
       value: "true",
       note: "Query-relevant highlight passages per web result, so the excerpt supports choosing a url to fetch. The API default is false.",
@@ -179,7 +190,7 @@ const tako_search = {
     // call on an `exportable: true` card — the explicit search-then-fetch step
     // that also lets this tool run anonymously.
     return runSearch(
-      { endpoint: "search", body: buildSearchBody(input) },
+      { endpoint: "search", body: buildSearchBody(input, ctx.tier ?? "authenticated") },
       input.sources,
       null,
       ctx,

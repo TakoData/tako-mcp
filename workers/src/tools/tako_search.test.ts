@@ -28,6 +28,7 @@ import { SearchRequest } from "../generated/schemas.js";
 import type { AnyToolModule, ToolContext } from "./types.js";
 import tako_search, { buildSearchBody } from "./tako_search.js";
 import tako_search_advanced from "./tako_search_advanced.js";
+import { GENERIC_SIGN_IN_HINT } from "./_shared_prose.js";
 import {
   bodyOf,
   jsonResponse,
@@ -146,8 +147,13 @@ describe("tako_search is the SIMPLE tool (spec D4)", () => {
     expect(asModule.anonymousInputRejects).toBeUndefined();
   });
 
-  it("declares exactly one fixed input: the web highlights override", () => {
+  it("declares exactly two fixed inputs: the variable-cost opt-in and the web highlights override", () => {
     expect(tako_search.fixedInputs).toEqual([
+      {
+        field: "variable_cost (signed-in connections)",
+        value: "true",
+        note: expect.stringContaining("API default is false") as unknown as string,
+      },
       {
         field: "sources.web.highlights",
         value: "true",
@@ -185,6 +191,16 @@ describe("tako_search request body sends only what the caller asked for", () => 
     expect(body.sources).toEqual({ data: {}, web: { highlights: true } });
   });
 
+  it("sends variable_cost on a signed-in connection and not on a keyless one", async () => {
+    const signedIn = emptyResponse();
+    await tako_search.handler({ query: "netflix.com traffic", sources: ["data"] }, CTX);
+    expect(await bodyOf(requestFrom(signedIn.mock.calls[0]))).toMatchObject({ variable_cost: true });
+
+    const keyless = emptyResponse();
+    await tako_search.handler({ query: "netflix.com traffic", sources: ["data"] }, { ...CTX, tier: "free" });
+    expect(await bodyOf(requestFrom(keyless.mock.calls[0]))).not.toHaveProperty("variable_cost");
+  });
+
   it("omits the web block entirely on a data-only search", async () => {
     const fetchMock = emptyResponse();
     await tako_search.handler({ query: "x", sources: ["data"] }, CTX);
@@ -194,7 +210,7 @@ describe("tako_search request body sends only what the caller asked for", () => 
   });
 
   it("omits country_code, locale and effort when the caller omits them", () => {
-    const body = buildSearchBody({ query: "x", sources: ["data", "web"] });
+    const body = buildSearchBody({ query: "x", sources: ["data", "web"] }, "authenticated");
     expect("country_code" in body).toBe(false);
     expect("locale" in body).toBe(false);
     expect("effort" in body).toBe(false);
@@ -206,7 +222,7 @@ describe("tako_search request body sends only what the caller asked for", () => 
       sources: ["data"],
       country_code: "GB",
       locale: "en-GB",
-    });
+    }, "authenticated");
     expect(body.country_code).toBe("GB");
     expect(body.locale).toBe("en-GB");
   });
@@ -336,6 +352,28 @@ describe("tako_search response mapping", () => {
     expect(g).not.toMatch(/hard filter/);
   });
 
+  it("tells a keyless caller that signing in gets a placeholder card's data, and says nothing to a signed-in one", async () => {
+    const placeholderResponse = () =>
+      mockFetchSequence([
+        jsonResponse(200, {
+          cards: [
+            { card_id: "nflx-traffic", title: "netflix.com traffic", webpage_url: "u", placeholder: { withheld_source: "Semrush" } },
+          ],
+          web_results: [],
+          request_id: "req-ph",
+        }),
+      ]);
+
+    placeholderResponse();
+    const keyless = await tako_search.handler({ query: "netflix.com traffic", ...DEFAULTS }, { ...CTX, tier: "free" });
+    expect(keyless.guidance).toContain("Semrush");
+    expect(keyless.guidance).toContain(GENERIC_SIGN_IN_HINT);
+
+    placeholderResponse();
+    const signedIn = await tako_search.handler({ query: "netflix.com traffic", ...DEFAULTS }, CTX);
+    expect(signedIn.guidance).toBeUndefined();
+  });
+
   it("populates auto-chain widget fields when the top card has card_id", async () => {
     mockFetchSequence([
       jsonResponse(200, {
@@ -407,7 +445,7 @@ describe("tako_search widget + contract guard", () => {
   });
 
   it("reshapes flat input into a contract-valid search body", () => {
-    const body = buildSearchBody(tako_search.inputSchema.parse({ query: "US GDP" }));
+    const body = buildSearchBody(tako_search.inputSchema.parse({ query: "US GDP" }), "authenticated");
     expect(() => SearchRequest.parse(body)).not.toThrow();
   });
 
@@ -466,6 +504,7 @@ describe("tako_search widget + contract guard", () => {
   it("asks for Exa highlights as the web snippet, so the excerpt is answer-bearing", () => {
     const body = buildSearchBody(
       tako_search.inputSchema.parse({ query: "nvidia data center revenue", sources: ["web"] }),
+      "authenticated",
     );
     // Not a cosmetic preference: with highlights off the snippet is the page's
     // opening characters (nav chrome, press-release preamble); with it on the
@@ -484,12 +523,15 @@ describe("tako_search widget + contract guard", () => {
     // declaration rather than restating the constants a fourth time.
     const body = buildSearchBody(
       tako_search.inputSchema.parse({ query: "US GDP", sources: ["data", "web"] }),
+      "authenticated",
     );
     // A value starting with "=" names another input (`= count`), not a constant.
     const constants = tako_search.fixedInputs.filter((f) => !f.value.startsWith("="));
     expect(constants.length).toBeGreaterThan(0);
     for (const { field, value } of constants) {
-      const actual = field.split(".").reduce<unknown>(
+      // A trailing qualifier names the case, not the path: "variable_cost (signed-in connections)".
+      const path = field.replace(/\s*\([^)]*\)\s*$/, "");
+      const actual = path.split(".").reduce<unknown>(
         (o, key) => (o as Record<string, unknown> | undefined)?.[key],
         body as unknown,
       );
@@ -503,8 +545,19 @@ describe("tako_search widget + contract guard", () => {
     // key we send is the key the synced spec declares.
     const body = buildSearchBody(
       tako_search.inputSchema.parse({ query: "US GDP", sources: ["data", "web"] }),
+      "authenticated",
     );
     expect(() => SearchRequest.parse(body)).not.toThrow();
+  });
+
+  it("opts a signed-in search in to variable-cost sources, so Semrush cards aren't placeholders", () => {
+    const body = buildSearchBody(tako_search.inputSchema.parse({ query: "netflix.com traffic" }), "authenticated");
+    expect(body.variable_cost).toBe(true);
+  });
+
+  it("keeps a free-tier search out of variable-cost sources, so keyless calls don't bill Semrush units to the shared account", () => {
+    const body = buildSearchBody(tako_search.inputSchema.parse({ query: "netflix.com traffic" }), "free");
+    expect(body).not.toHaveProperty("variable_cost");
   });
 });
 
