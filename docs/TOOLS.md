@@ -876,7 +876,7 @@ Fixed request inputs (the caller cannot change these):
 - `mode` = `"inline"` — The content comes back in the response to read. The API default is a presigned download link, which a model cannot use.
 - `content_format` = `"json_compact"` — One row serialization, projected to `rows`. CSV writes a missing cell as an empty field; positional JSON writes null.
 - `max_chars (when omitted)` = `min(100000, 250000 / batch size)` — Per-url character cap for web text. With `query`, the passages use the API's highlights budget instead: 4,000 characters.
-- `query` = `(sent as highlights.query)` — Web urls only. A blank `query` is dropped, a Tako url gets no `highlights`, and an account that can't get highlights receives the whole page.
+- `query` = `(sent as highlights.query)` — Web urls only. The tool drops a blank `query` and sends no `highlights` for a Tako url. If the API can't return passages, the tool returns the whole page.
 
 Annotations:
 
@@ -914,7 +914,8 @@ Annotations:
     },
     "query": {
       "description": "Web pages only: a question the passages should answer. The result holds those passages instead of the page. Omit it to get the whole page.",
-      "type": "string"
+      "type": "string",
+      "minLength": 1
     }
   },
   "required": [

@@ -54,6 +54,7 @@ import {
 import { looseArray } from "./_loose_array.js";
 import { logWireGuardFailure } from "./_log.js";
 import { renderContentsText } from "./_render_markdown.js";
+import { PASSAGE_BREAK_DESCRIBE } from "./_shared_prose.js";
 import type { ToolContext, ToolModule } from "./types.js";
 
 /** Max urls per call. The backend takes one url per request, so a batch fans
@@ -122,11 +123,21 @@ function isTakoHostUrl(url: string): boolean {
   return TAKO_DOMAINS.some((domain) => host === domain || host.endsWith(`.${domain}`));
 }
 
-const PASSAGES_NOTE =
-  "These are the passages of the page that answer `query`, not the whole page. Omit `query` to get the whole page.";
+export const PASSAGES_NOTE = `These are the passages of the page that answer \`query\`, not the whole page. ${PASSAGE_BREAK_DESCRIBE} Omit \`query\` to get the whole page.`;
 
-const HIGHLIGHTS_UNAVAILABLE_NOTE =
+export const HIGHLIGHTS_UNAVAILABLE_NOTE =
   "This account can't get passages, so this is the whole page. Omit `query` on later calls.";
+
+export const NO_PASSAGES_NOTE = "Tako couldn't get passages from this page, so this is the whole page.";
+
+export const TAKO_URL_QUERY_NOTE = "`query` doesn't apply to a Tako url, so this is the whole page.";
+
+function wholePageNoteAfter(err: unknown): string | undefined {
+  if (err instanceof DjangoBadRequestError) return HIGHLIGHTS_UNAVAILABLE_NOTE;
+  if (err instanceof DjangoNotFoundError) return NO_PASSAGES_NOTE;
+  if (err instanceof DjangoHttpError && err.status !== undefined && err.status >= 500) return NO_PASSAGES_NOTE;
+  return undefined;
+}
 
 // No mention of `include_contents` here, and it cannot be reintroduced: no tool
 // on either of this tool's surfaces accepts it. D4 removed it from
@@ -230,7 +241,7 @@ const inputSchema = z.object({
       `Web pages only: character cap on the extracted text. Inline fetches default to 100,000 per url, less across a batch. Raise it for a long document; \`truncated\` reports a cut. With \`query\`, it caps the passages instead: ${HIGHLIGHTS_MIN_CHARS} to ${HIGHLIGHTS_MAX_CHARS.toLocaleString("en-US")}, and ${HIGHLIGHTS_DEFAULT_CHARS.toLocaleString("en-US")} by default.`,
     ),
   query: z
-    .preprocess(blankAsAbsent, z.string().optional())
+    .preprocess(blankAsAbsent, z.string().min(1).optional())
     .describe(
       "Web pages only: a question the passages should answer. The result holds those passages instead of the page. Omit it to get the whole page.",
     ),
@@ -343,14 +354,20 @@ async function fetchOne(
   batchSize: number,
 ): Promise<ProjectedContentsItem> {
   const body = buildContentsBody(url, input, batchSize);
-  if (body.highlights === undefined) return fetchPage(url, body, input, ctx, batchSize);
+  if (body.highlights === undefined) {
+    const queryDropped = input.query !== undefined && isTakoHostUrl(url);
+    return fetchPage(url, body, input, ctx, batchSize, queryDropped ? TAKO_URL_QUERY_NOTE : undefined);
+  }
+  let wholePageNote: string | undefined;
   try {
     return projectContentsItem(await postContents(body, ctx), url, { note: PASSAGES_NOTE });
   } catch (err) {
-    if (!(err instanceof DjangoBadRequestError)) throw err;
+    wholePageNote = wholePageNoteAfter(err);
+    if (wholePageNote === undefined || !(err instanceof DjangoError)) throw err;
+    console.warn(`[tako] tako_contents highlights fallback tool=tako_contents status=${err.status}`);
   }
   const { highlights: _unavailable, ...pageBody } = body;
-  return fetchPage(url, pageBody, input, ctx, batchSize, HIGHLIGHTS_UNAVAILABLE_NOTE);
+  return fetchPage(url, pageBody, input, ctx, batchSize, wholePageNote);
 }
 
 async function fetchPage(
@@ -490,7 +507,7 @@ const takoContents = {
     {
       field: "query",
       value: "(sent as highlights.query)",
-      note: "Web urls only. A blank `query` is dropped, a Tako url gets no `highlights`, and an account that can't get highlights receives the whole page.",
+      note: "Web urls only. The tool drops a blank `query` and sends no `highlights` for a Tako url. If the API can't return passages, the tool returns the whole page.",
     },
   ],
   async handler(input, ctx): Promise<ContentsOutput> {

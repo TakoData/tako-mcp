@@ -22,6 +22,7 @@ import {
   buildChartUrls,
   withShareOptIn,
 } from "./_chart_widget.js";
+import { PASSAGE_BREAK_DESCRIBE } from "./_shared_prose.js";
 
 // Backend ResultContent (api/ga/content_types.py) — a result's export
 // descriptor + inline data. It rides on every EXPORTABLE result (even when
@@ -1291,7 +1292,7 @@ export const projectedWebResultShape = z.looseObject({
     // "the published snippet contract" in _search_results.test.ts pins the
     // actionable clause; three commits have now moved this string.
     .describe(
-      "Passages selected against the query. A ' … ' marks a discontinuity — joined passages or the page's own ellipsis — so never quote across it as one sentence. null → no relevant passage, url still fetchable.",
+      `Passages selected against the query. ${PASSAGE_BREAK_DESCRIBE} null → no relevant passage, url still fetchable.`,
     ),
   source: z.string().optional(),
   published: z.string().nullable().optional(),

@@ -22,7 +22,7 @@ How to do it:
   the free coverage check, ONE retry on the exact name it returns, then stop and answer
   from the web results already in the response. Do not rephrase and retry blind.
 - Need the full text behind a web result rather than its excerpt? Call `tako_contents` on
-  the url, with `query` set so you get just the matching passages.
+  the url, and set `query` to a question to get only the passages that answer it.
 
 Report the answer, the period or date it applies to, and the source. Say which kind of
 source it was, a named data provider or a web page. Include the **Open in Tako** link for

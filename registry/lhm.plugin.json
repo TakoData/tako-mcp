@@ -103,7 +103,8 @@
           },
           "query": {
             "description": "Web pages only: a question the passages should answer. The result holds those passages instead of the page. Omit it to get the whole page.",
-            "type": "string"
+            "type": "string",
+            "minLength": 1
           }
         },
         "required": [
