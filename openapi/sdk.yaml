@@ -263,6 +263,15 @@ paths:
           type: integer
         name: limit
         in: query
+      - description: Maximum number of nodes counted and paginated in each relation
+          (default 250, max 2000). A relation with more nodes reports this total with
+          `total_capped` set, and pagination ends at it. Higher values make the request
+          slower.
+        required: false
+        schema:
+          type: integer
+        name: max_per_relation
+        in: query
       - description: 'Prefer related nodes with this NER label. This is a boost, not
           a filter: matching nodes rank higher within each relation, and totals do
           not change. Supplying label disables inference.'
@@ -435,9 +444,13 @@ paths:
               schema:
                 $ref: '#/components/schemas/BaseAPIError'
         '422':
-          description: 'This card type does not support the requested content format.
-            Only content_format=''card_json'' returns this status: use ''csv'', ''json_records'',
-            or ''json_compact'' for that card. The response body carries error_type=''UNSUPPORTED_CONTENT_FORMAT''.'
+          description: 'The card can''t be served in the requested form. The response
+            body''s error_type names the case. UNSUPPORTED_CONTENT_FORMAT: this card
+            type doesn''t support content_format=''card_json''; use ''csv'', ''json_records'',
+            or ''json_compact'' for that card. PLACEHOLDER_CARD: the card is a placeholder
+            whose data is withheld, and every content format refuses it; search again
+            with variable_cost set to true and request contents for the card that
+            search returns.'
           content:
             application/json:
               schema:
@@ -962,6 +975,7 @@ components:
       - SERVICE_UNAVAILABLE
       - SERVICE_OVERLOADED
       - UNSUPPORTED_CONTENT_FORMAT
+      - PLACEHOLDER_CARD
       title: APIErrorType
     AgentAnswerAssumption:
       properties:
@@ -2131,6 +2145,28 @@ components:
         raw text
 
         and carries no content format (content_format is null).'
+    ContentsHighlights:
+      properties:
+        query:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Query
+          description: The question the passages should answer. Omit it to receive
+            the page's leading passages.
+          examples:
+          - funded backlog fiscal 2027 guidance
+        max_characters:
+          type: integer
+          maximum: 20000
+          minimum: 100
+          title: Max Characters
+          description: Total character budget for the returned passages.
+          default: 4000
+      additionalProperties: false
+      type: object
+      title: ContentsHighlights
+      description: Return the passages of a web page instead of its full text.
     ContentsRequest:
       properties:
         url:
@@ -2233,6 +2269,16 @@ components:
             and is rejected with content_format=card_json, which carries no premium
             plumbing.'
           default: false
+        highlights:
+          anyOf:
+          - $ref: '#/components/schemas/ContentsHighlights'
+          - type: 'null'
+          description: Return only the passages of a web page that match highlights.query,
+            instead of its full text. The passages arrive in the same text payload,
+            joined with ' … ', and max_chars doesn't apply. Tako card URLs reject
+            it, and so do accounts whose web provider can't return highlights. It
+            bills at the same flat rate as full text.
+      additionalProperties: false
       type: object
       required:
       - url
@@ -3119,6 +3165,17 @@ components:
       type: object
       title: OutputSettings
       description: Settings that control the response shape.
+    PlaceholderInfo:
+      properties:
+        withheld_source:
+          type: string
+          title: Withheld Source
+          description: The name of the source whose data the card withholds.
+      type: object
+      required:
+      - withheld_source
+      title: PlaceholderInfo
+      description: Why a card carries no data points.
     PremiumClass:
       type: string
       enum:
@@ -4349,6 +4406,13 @@ components:
           description: 'Freshness dates for the card''s data: where the data ends
             (coverage_end), the same point as a full date (data_as_of, deprecated),
             and the last refresh date (last_updated). Null when no date is available.'
+        placeholder:
+          anyOf:
+          - $ref: '#/components/schemas/PlaceholderInfo'
+          - type: 'null'
+          description: 'Set when the card is a placeholder: it carries its title and
+            no data points, because the request didn''t include its source''s data.
+            Null on every card that carries its data.'
       type: object
       title: TakoCard
       description: 'A Tako knowledge card on the search and answer surfaces. It carries
