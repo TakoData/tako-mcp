@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.2.0](https://github.com/TakoData/tako-mcp/compare/v1.1.12...v1.2.0) (2026-10-07)
+
+
+### Features
+
+* **tako_contents:** get passages for query from the contents API, and return the whole page when it can't ([#322](https://github.com/TakoData/tako-mcp/issues/322)) ([c8316d5](https://github.com/TakoData/tako-mcp/commit/c8316d50d697cd4b11fd67f4c6e1c24d9fe1eccb))
+
+
+### Chores
+
+* sync OpenAPI spec from monorepo ([#321](https://github.com/TakoData/tako-mcp/issues/321)) ([05cd8ba](https://github.com/TakoData/tako-mcp/commit/05cd8baf6d5d9afc7af40bc6e965ff065179767e))
+
 ## [1.1.12](https://github.com/TakoData/tako-mcp/compare/v1.1.11...v1.1.12) (2026-10-05)
 
 
