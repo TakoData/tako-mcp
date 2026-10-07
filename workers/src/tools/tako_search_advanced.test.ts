@@ -111,8 +111,7 @@ describe("tako_search_advanced mirrors the v3 SearchRequest", () => {
     // never decided — six appear in no spec and no plan. Derived from the
     // generated shape, "mirrors the API" is checked rather than asserted in a
     // header.
-    // `variable_cost` isn't a tool input: runSearch always sends it as true.
-    const expected = Object.keys(AnswerRequest.shape).filter((k) => k !== "sources" && k !== "variable_cost");
+    const expected = Object.keys(AnswerRequest.shape).filter((k) => k !== "sources");
     expect(Object.keys(tako_search_advanced.inputSchema.shape).sort()).toEqual(
       [...expected, "data", "web", "include_answer"].sort(),
     );
@@ -538,6 +537,15 @@ describe("web highlights default", () => {
     // The no-block branch hardcodes the source set. A third backend source would
     // be silently missing from every default call; fail here instead.
     expect(Object.keys(Sources.shape).sort()).toEqual(["data", "web"]);
+  });
+
+  it("opts in to variable-cost sources by default, and lets an explicit false decline the per-unit minimum", () => {
+    expect(buildAdvancedSearchBody(tako_search_advanced.inputSchema.parse({ query: "netflix.com traffic" }))).toMatchObject({
+      variable_cost: true,
+    });
+    expect(
+      buildAdvancedSearchBody(tako_search_advanced.inputSchema.parse({ query: "netflix.com traffic", variable_cost: false })),
+    ).toMatchObject({ variable_cost: false });
   });
 
   it("tako_search still FORCES it, and declares that as a fixed input", () => {

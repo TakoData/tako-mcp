@@ -239,7 +239,7 @@
     },
     {
       "name": "tako_search_advanced",
-      "description": "Get one citation-backed answer (`include_answer: true`), or search Tako's data graph and the live web with the whole v3 request: per-source counts, inline card rows, graph pins, web domain and category filters, and the deep effort tier.\n\nOnly `query` is required; an omitted field takes the server default its description names. Naming a source block (even `{}`) selects it; omit both to search data and web. `data.include_contents` inlines each card's rows, billed per card — cap with `data.max_rows`, or fetch a card's rows with `tako_contents` instead.\n\nBest for: a written answer, not a result list (`include_answer` puts it in `answer`), and a call `tako_search` can't express — a wider count, inline rows, a pinned node, a domain filter, or deep effort. `output_schema` fills a JSON Schema from the evidence into `structured_output`.",
+      "description": "Get one citation-backed answer (`include_answer: true`), or search Tako's data graph and the live web with the whole v3 request: per-source counts, inline card rows, graph pins, web domain and category filters, and the deep effort tier.\n\nOnly `query` is required; an omitted field takes the server default its description names. Naming a source block (even `{}`) selects it; omit both to search data and web. `data.include_contents` inlines each card's rows, billed per card — cap with `data.max_rows`, or fetch a card's rows with `tako_contents` instead.\n\nBest for: a written answer (`include_answer` puts it in `answer`), or a call `tako_search` can't express. `output_schema` fills a JSON Schema from the evidence into `structured_output`.",
       "parameters": {
         "query": {
           "type": "string",
@@ -278,6 +278,10 @@
         "include_related": {
           "type": "integer",
           "description": "Maximum follow-up queries to return in `related`. Ignored when `include_answer` is true."
+        },
+        "variable_cost": {
+          "type": "boolean",
+          "description": "Semrush traffic and SEO data, billed at a per-unit minimum. Default true; false gets placeholders."
         },
         "data": {
           "type": "object",

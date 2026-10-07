@@ -2032,7 +2032,7 @@ Get one citation-backed answer (`include_answer: true`), or search Tako's data g
 
 Only `query` is required; an omitted field takes the server default its description names. Naming a source block (even `{}`) selects it; omit both to search data and web. `data.include_contents` inlines each card's rows, billed per card — cap with `data.max_rows`, or fetch a card's rows with `tako_contents` instead.
 
-Best for: a written answer, not a result list (`include_answer` puts it in `answer`), and a call `tako_search` can't express — a wider count, inline rows, a pinned node, a domain filter, or deep effort. `output_schema` fills a JSON Schema from the evidence into `structured_output`.
+Best for: a written answer (`include_answer` puts it in `answer`), or a call `tako_search` can't express. `output_schema` fills a JSON Schema from the evidence into `structured_output`.
 
 Parameters:
 
@@ -2046,6 +2046,7 @@ Parameters:
 | `timezone` | string | no |  | IANA timezone. It formats dates in rendered card images only. |
 | `output_settings` | object | no |  | Settings that control the response shape. |
 | `include_related` | integer | no |  | Maximum follow-up queries to return in `related`. Ignored when `include_answer` is true. |
+| `variable_cost` | boolean | no |  | Semrush traffic and SEO data, billed at a per-unit minimum. Default true; false gets placeholders. |
 | `data` | object | no |  | Tako data (card) source settings; naming it selects the data graph. |
 | `web` | object | no |  | Web source settings; naming it selects the web. |
 | `include_answer` | boolean | no |  | Set true to synthesize one citation-backed answer from the retrieval into `answer`. |
@@ -2172,6 +2173,10 @@ Annotations:
           "type": "null"
         }
       ]
+    },
+    "variable_cost": {
+      "description": "Semrush traffic and SEO data, billed at a per-unit minimum. Default true; false gets placeholders.",
+      "type": "boolean"
     },
     "data": {
       "description": "Tako data (card) source settings; naming it selects the data graph.",
