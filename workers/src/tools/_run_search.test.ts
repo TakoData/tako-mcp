@@ -179,7 +179,7 @@ describe("runSearch on the search endpoint", () => {
   });
 
   it.each(["search", "answer"] as const)(
-    "opts every %s call in to variable-cost sources, so Semrush cards aren't placeholders",
+    "opts every authenticated %s call in to variable-cost sources, so Semrush cards aren't placeholders",
     async (endpoint) => {
       const fetchMock = mockFetchSequence([
         jsonResponse(200, { answer: "a", cards: [], web_results: [], request_id: "r" }),
@@ -189,6 +189,19 @@ describe("runSearch on the search endpoint", () => {
       expect(sent).toMatchObject({ query: "netflix.com traffic", variable_cost: true });
     },
   );
+
+  it("keeps a free-tier search out of variable-cost sources, so anonymous calls don't bill Semrush units to the shared account", async () => {
+    const fetchMock = mockFetchSequence([jsonResponse(200, { cards: [], web_results: [], request_id: "r" })]);
+    await runSearch(
+      { endpoint: "search", body: { query: "netflix.com traffic" } },
+      ["data", "web"],
+      null,
+      { ...CTX, tier: "free" },
+      "tako_search",
+    );
+    const sent = JSON.parse(await requestFrom(fetchMock.mock.calls[0]).text()) as Record<string, unknown>;
+    expect(sent).not.toHaveProperty("variable_cost");
+  });
 
   it("flat mode empties the two lists runSearch reads", async () => {
     // THE REASON `output_settings.flat_results` IS WITHHELD from
