@@ -205,6 +205,18 @@ describe("tako_contents handler", () => {
     expect(String(out.usage.total_cost_usd)).not.toContain("0.30000000000000004");
   });
 
+  it("counts a Semrush card's variable-cost charge in the item cost and the usage total, not only the export price", async () => {
+    // The backend reports the per-unit minimum in the response's
+    // `usage.variable_cost`, separately from `item.cost` (the export price).
+    vi.mocked(djangoPost).mockResolvedValue({
+      ...card({ cost: 0.004 }),
+      usage: { total_cost_usd: 0.07, data: { cost_usd: 0.004, datasets: 1 }, variable_cost: { cost_usd: 0.066 } },
+    });
+    const out = await tool.handler({ urls: ["https://tako.com/card/abc"] }, ctx);
+    expect(out.results[0]!.cost).toBe(0.07);
+    expect(out.usage.total_cost_usd).toBe(0.07);
+  });
+
   it("an unexpected throw inside a batch renders generically, never its own message", async () => {
     vi.mocked(djangoPost)
       .mockResolvedValueOnce(page("page A"))

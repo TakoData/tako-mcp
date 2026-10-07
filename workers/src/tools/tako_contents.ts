@@ -469,7 +469,13 @@ async function postContents(
     logWireGuardFailure("tako_contents", "empty-contents", undefined, raw);
     throw new ContentsFetchError("Tako contents endpoint returned no downloadable content for that url.");
   }
-  return item;
+  // `item.cost` is the export's own price. A Semrush card's per-unit minimum
+  // above it is charged separately and reported only in the response's
+  // `usage.variable_cost`, so fold it into the item, where `contentsUsage` sums
+  // what the account actually paid.
+  const variableCost = wireResult.data.usage?.variable_cost?.cost_usd;
+  if (variableCost == null) return item;
+  return { ...item, cost: Math.round(((item.cost ?? 0) + variableCost) * 1e6) / 1e6 };
 }
 
 const takoContents = {
