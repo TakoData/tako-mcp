@@ -11,7 +11,8 @@
  * ONE value this tool supplies that the caller did not: `sources.web.highlights`
  * defaults to true (see `buildAdvancedSearchBody`). It is a DEFAULT, not a fixed
  * input — `web: {highlights: false}` wins — which is why `fixedInputs` stays
- * empty.
+ * empty. `buildAdvancedSearchBody` also sends `variable_cost: true`; this tool
+ * never runs on the free tier, so no tier check applies.
  *
  * WHY IT IS OPT-IN. `tako_search` is the tool a model should reach for: every
  * option here is a cost, context or latency knob rather than a statement of
@@ -229,7 +230,7 @@ const webBlock = z.object(optionalWithoutDefaults(WebSourceSettings.shape, WEB_D
 
 /**
  * Top level: every `SearchRequest` field except `sources` (replaced by the two
- * blocks) and `variable_cost` (`runSearch` always sends it), optional and
+ * blocks) and `variable_cost` (`buildAdvancedSearchBody` always sends it), optional and
  * default-free. Three keep a hand-written `.describe()`
  * that names the server default in words — the generated text for
  * `country_code` and `locale` does not, and this tool's description promises it.
@@ -416,6 +417,10 @@ export function buildAdvancedSearchBody(input: Input): z.input<typeof AnswerRequ
   if (input.timezone !== undefined) body.timezone = input.timezone;
   if (input.output_settings !== undefined) body.output_settings = input.output_settings;
   if (input.include_related !== undefined) body.include_related = input.include_related;
+  // Opts in to variable-cost sources (Semrush traffic and SEO cards); without
+  // it the backend serves those cards as placeholders. No tier check: this
+  // tool never executes on the free tier (`FREE_TIER_TOOL_NAMES`).
+  body.variable_cost = true;
   // `highlights` is the ONE value this tool supplies that the caller did not
   // ask for, and it is a DEFAULT, not a fixed input: spread order lets an
   // explicit `web.highlights: false` win. It exists because `tako_answer` — the

@@ -79,6 +79,7 @@ const CASES: ReadonlyArray<{
     body: () =>
       buildSearchBody(
         tako_search.inputSchema.parse({ query: "US GDP", sources: ["data", "web"] }),
+        "authenticated",
       ),
   },
   {

@@ -81,12 +81,7 @@ export async function runSearch(
   // Both endpoints are synchronous (~120s sync ceiling). No async/202, no
   // polling. Zero matches come back as 200 with empty `cards`.
   const path = endpoint === "answer" ? "/api/v1/answer/" : "/api/v3/search/";
-  // Authenticated searches opt in to variable-cost sources (Semrush traffic and
-  // SEO cards); without it the backend serves those cards as placeholders. The
-  // free tier stays out: its calls bill the shared free-tier account, so an
-  // anonymous caller would run up per-unit Semrush charges on Tako's account.
-  const wireBody = ctx.tier === "free" ? body : { ...body, variable_cost: true };
-  const data = await djangoPost<unknown>(ctx.env, ctx.token, path, wireBody, {
+  const data = await djangoPost<unknown>(ctx.env, ctx.token, path, body, {
     timeoutMs: 130_000,
     caller: ctx.caller,
   });

@@ -206,9 +206,7 @@ describe("tako_search_advanced mirrors the v3 SearchRequest", () => {
     });
     const body = buildAdvancedSearchBody(input);
     expect(Object.keys(body).sort()).toEqual(
-      Object.keys(AnswerRequest.shape)
-        .filter((k) => k !== "variable_cost")
-        .sort(),
+      Object.keys(AnswerRequest.shape).sort(),
     );
     expect(body.location).toEqual({ latitude: 51.5, longitude: -0.1 });
     expect(body.timezone).toBe("Europe/London");
@@ -352,6 +350,7 @@ describe("tako_search_advanced mirrors the v3 SearchRequest", () => {
     });
     expect(buildAdvancedSearchBody(input)).toEqual({
       query: "US CPI",
+      variable_cost: true,
       effort: "deep",
       country_code: "GB",
       locale: "en-GB",
@@ -545,9 +544,9 @@ describe("web highlights default", () => {
     // The two tools differ on purpose: `tako_search` has no highlights field to
     // set, so the row belongs in its fixedInputs. This tool's value IS
     // overridable, so a fixedInput row here would be a false claim.
-    expect(tako_search.fixedInputs).toEqual([
+    expect(tako_search.fixedInputs).toContainEqual(
       expect.objectContaining({ field: "sources.web.highlights", value: "true" }),
-    ]);
+    );
     expect(tako_search_advanced.fixedInputs).toEqual([]);
   });
 });

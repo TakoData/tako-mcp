@@ -511,6 +511,11 @@ const takoContents = {
       note: `Per-url character cap for web text. With \`query\`, the passages use the API's highlights budget instead: ${HIGHLIGHTS_DEFAULT_CHARS.toLocaleString("en-US")} characters.`,
     },
     {
+      field: "variable_cost",
+      value: "true",
+      note: "A website-traffic or SEO card's rows export, and the export bills the source's per-unit minimum. The API default is false, which refuses those cards with a 422.",
+    },
+    {
       field: "query",
       value: "(sent as highlights.query)",
       note: "Web urls only. The tool drops a `query` with no letter or digit and sends no `highlights` for a Tako url. If the API can't return passages, the tool returns the whole page.",
