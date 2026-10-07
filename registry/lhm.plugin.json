@@ -74,7 +74,7 @@
     },
     {
       "name": "tako_contents",
-      "description": "Fetch the full content behind a url: a web page's text, or an exportable Tako card's data rows. Batch up to 10 urls in one call — each one is billed and fails on its own.\n\nFetch only cards that `tako_search` marked `exportable: true`. Rows bill per 1,000 delivered, so set `max_rows` when the recent rows are enough. If a page is long, such as a filing or an annual report, set `query` to a question to get back only the passages that answer it.\n\nBest for: reading one source in full — a page you need to quote, or the rows behind a card you need to compute over.",
+      "description": "Fetch the full content behind a url: a web page's text, or an exportable Tako card's data rows. Batch up to 10 urls in one call — each one is billed and fails on its own.\n\nFetch only cards that `tako_search` marked `exportable: true`. Rows bill per 1,000 delivered, so set `max_rows` when the recent rows are enough. A website-traffic or SEO card also bills a per-unit data minimum that `max_rows` doesn't bound. If a page is long, such as a filing or an annual report, set `query` to a question to get back only the passages that answer it.\n\nBest for: reading one source in full — a page you need to quote, or the rows behind a card you need to compute over.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "type": "object",
@@ -114,7 +114,7 @@
     },
     {
       "name": "tako_search",
-      "description": "Search Tako's data graph and the live web in one call: many results at once, as structured cards plus web results, with the top card rendered inline as a chart.\n\nIt finds data; `tako_contents` fetches it. Each card carries a headline value, node ids, and a url — pass the url to `tako_contents` for rows (`exportable: true` cards) or a web result's full page text. When `exportable` is false the rows are locked — read the headline value from the card's `description`.\n\nBest for: breadth — fan out several narrow queries in parallel. Each query resolves one metric — for one entity, or a comparison set (\"Apple revenue\", \"Nvidia vs AMD gross margin\"); several metrics or topics in one query retrieve poorly. To learn what Tako covers, or a metric's canonical name, run `tako_available_data` first, then search on the canonical name it returns.",
+      "description": "Search Tako's data graph and the live web in one call: many results at once, as structured cards plus web results, with the top card rendered inline as a chart.\n\nIt finds data; `tako_contents` fetches it. Each card carries a headline value, node ids, and a url — pass the url to `tako_contents` for rows (`exportable: true` cards) or a web result's full page text. When `exportable` is false the rows are locked — read the headline value from the card's `description`. Website-traffic and SEO cards bill a per-unit data minimum above the search price.\n\nBest for: breadth — fan out several narrow queries in parallel. Each query resolves one metric — for one entity, or a comparison set (\"Apple revenue\", \"Nvidia vs AMD gross margin\"); several metrics or topics in one query retrieve poorly. To learn what Tako covers, or a metric's canonical name, run `tako_available_data` first, then search on the canonical name it returns.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "type": "object",

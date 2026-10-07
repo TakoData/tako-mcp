@@ -38,7 +38,7 @@ import type { AppUiResource, ToolContentBlock, ToolContext, ToolModule } from ".
 const DESCRIPTION = [
   "Search Tako's data graph and the live web in one call: many results at once, as structured cards plus web results, with the top card rendered inline as a chart.",
   "",
-  "It finds data; `tako_contents` fetches it. Each card carries a headline value, node ids, and a url — pass the url to `tako_contents` for rows (`exportable: true` cards) or a web result's full page text. When `exportable` is false the rows are locked — read the headline value from the card's `description`.",
+  "It finds data; `tako_contents` fetches it. Each card carries a headline value, node ids, and a url — pass the url to `tako_contents` for rows (`exportable: true` cards) or a web result's full page text. When `exportable` is false the rows are locked — read the headline value from the card's `description`. Website-traffic and SEO cards bill a per-unit data minimum above the search price.",
   "",
   // `Best for:` verbatim: AGENTS.md's tool-description rule, and the form the
   // other three default tools already use in docs/TOOLS.md.

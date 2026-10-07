@@ -174,7 +174,7 @@ function wholePageNoteAfter(err: unknown): string | undefined {
 const DESCRIPTION = [
   `Fetch the full content behind a url: a web page's text, or an exportable Tako card's data rows. Batch up to ${MAX_CONTENTS_URLS} urls in one call — each one is billed and fails on its own.`,
   "",
-  "Fetch only cards that `tako_search` marked `exportable: true`. Rows bill per 1,000 delivered, so set `max_rows` when the recent rows are enough. If a page is long, such as a filing or an annual report, set `query` to a question to get back only the passages that answer it.",
+  "Fetch only cards that `tako_search` marked `exportable: true`. Rows bill per 1,000 delivered, so set `max_rows` when the recent rows are enough. A website-traffic or SEO card also bills a per-unit data minimum that `max_rows` doesn't bound. If a page is long, such as a filing or an annual report, set `query` to a question to get back only the passages that answer it.",
   "",
   // `Best for:` last, the shape the other four default tools use (AGENTS.md's
   // tool-description rule; compare `tako_search`).
