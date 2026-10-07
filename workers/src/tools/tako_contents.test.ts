@@ -10,7 +10,7 @@ vi.mock("../django.js", async (importOriginal) => ({
   djangoGet: vi.fn(),
 }));
 
-import { DjangoBadRequestError, DjangoError, DjangoHttpError, DjangoNotFoundError, DjangoUnauthorizedError, djangoPost } from "../django.js";
+import { DjangoBadRequestError, DjangoError, DjangoHttpError, DjangoNotFoundError, DjangoTimeoutError, DjangoUnauthorizedError, djangoPost } from "../django.js";
 import { djangoErrorToToolResult } from "../mcp.js";
 import tool, {
   BATCH_CHAR_BUDGET,
@@ -550,15 +550,24 @@ describe("tako_contents query highlights", () => {
     expect(wireBody().highlights).toEqual({ query: "RevPAR", max_characters: maxCharacters });
   });
 
-  it.each(["", " ", "  \n\t "])("treats the blank query %j as absent and returns the whole page", async (query) => {
-    vi.mocked(djangoPost).mockResolvedValue(page("the whole page"));
-    const input = tool.inputSchema.parse({ urls: ["https://example.com/a"], query });
-    const out = await tool.handler(input, ctx);
-    expect(input.query).toBeUndefined();
-    expect(wireBody()).not.toHaveProperty("highlights");
-    expect(wireBody().max_chars).toBe(100_000);
-    expect(out.results[0]?.text).toBe("the whole page");
-    expect(out.results[0]).not.toHaveProperty("note");
+  it.each(["", " ", "  \n\t ", ". ", ")}", ":)", "\u200c", ".\u0cc3"])(
+    "treats the query %j, which has no letter or digit, as absent and returns the whole page",
+    async (query) => {
+      vi.mocked(djangoPost).mockResolvedValue(page("the whole page"));
+      const input = tool.inputSchema.parse({ urls: ["https://example.com/a"], query });
+      const out = await tool.handler(input, ctx);
+      expect(input.query).toBeUndefined();
+      expect(wireBody()).not.toHaveProperty("highlights");
+      expect(wireBody().max_chars).toBe(100_000);
+      expect(out.results[0]?.text).toBe("the whole page");
+      expect(out.results[0]).not.toHaveProperty("note");
+    },
+  );
+
+  it.each(["2019", "Q3", "失业率"])("sends the query %j, which has a letter or digit, as highlights", async (query) => {
+    vi.mocked(djangoPost).mockResolvedValue(page("passage"));
+    await tool.handler(tool.inputSchema.parse({ urls: ["https://example.com/a"], query }), ctx);
+    expect(wireBody().highlights).toEqual({ query });
   });
 
   it("publishes query as optional with minLength 1", () => {
@@ -611,6 +620,12 @@ describe("tako_contents query highlights", () => {
       () => new DjangoHttpError({ path: "/api/v1/contents/", method: "POST", status: 502, body: "{}" }),
       NO_PASSAGES_NOTE,
       502,
+    ],
+    [
+      "the highlights request times out",
+      () => new DjangoTimeoutError({ path: "/api/v1/contents/", method: "POST", timeoutMs: 60_000 }),
+      NO_PASSAGES_NOTE,
+      "timeout",
     ],
   ])("refetches without highlights when %s, and says so", async (_case, failure, note, status) => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);

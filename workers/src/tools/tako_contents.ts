@@ -39,6 +39,7 @@ import {
   DjangoError,
   DjangoHttpError,
   DjangoNotFoundError,
+  DjangoTimeoutError,
   djangoPost,
   extractErrorDetail,
 } from "../django.js";
@@ -110,8 +111,10 @@ const HIGHLIGHTS_MAX_CHARS = highlightsBudget.unwrap().maxValue ?? HIGHLIGHTS_DE
 
 const TAKO_DOMAINS = ["tako.com", "trytako.com"];
 
-const blankAsAbsent = (value: unknown): unknown =>
-  typeof value === "string" && value.trim() === "" ? undefined : value;
+const LETTER_OR_DIGIT = /[\p{L}\p{N}]/u;
+
+const textlessAsAbsent = (value: unknown): unknown =>
+  typeof value === "string" && !LETTER_OR_DIGIT.test(value) ? undefined : value;
 
 function isTakoHostUrl(url: string): boolean {
   let host: string;
@@ -135,6 +138,7 @@ export const TAKO_URL_QUERY_NOTE = "`query` doesn't apply to a Tako url, so this
 function wholePageNoteAfter(err: unknown): string | undefined {
   if (err instanceof DjangoBadRequestError) return HIGHLIGHTS_UNAVAILABLE_NOTE;
   if (err instanceof DjangoNotFoundError) return NO_PASSAGES_NOTE;
+  if (err instanceof DjangoTimeoutError) return NO_PASSAGES_NOTE;
   if (err instanceof DjangoHttpError && err.status !== undefined && err.status >= 500) return NO_PASSAGES_NOTE;
   return undefined;
 }
@@ -241,7 +245,7 @@ const inputSchema = z.object({
       `Web pages only: character cap on the extracted text. Inline fetches default to 100,000 per url, less across a batch. Raise it for a long document; \`truncated\` reports a cut. With \`query\`, it caps the passages instead: ${HIGHLIGHTS_MIN_CHARS} to ${HIGHLIGHTS_MAX_CHARS.toLocaleString("en-US")}, and ${HIGHLIGHTS_DEFAULT_CHARS.toLocaleString("en-US")} by default.`,
     ),
   query: z
-    .preprocess(blankAsAbsent, z.string().min(1).optional())
+    .preprocess(textlessAsAbsent, z.string().min(1).optional())
     .describe(
       "Web pages only: a question the passages should answer. The result holds those passages instead of the page. Omit it to get the whole page.",
     ),
@@ -364,7 +368,7 @@ async function fetchOne(
   } catch (err) {
     wholePageNote = wholePageNoteAfter(err);
     if (wholePageNote === undefined || !(err instanceof DjangoError)) throw err;
-    console.warn(`[tako] tako_contents highlights fallback tool=tako_contents status=${err.status}`);
+    console.warn(`[tako] tako_contents highlights fallback tool=tako_contents status=${err.status ?? "timeout"}`);
   }
   const { highlights: _unavailable, ...pageBody } = body;
   return fetchPage(url, pageBody, input, ctx, batchSize, wholePageNote);
@@ -507,7 +511,7 @@ const takoContents = {
     {
       field: "query",
       value: "(sent as highlights.query)",
-      note: "Web urls only. The tool drops a blank `query` and sends no `highlights` for a Tako url. If the API can't return passages, the tool returns the whole page.",
+      note: "Web urls only. The tool drops a `query` with no letter or digit and sends no `highlights` for a Tako url. If the API can't return passages, the tool returns the whole page.",
     },
   ],
   async handler(input, ctx): Promise<ContentsOutput> {
