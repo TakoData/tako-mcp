@@ -354,6 +354,8 @@ const REDIRECT_URI_MAX_LEN = 2048;
  *  consent page. The `\x00-\x1f\x7f` range covers ASCII control codes. */
 // eslint-disable-next-line no-control-regex
 const CONTROL_CHARS_RE = /[\x00-\x1f\x7f]/;
+/** The only hosts a plain-`http:` redirect_uri may name. */
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1"]);
 
 /** Header carrying the partner registration secret. Deliberately NOT
  *  `Authorization`: hosts routinely retry `/register` with a stale access
@@ -440,8 +442,7 @@ function isValidRedirectUri(s: string): boolean {
   // clients must use https. Any non-loopback `http:` redirect_uri is a
   // strong signal of either misconfiguration or attack.
   if (parsed.protocol === "http:") {
-    const host = parsed.hostname;
-    if (host !== "localhost" && host !== "127.0.0.1") return false;
+    if (!LOOPBACK_HOSTS.has(parsed.hostname)) return false;
   }
   return true;
 }
@@ -808,6 +809,7 @@ export async function handleAuthorize(
     return htmlResponse(
       consentPage({
         clientName: client.client_name,
+        redirectUri: parsed.redirect_uri,
         userEmail: session!.user_email,
         formAction: formActionUrl.pathname + formActionUrl.search,
         switchAccountHref:
@@ -993,13 +995,31 @@ function sessionExpiredPage(message: string): string {
 </html>`;
 }
 
+/**
+ * Where an Allow sends the authorization code, phrased for the consent page.
+ *
+ * `/register` is open DCR, so `client_name` is whatever the registrant typed:
+ * anyone can register "Claude" with an `https://attacker.example/cb`
+ * redirect. The redirect host is the one thing on the page the registrant
+ * can't fake, so the page names it. `URL.host` renders an IDN as punycode,
+ * which keeps a homoglyph host visibly different from the real one.
+ */
+function consentDestination(redirectUri: string): string {
+  const u = new URL(redirectUri);
+  return LOOPBACK_HOSTS.has(u.hostname)
+    ? `an app on this device (${u.host})`
+    : u.host;
+}
+
 function consentPage(args: {
   clientName: string;
+  redirectUri: string;
   userEmail: string;
   formAction: string;
   switchAccountHref: string;
 }): string {
   const safeName = escapeHtml(args.clientName);
+  const safeDestination = escapeHtml(consentDestination(args.redirectUri));
   const safeEmail = escapeHtml(args.userEmail);
   const safeAction = escapeHtml(args.formAction);
   const safeSwitch = escapeHtml(args.switchAccountHref);
@@ -1018,6 +1038,8 @@ function consentPage(args: {
   h1 { font-size: 1.4rem; margin: 0 0 0.5rem; }
   p { color: var(--muted); line-height: 1.55; }
   .who { display: flex; align-items: center; gap: 0.6rem; padding: 0.75rem 1rem; border: 1px solid var(--border); border-radius: 0.5rem; margin-top: 1.25rem; font-size: 0.9rem; }
+  .dest { padding: 0.75rem 1rem; border: 1px solid var(--border); border-radius: 0.5rem; margin-top: 1rem; font-size: 0.9rem; overflow-wrap: anywhere; }
+  .warn { font-size: 0.85rem; }
   .who-dot { width: 0.5rem; height: 0.5rem; border-radius: 50%; background: #2da44e; }
   /* row-reverse so Cancel READS on the left while Allow stays FIRST in the
      DOM — with two submit buttons the Enter key activates whichever comes
@@ -1039,6 +1061,8 @@ function consentPage(args: {
 <body>
 <h1>Connect ${safeName} to Tako</h1>
 <p>${safeName} is requesting access to your Tako account. Approving will let it call the Tako MCP server on your behalf.</p>
+<div class="dest">After you allow, Tako sends access to <strong>${safeDestination}</strong>.</div>
+<p class="warn">Tako doesn't verify the app name. Allow only if you started this connection yourself and you recognize ${safeDestination}.</p>
 <div class="who"><span class="who-dot"></span> Signed in as <strong>${safeEmail}</strong></div>
 <form method="POST" action="${safeAction}">
   <button type="submit" name="action" value="allow">Allow</button>
