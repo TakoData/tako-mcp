@@ -269,7 +269,6 @@ describe("tako_contents wire body", () => {
       content_format: "json_compact",
       max_rows: 2000,
       max_chars: 100_000,
-      variable_cost: true,
     });
   });
 
@@ -295,7 +294,6 @@ describe("tako_contents wire body", () => {
       content_format: "json_compact",
       max_rows: 1000,
       max_chars: 100_000,
-      variable_cost: true,
     });
   });
 
