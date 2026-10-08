@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.3.0](https://github.com/TakoData/tako-mcp/compare/v1.2.0...v1.3.0) (2026-10-07)
+
+
+### Features
+
+* opt MCP search, answer and contents in to variable-cost sources ([#328](https://github.com/TakoData/tako-mcp/issues/328)) ([9d5e129](https://github.com/TakoData/tako-mcp/commit/9d5e12979999513753b361044d0fd49deb7efd9b))
+
+
+### Bug Fixes
+
+* **deps:** clear npm audit advisories in workers, including tinypool and proxy-addr CVEs ([e8fc11b](https://github.com/TakoData/tako-mcp/commit/e8fc11bbeec0ed27270c3db2cf4ce4982a19d737))
+* **deps:** clear the remaining npm audit advisories in workers ([d7bb5a6](https://github.com/TakoData/tako-mcp/commit/d7bb5a6e50e7d5ec4c1ab8e391f343fff36b4b51))
+* **deps:** override tinypool and proxy-addr to clear three CVEs ([979f37c](https://github.com/TakoData/tako-mcp/commit/979f37c957514b78599a92ae40e42ff1a6323f46))
+
 ## [1.2.0](https://github.com/TakoData/tako-mcp/compare/v1.1.12...v1.2.0) (2026-10-07)
 
 
