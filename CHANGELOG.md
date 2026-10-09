@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.4.0](https://github.com/TakoData/tako-mcp/compare/v1.3.0...v1.4.0) (2026-10-09)
+
+
+### Features
+
+* **contents:** stop sending variable_cost to /v1/contents ([#330](https://github.com/TakoData/tako-mcp/issues/330)) ([579d82f](https://github.com/TakoData/tako-mcp/commit/579d82f323acd3c387e8df7bf3cd3d6451373d30))
+
+
+### Chores
+
+* sync OpenAPI spec from monorepo ([#329](https://github.com/TakoData/tako-mcp/issues/329)) ([f8700d9](https://github.com/TakoData/tako-mcp/commit/f8700d9feefe90541275299fdff908b97036c6b3))
+
+
+### Documentation
+
+* **tools:** stop naming Semrush in the variable_cost descriptions ([#332](https://github.com/TakoData/tako-mcp/issues/332)) ([b33819a](https://github.com/TakoData/tako-mcp/commit/b33819a5d492600a182b54a63efdb9df4cd2dc18))
+
 ## [1.3.0](https://github.com/TakoData/tako-mcp/compare/v1.2.0...v1.3.0) (2026-10-07)
 
 
