@@ -213,13 +213,21 @@ paths:
       description: 'Explore what a node connects to. The overview returns an ordered
         `relations` list: named relationships (for example `rel:competes_with`, `rel:in_industry`)
         first, then a node''s metrics and entities, then similar nodes and membership
-        (part_of, members). The metrics and entities are the entity + metric combinations
-        Tako covers — query /v3/search or /v1/answer for one. Each group carries a
-        stable `key`. Pass `relation`=<key> plus cursor to paginate that one group.
-        Pass the optional q to narrow by a case-insensitive substring on names and
-        aliases (for example, the metrics of an entity that match ''gdp''). Requires
-        an API key. This endpoint was previously at /beta/graph/related. That path
-        still works until 1 February 2027. Move to /v1/graph/related.'
+        (part_of, members), then breakdowns. The metrics and entities are the entity
+        + metric combinations Tako covers — query /v3/search or /v1/answer for one.
+        A breakdown, keyed `breakdown:<dimension>`, lists the values a node''s data
+        is split by. For example, `breakdown:segment` lists the business and geographic
+        segments a company reports, such as Data Center for NVIDIA, and `breakdown:soc_code`
+        lists the occupations in an employer''s visa filings. A node can have several.
+        To get a segment''s figures, read the segment''s own `metrics` group, then
+        call /v3/search with the company, segment, and metric ids pinned in its data
+        `node_ids` field. A segment''s `metrics` lists what any company reports for
+        that segment, so the search shows which figures exist for this company. Each
+        group carries a stable `key`. Pass `relation`=<key> plus cursor to paginate
+        that one group. Pass the optional q to narrow by a case-insensitive substring
+        on names and aliases (for example, the metrics of an entity that match ''gdp'').
+        Requires an API key. This endpoint was previously at /beta/graph/related.
+        That path still works until 1 February 2027. Move to /v1/graph/related.'
       operationId: graphRelated
       parameters:
       - description: Opaque public id of the node.
@@ -228,8 +236,9 @@ paths:
           type: string
         name: node_id
         in: query
-      - description: Relation key to paginate, for example `rel:competes_with`, `metrics`,
-          `entities`, `siblings`, or `members`.
+      - description: Relation key to paginate. Read the keys from the overview, for
+          example `rel:competes_with`, `breakdown:segment`, `breakdown:soc_code`,
+          `metrics`, `entities`, `siblings`, or `members`.
         required: false
         schema:
           type: string
@@ -448,10 +457,12 @@ paths:
             body''s error_type names the case. UNSUPPORTED_CONTENT_FORMAT: this card
             type doesn''t support content_format=''card_json''; use ''csv'', ''json_records'',
             or ''json_compact'' for that card. PLACEHOLDER_CARD: the card is a placeholder
-            whose data is withheld, and every content format refuses it; request it
-            again with variable_cost set to true. VARIABLE_COST_NOT_REQUESTED: the
-            card''s data comes from a variable-cost source; request it again with
-            variable_cost set to true.'
+            whose data is withheld from this caller, and every content format refuses
+            it. VARIABLE_COST_NOT_REQUESTED: the card''s data comes from a variable-cost
+            source that is not served to this caller. Both apply to an MPP request
+            and to a contract account whose terms are not signed yet. Any other caller
+            gets the card''s data. For an MPP request, call the API with an API key.
+            For a contract account, contact your account manager to sign terms.'
           content:
             application/json:
               schema:
@@ -580,15 +591,12 @@ paths:
       tags:
       - agent
       summary: Dispatch an answer agent run
-      description: 'Dispatch an answer agent run. Returns 202 with an AnswerAgentRun
-        object. Poll GET /v1/agent/answer/runs/{run_id} until status is ''completed''
-        or ''failed''. A run that returns data from variable-cost sources, today Semrush
-        web traffic and SEO data, costs at least the source''s minimum price per data
-        unit unless your contract sets other terms: for Semrush, 1 cent per web traffic
-        unit and 0.01 cents per SEO unit, with higher per-unit rates above monthly
-        volume thresholds. The run''s price counts toward that minimum, and any difference
-        is charged to your account as a separate variable-cost charge, which the run''s
-        `usage` doesn''t include. A failed run pays no minimum.'
+      description: Dispatch an answer agent run. Returns 202 with an AnswerAgentRun
+        object. Poll GET /v1/agent/answer/runs/{run_id} until status is 'completed'
+        or 'failed'. A run that returns data from sources priced per unit, such as
+        web traffic and SEO data, adds a charge above the run's own price, which the
+        completed run's `usage` object reports as `variable_cost`. A failed run pays
+        no such charge.
       operationId: createAnswerAgentRun
       requestBody:
         content:
@@ -759,15 +767,12 @@ paths:
       tags:
       - agent
       summary: Dispatch a retrieval agent run
-      description: 'Dispatch a retrieval agent run. Returns 202 with a RetrievalAgentRun
-        object. Poll GET /v1/agent/retrieval/runs/{run_id} until status is ''completed''
-        or ''failed''. A run that returns data from variable-cost sources, today Semrush
-        web traffic and SEO data, costs at least the source''s minimum price per data
-        unit unless your contract sets other terms: for Semrush, 1 cent per web traffic
-        unit and 0.01 cents per SEO unit, with higher per-unit rates above monthly
-        volume thresholds. The run''s price counts toward that minimum, and any difference
-        is charged to your account as a separate variable-cost charge, which the run''s
-        `usage` doesn''t include. A failed run pays no minimum.'
+      description: Dispatch a retrieval agent run. Returns 202 with a RetrievalAgentRun
+        object. Poll GET /v1/agent/retrieval/runs/{run_id} until status is 'completed'
+        or 'failed'. A run that returns data from sources priced per unit, such as
+        web traffic and SEO data, adds a charge above the run's own price, which the
+        completed run's `usage` object reports as `variable_cost`. A failed run pays
+        no such charge.
       operationId: createRetrievalAgentRun
       requestBody:
         content:
@@ -1617,20 +1622,17 @@ components:
             number of suggestions, from 1 to 20. POST /v1/answer accepts this field
             but ignores it: the answer response has no `related` field.'
         variable_cost:
-          type: boolean
+          anyOf:
+          - type: boolean
+          - type: 'null'
           title: Variable Cost
-          description: 'Return data from variable-cost sources, today Semrush web
-            traffic and SEO data. Unless your contract sets other terms, a request
-            that returns such data costs at least the source''s minimum price per
-            data unit: for Semrush, 1 cent per web traffic unit and 0.01 cents per
-            SEO unit. A data unit is the source''s own billing unit: a card''s count
-            depends on the report and the rows it reads. Higher per-unit rates apply
-            above monthly volume thresholds. The request price counts toward that
-            minimum, and any difference is charged to your account as a separate variable-cost
-            charge, which the response''s `usage` object reports as `variable_cost`.
-            Leave it off and each such card is a placeholder with its title and no
-            data points.'
-          default: false
+          description: 'Return data from sources priced per unit, such as web traffic
+            and SEO data. Such data adds a charge above the request''s own price,
+            which the response''s `usage` object reports as `variable_cost`. Set it
+            to false and each such card is a placeholder with its title and no data
+            points. Leave it out and your account''s default applies: on for a contract
+            account with signed terms, off otherwise. A contract account without signed
+            terms gets placeholders whatever you send.'
         output_schema:
           anyOf:
           - additionalProperties: true
@@ -2265,16 +2267,6 @@ components:
           default: 1000000
           examples:
           - 50000
-        variable_cost:
-          type: boolean
-          title: Variable Cost
-          description: Export a card whose data comes from a variable-cost source,
-            today Semrush web traffic and SEO data, including a placeholder card a
-            search returned without that data. The export reads the source, and the
-            request pays the source's per-unit minimum above the export's own price,
-            billed as a separate variable-cost charge. Leave it off and such a card
-            is refused with a 422.
-          default: false
         quote_only:
           type: boolean
           title: Quote Only
@@ -2288,12 +2280,14 @@ components:
             The quote reads `mode` only for that default. Every format prices a quote
             from `max_rows`, so a quote is instant and makes no call to a data provider.
             A quote is an upper bound on the charge: an export of a card with fewer
-            rows than the cap bills less. A card_json export is truncated to `max_rows`
-            like every other format, so the charge can never exceed the quote for
-            the same cap. A card_json quote reports no `total_rows`, because it does
-            not build the payload. The same export-safe gate applies, so an unexportable
-            card still returns 403, and a card type with no card_json shape still
-            returns 422.'
+            rows than the cap bills less. For a card with data from a source priced
+            per unit, the quote also covers the most that data can charge, which `export_pricing`
+            reports as `variable_cost_max_usd`. A card_json export is truncated to
+            `max_rows` like every other format, so the charge can never exceed the
+            quote for the same cap. A card_json quote reports no `total_rows`, because
+            it does not build the payload. The same export-safe gate applies, so an
+            unexportable card still returns 403, and a card type with no card_json
+            shape still returns 422.'
           default: false
         premium:
           type: boolean
@@ -2586,12 +2580,14 @@ components:
           type: array
           maxItems: 20
           title: Node Ids
-          description: 'Graph node ids to pin into the search; the /v1/graph endpoints
-            return these ids. Pinned nodes always become retrieval candidates and
-            get a strong boost; organic results do not change. Ids are not durable
-            across knowledge-graph rebuilds: the search skips an id that no longer
-            resolves (in strict mode it simply cannot match). Malformed ids fail the
-            request with a 400. Max 20.'
+          description: 'Graph node ids to pin into the search, from /v1/graph/search
+            or /v1/graph/related. For example, pin a company, one of its segments,
+            and a metric to get that segment''s figures without wording the query
+            exactly. Pinned nodes always become retrieval candidates and get a strong
+            boost; organic results do not change. Ids are not durable across knowledge-graph
+            rebuilds: the search skips an id that no longer resolves (in strict mode
+            it simply cannot match). Malformed ids fail the request with a 400. Max
+            20.'
         strict:
           type: boolean
           title: Strict
@@ -2764,6 +2760,18 @@ components:
             requested max_rows is clamped to this. No format bills more than the clamped
             max_rows, and none bills more rows than it returns. Every format obeys
             this ceiling, including card_json.
+        variable_cost_max_usd:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Variable Cost Max Usd
+          description: 'Set only for a card with data from a source priced per unit:
+            the most the source''s minimum charge for an export of this card can be.
+            An export charges whichever is larger, its own price or that minimum,
+            and the quoted cost already accounts for it. The minimum is known only
+            after the export, so the actual charge can be lower. The export''s usage.variable_cost
+            reports a different amount: only what the export charged above its own
+            price.'
       type: object
       required:
       - baseline_usd
@@ -2773,11 +2781,18 @@ components:
       description: 'Card-CSV export pricing RATE for the /contents endpoint, published
         so a
 
-        caller can compute an export''s cost before fetching. A /contents export
+        caller can compute an export''s cost before fetching. A /contents export''s
 
-        charge = baseline_usd + row_cpm_usd * rows / 1000 + sum over classes c of
+        own price = baseline_usd + row_cpm_usd * rows / 1000 + sum over classes c
+        of
 
         premium_row_cpm_usd[c] * premium_rows[c] / 1000, rows <= max_rows_ceiling.
+
+        For a card with data from a source priced per unit, the export charges the
+
+        larger of its own price and that source''s minimum, and
+
+        variable_cost_max_usd is the most that minimum can be.
 
 
         row_cpm_usd is the card-level rate and is authoritative: don''t derive it
@@ -3003,7 +3018,7 @@ components:
           type: string
           title: Key
           description: 'Stable pagination handle. Fixed keys: metrics, entities, siblings,
-            part_of, members. Named relations: rel:<phrase>.'
+            part_of, members. Named relations: rel:<phrase>. Breakdowns: breakdown:<dimension>.'
         kind:
           $ref: '#/components/schemas/RelationKind'
         label:
@@ -4173,20 +4188,17 @@ components:
             number of suggestions, from 1 to 20. POST /v1/answer accepts this field
             but ignores it: the answer response has no `related` field.'
         variable_cost:
-          type: boolean
+          anyOf:
+          - type: boolean
+          - type: 'null'
           title: Variable Cost
-          description: 'Return data from variable-cost sources, today Semrush web
-            traffic and SEO data. Unless your contract sets other terms, a request
-            that returns such data costs at least the source''s minimum price per
-            data unit: for Semrush, 1 cent per web traffic unit and 0.01 cents per
-            SEO unit. A data unit is the source''s own billing unit: a card''s count
-            depends on the report and the rows it reads. Higher per-unit rates apply
-            above monthly volume thresholds. The request price counts toward that
-            minimum, and any difference is charged to your account as a separate variable-cost
-            charge, which the response''s `usage` object reports as `variable_cost`.
-            Leave it off and each such card is a placeholder with its title and no
-            data points.'
-          default: false
+          description: 'Return data from sources priced per unit, such as web traffic
+            and SEO data. Such data adds a charge above the request''s own price,
+            which the response''s `usage` object reports as `variable_cost`. Set it
+            to false and each such card is a placeholder with its title and no data
+            points. Leave it out and your account''s default applies: on for a contract
+            account with signed terms, off otherwise. A contract account without signed
+            terms gets placeholders whatever you send.'
       additionalProperties: false
       type: object
       required:
@@ -4881,10 +4893,10 @@ components:
           anyOf:
           - $ref: '#/components/schemas/UsageVariableCost'
           - type: 'null'
-          description: Variable-cost charge. Present only on a search or answer request
-            that set variable_cost, when the data it served had a per-unit minimum
-            above the request's own price. An agent run pays its variable-cost charge
-            when the run completes and doesn't report it here.
+          description: 'Variable-cost charge. Present only when the data a request
+            or agent run served had a per-unit minimum above its own price: on a search,
+            answer or contents request that set variable_cost, and on an agent run
+            once it completes.'
       type: object
       required:
       - total_cost_usd
