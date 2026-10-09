@@ -2175,7 +2175,14 @@ Annotations:
     },
     "variable_cost": {
       "description": "Semrush traffic and SEO data, billed at a per-unit minimum. Default true; false gets placeholders.",
-      "type": "boolean"
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "data": {
       "description": "Tako data (card) source settings; naming it selects the data graph.",
