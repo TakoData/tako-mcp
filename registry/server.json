@@ -281,7 +281,7 @@
         },
         "variable_cost": {
           "type": "boolean",
-          "description": "Semrush traffic and SEO data, billed at a per-unit minimum. Default true; false gets placeholders."
+          "description": "Web traffic and SEO data, which adds a per-unit charge. Default true; false gets placeholders."
         },
         "data": {
           "type": "object",

@@ -175,7 +175,7 @@ const tako_search = {
     {
       field: "variable_cost (signed-in connections)",
       value: "true",
-      note: "Website-traffic and SEO cards return their data and bill the source's per-unit minimum. A keyless connection doesn't send it and gets those cards as placeholders. The API default is false.",
+      note: "Website-traffic and SEO cards return their data and add a per-unit charge. A keyless connection doesn't send it and gets those cards as placeholders. The API default is false.",
     },
     {
       field: "sources.web.highlights",

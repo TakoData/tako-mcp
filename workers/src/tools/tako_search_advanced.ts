@@ -321,7 +321,7 @@ const inputSchema = z
     // rewrite here said "bias web results toward", which is the one reading the
     // code rules out.
     variable_cost: topLevel.variable_cost.describe(
-      "Semrush traffic and SEO data, billed at a per-unit minimum. Default true; false gets placeholders.",
+      "Web traffic and SEO data, which adds a per-unit charge. Default true; false gets placeholders.",
     ),
     location: topLevel.location.describe(
       "End-user coordinates, for queries whose location is implicit (weather). A location named in the query wins; web results follow country_code.",
