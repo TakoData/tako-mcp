@@ -2031,7 +2031,9 @@ components:
             a larger max_rows returns more. A card that lists a capped slice of a
             larger set, such as the 30 soonest-closing of 330 open solicitations,
             has only that slice as its data, so total_rows is 30 and total_matching
-            gives the set's size. Null for web text.
+            gives the set's size. On an agent run card, it's set for a card whose
+            rows are stored with the card, such as a people list, and null for other
+            agent run cards. Null for web text.
         total_matching:
           anyOf:
           - type: integer
@@ -2078,8 +2080,9 @@ components:
           description: 'Per-column metadata, one entry per exported column, in column
             order: entry i describes column i (CSV header i, json_records key i, or
             dataset.columns[i]). Each entry carries name (the column header), dtype,
-            unit, metric, entity, and premium_class. Null for web or quote responses
-            that carry no tabular columns.'
+            unit, metric, entity, and premium_class. On an agent run card, it''s set
+            wherever total_rows is. Null for web text and for other quotes that carry
+            no tabular columns.'
         premium:
           type: boolean
           title: Premium
@@ -2101,7 +2104,10 @@ components:
             that class, whether revealed or withheld. Multiply by export_pricing.premium_row_cpm_usd[class]
             / 1000 to price the premium part of an export before asking for it. A
             row with cells of two classes counts once in each. Empty for a card with
-            no premium columns; null for web text.
+            no premium columns; null for web text. On an agent run card, it counts
+            every row of the card, so a premium=true export of all total_rows rows
+            bills exactly these rows when total_rows is within max_rows_ceiling. It's
+            set wherever total_rows is.
         redacted_cells:
           anyOf:
           - additionalProperties:
@@ -3433,7 +3439,9 @@ components:
             a larger max_rows returns more. A card that lists a capped slice of a
             larger set, such as the 30 soonest-closing of 330 open solicitations,
             has only that slice as its data, so total_rows is 30 and total_matching
-            gives the set's size. Null for web text.
+            gives the set's size. On an agent run card, it's set for a card whose
+            rows are stored with the card, such as a people list, and null for other
+            agent run cards. Null for web text.
         total_matching:
           anyOf:
           - type: integer
@@ -3480,8 +3488,9 @@ components:
           description: 'Per-column metadata, one entry per exported column, in column
             order: entry i describes column i (CSV header i, json_records key i, or
             dataset.columns[i]). Each entry carries name (the column header), dtype,
-            unit, metric, entity, and premium_class. Null for web or quote responses
-            that carry no tabular columns.'
+            unit, metric, entity, and premium_class. On an agent run card, it''s set
+            wherever total_rows is. Null for web text and for other quotes that carry
+            no tabular columns.'
         premium:
           type: boolean
           title: Premium
@@ -3503,7 +3512,10 @@ components:
             that class, whether revealed or withheld. Multiply by export_pricing.premium_row_cpm_usd[class]
             / 1000 to price the premium part of an export before asking for it. A
             row with cells of two classes counts once in each. Empty for a card with
-            no premium columns; null for web text.
+            no premium columns; null for web text. On an agent run card, it counts
+            every row of the card, so a premium=true export of all total_rows rows
+            bills exactly these rows when total_rows is within max_rows_ceiling. It's
+            set wherever total_rows is.
         redacted_cells:
           anyOf:
           - additionalProperties:
