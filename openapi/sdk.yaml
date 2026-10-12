@@ -116,15 +116,19 @@ paths:
       tags:
       - tako
       summary: Search the data graph
-      description: 'Resolve a metric or entity in Tako''s data graph by name. Use
-        this to discover and confirm what data exists before you query. For example,
-        resolve the metric and the entity here, then ask /v3/search or /v1/answer
-        for that entity + metric combination. Requires an API key. Note: Tako does
-        not yet filter results to the production-ready inventory. A returned metric
-        or entity without a production fact table can 404 when you pass it to /v1/graph/related.
-        Pass label to prefer a NER label (a ranking boost, not a filter); by default
-        Tako infers the label from q. This endpoint was previously at /beta/graph/search.
-        That path still works until 1 February 2027. Move to /v1/graph/search.'
+      description: Resolve a metric or entity in Tako's data graph by name. Use this
+        to discover and confirm what data exists before you query. For example, resolve
+        the entity here, find its metric with /v1/graph/related (relation=metrics,
+        q=<one keyword from the metric name, such as gdp>), then ask /v3/search or
+        /v1/answer for that entity + metric combination. Resolving the metric here
+        instead can return a same-named metric that has no data for that entity. Each
+        result's match_kind tells you whether q named it exactly; treat a fuzzy result
+        with suspicion. Requires an API key. Search checks each returned id against
+        the graph when it responds. Ids aren't durable across graph rebuilds, so search
+        again instead of storing an id for later. Pass label to prefer a NER label
+        (a ranking boost, not a filter); by default Tako infers the label from q.
+        This endpoint was previously at /beta/graph/search. That path still works
+        until 1 February 2027. Move to /v1/graph/search.
       operationId: graphSearch
       parameters:
       - description: Search text (min 1 char).
@@ -341,6 +345,14 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/BaseAPIError'
+        '504':
+          description: A graph query exceeded its time limit. This doesn't mean the
+            node is missing or has no connections. Narrow the request or try again
+            later.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BaseAPIError'
       security:
       - apiKey: []
   /v1/graph/node/{id}:
@@ -382,6 +394,14 @@ paths:
                 $ref: '#/components/schemas/BaseAPIError'
         '503':
           description: A backing data store is temporarily unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BaseAPIError'
+        '504':
+          description: A graph query exceeded its time limit. This doesn't mean the
+            node is missing or has no connections. Narrow the request or try again
+            later.
           content:
             application/json:
               schema:
@@ -463,6 +483,13 @@ paths:
             and to a contract account whose terms are not signed yet. Any other caller
             gets the card''s data. For an MPP request, call the API with an API key.
             For a contract account, contact your account manager to sign terms.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BaseAPIError'
+        '503':
+          description: An upstream data provider is temporarily unavailable or rate-limited.
+            Retry after the interval in the Retry-After header.
           content:
             application/json:
               schema:
@@ -2630,6 +2657,7 @@ components:
       - IPOs
       - Government Debt Instruments
       - Treasury Securities
+      - Segments
       - Airports
       - Airlines
       - Vehicle Types
@@ -2900,12 +2928,10 @@ components:
           description: The number of results you want in results. The range is 1 to
             40. Each source retrieves up to this many, capped at 20, unless you gave
             that source its own count, which always stands. Either way Tako cuts the
-            merged list to this length, dropping Low-relevance cards first, then Medium-relevance
-            cards, then trailing web results, then trailing High-relevance cards.
-            High-relevance cards are cut last, so a small max_results can return cards
-            alone. A small max_results can also return web results alone, because
-            it sizes web retrieval too and Medium-relevance cards rank below every
-            web result. Omit it for no cut.
+            merged list to this length, dropping Low-relevance cards first, then trailing
+            web results, then trailing Medium-relevance cards, then trailing High-relevance
+            cards. High- and Medium-relevance cards rank above every web result, so
+            a small max_results can return cards alone. Omit it for no cut.
         snippet_max_chars:
           anyOf:
           - type: integer
@@ -2944,6 +2970,15 @@ components:
       - latitude
       - longitude
       title: GeoLocation
+    GraphMatchKind:
+      type: string
+      enum:
+      - name
+      - alias
+      - mention
+      - fuzzy
+      title: GraphMatchKind
+      description: How a search result matched the query text.
     GraphNode:
       properties:
         id:
@@ -2955,23 +2990,37 @@ components:
             than storing them.
         type:
           $ref: '#/components/schemas/GraphNodeType'
+          description: Whether the node is a metric or an entity.
         name:
           type: string
           title: Name
+          description: Display name. Several metrics can share a name when publishers
+            report different series, such as two GDP metrics; read `description` to
+            tell them apart.
         aliases:
           items:
             type: string
           type: array
           title: Aliases
+          description: Other names Tako matches to this node, such as abbreviations,
+            tickers, and former names. /v1/graph/search matches `q` against these
+            as well as `name`.
         description:
           anyOf:
           - type: string
           - type: 'null'
           title: Description
+          description: What the node is. For a metric, what it measures, often with
+            its unit and basis. For an entity, a short identification. Absent when
+            Tako has none.
         subtype:
           anyOf:
           - $ref: '#/components/schemas/EntityClassName'
           - type: 'null'
+          description: The entity's class, such as Companies, Countries, or People.
+            Absent for metrics, and for an entity whose class Tako didn't resolve
+            for this response. /v1/graph/search and /v1/graph/related resolve it;
+            /v1/graph/node doesn't.
         label:
           anyOf:
           - $ref: '#/components/schemas/NerLabel'
@@ -2979,6 +3028,16 @@ components:
           description: Public NER label of the node (PERSON, ORG, GPE, ...). Derived
             from the node's stored annotation; null when the internal annotation has
             no public equivalent.
+        match_kind:
+          anyOf:
+          - $ref: '#/components/schemas/GraphMatchKind'
+          - type: 'null'
+          description: 'How this result matched `q`: `name` when `q` is the node''s
+            name, `alias` when `q` is one of its aliases, `mention` when a phrase
+            in `q` is the node''s name or alias (Apple Inc. for `q=Apple revenue`),
+            and `fuzzy` for any other partial or approximate match. A `fuzzy` result
+            can be unrelated to what you asked for, so check it before you rely on
+            it. Set on /v1/graph/search results only.'
       type: object
       required:
       - id
@@ -2991,6 +3050,8 @@ components:
       - metric
       - entity
       title: GraphNodeType
+      description: A `metric` is a measurable quantity, such as GDP; an `entity` is
+        what one is measured for, such as France.
     GraphRelatedResponse:
       properties:
         node:
@@ -4511,14 +4572,21 @@ components:
             than storing them.
         type:
           $ref: '#/components/schemas/GraphNodeType'
+          description: Whether the node is a metric or an entity.
         name:
           type: string
           title: Name
+          description: Display name. Several metrics can share a name when publishers
+            report different series, such as two GDP metrics; read `description` to
+            tell them apart.
         description:
           anyOf:
           - type: string
           - type: 'null'
           title: Description
+          description: What the node is. For a metric, what it measures, often with
+            its unit and basis. For an entity, a short identification. Absent when
+            Tako has none.
       type: object
       required:
       - id
@@ -4529,9 +4597,9 @@ components:
 
         (TakoCard.nodes). It is deliberately narrower than GraphNode: it carries
 
-        no `aliases` and no `subtype`. Callers that need the full node resolve
+        no `aliases` and no `subtype`. For a node''s aliases, resolve the id via
 
-        the id via /v1/graph/node/{id}.'
+        /v1/graph/node/{id}; for an entity''s subtype, use /v1/graph/related.'
     TakoCardSource:
       properties:
         source_name:
