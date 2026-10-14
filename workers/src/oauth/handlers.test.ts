@@ -2805,3 +2805,60 @@ describe("consent page keeps the two decisions visually distinct", () => {
     expect(html).toContain('<button type="submit" name="action" value="deny"');
   });
 });
+
+describe("consent page names where the code goes", () => {
+  // Open DCR lets anyone register a client named "Claude" whose redirect_uri
+  // is their own server. The name on the page is self-reported; the redirect
+  // host is not, so the page must show it.
+  async function renderConsent(
+    clientName: string,
+    redirectUri: string,
+  ): Promise<string> {
+    const env = envWith();
+    const clientId = await signJwt(
+      {
+        type: "client_id" as const,
+        client_name: clientName,
+        redirect_uris: [redirectUri],
+        iat: Math.floor(Date.now() / 1000),
+      },
+      env.OAUTH_SIGN_KEY!,
+    );
+    const sessionJwt = await mintSessionCookie(env);
+    const { challenge } = await pkcePair();
+    const url = new URL("https://mcp.example.com/authorize");
+    url.searchParams.set("client_id", clientId);
+    url.searchParams.set("redirect_uri", redirectUri);
+    url.searchParams.set("response_type", "code");
+    url.searchParams.set("code_challenge", challenge);
+    url.searchParams.set("code_challenge_method", "S256");
+    const res = await handleAuthorize(
+      new Request(url.toString(), {
+        headers: { cookie: `${SESSION_COOKIE}=${sessionJwt}` },
+      }),
+      env,
+    );
+    expect(res.status).toBe(200);
+    return res.text();
+  }
+
+  it("shows the redirect host beside a self-reported client name", async () => {
+    const html = await renderConsent(
+      "Claude",
+      "https://attacker1.example.com/callback",
+    );
+    expect(html).toContain("<strong>attacker1.example.com</strong>");
+    expect(html).toContain("doesn't verify the app name");
+  });
+
+  it("renders a homoglyph host as punycode", async () => {
+    // Cyrillic U+0430 in place of the Latin "a".
+    const html = await renderConsent("Claude", "https://cl\u0430ude.ai/cb");
+    expect(html).toContain("<strong>xn--clude-5ve.ai</strong>");
+  });
+
+  it("describes a loopback redirect as an app on this device", async () => {
+    const html = await renderConsent("Cursor", "http://127.0.0.1:33418/cb");
+    expect(html).toContain("an app on this device (127.0.0.1:33418)");
+  });
+});
