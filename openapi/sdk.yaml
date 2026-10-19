@@ -47,6 +47,19 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/BaseAPIError'
+        '429':
+          description: 'Too many requests. With error_type RATE_LIMIT_EXCEEDED, the
+            request hit a rate limit: retry after the interval in the Retry-After
+            header. With error_type BUDGET_EXCEEDED, the API key or its owner has
+            used a spend budget: do not retry automatically. A budget response carries
+            the header x-should-retry: false, and Retry-After with the seconds until
+            the budget resets, except for a total budget.'
+          content:
+            application/json:
+              schema:
+                anyOf:
+                - $ref: '#/components/schemas/RateLimitExceededError'
+                - $ref: '#/components/schemas/BudgetExceededError'
         '529':
           description: 'Tako is overloaded and did not process this request. Do not
             retry automatically. The response carries the header x-should-retry: false.
@@ -101,6 +114,19 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/BaseAPIError'
+        '429':
+          description: 'Too many requests. With error_type RATE_LIMIT_EXCEEDED, the
+            request hit a rate limit: retry after the interval in the Retry-After
+            header. With error_type BUDGET_EXCEEDED, the API key or its owner has
+            used a spend budget: do not retry automatically. A budget response carries
+            the header x-should-retry: false, and Retry-After with the seconds until
+            the budget resets, except for a total budget.'
+          content:
+            application/json:
+              schema:
+                anyOf:
+                - $ref: '#/components/schemas/RateLimitExceededError'
+                - $ref: '#/components/schemas/BudgetExceededError'
         '529':
           description: 'Tako is overloaded and did not process this request. Do not
             retry automatically. The response carries the header x-should-retry: false.
@@ -487,6 +513,19 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/BaseAPIError'
+        '429':
+          description: 'Too many requests. With error_type RATE_LIMIT_EXCEEDED, the
+            request hit a rate limit: retry after the interval in the Retry-After
+            header. With error_type BUDGET_EXCEEDED, the API key or its owner has
+            used a spend budget: do not retry automatically. A budget response carries
+            the header x-should-retry: false, and Retry-After with the seconds until
+            the budget resets, except for a total budget.'
+          content:
+            application/json:
+              schema:
+                anyOf:
+                - $ref: '#/components/schemas/RateLimitExceededError'
+                - $ref: '#/components/schemas/BudgetExceededError'
         '503':
           description: An upstream data provider is temporarily unavailable or rate-limited.
             Retry after the interval in the Retry-After header.
@@ -557,6 +596,19 @@ paths:
                 - error_type
                 - error_message
                 - balance_cents
+        '429':
+          description: 'Too many requests. With error_type RATE_LIMIT_EXCEEDED, the
+            request hit a rate limit: retry after the interval in the Retry-After
+            header. With error_type BUDGET_EXCEEDED, the API key or its owner has
+            used a spend budget: do not retry automatically. A budget response carries
+            the header x-should-retry: false, and Retry-After with the seconds until
+            the budget resets, except for a total budget.'
+          content:
+            application/json:
+              schema:
+                anyOf:
+                - $ref: '#/components/schemas/RateLimitExceededError'
+                - $ref: '#/components/schemas/BudgetExceededError'
         '500':
           description: Internal server error
           content:
@@ -664,6 +716,19 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorObject'
+        '429':
+          description: 'Too many requests. With error_type RATE_LIMIT_EXCEEDED, the
+            request hit a rate limit: retry after the interval in the Retry-After
+            header. With code budget_exceeded, the API key or its owner has used a
+            spend budget: do not retry automatically. A budget response carries the
+            header x-should-retry: false, and Retry-After with the seconds until the
+            budget resets, except for a total budget.'
+          content:
+            application/json:
+              schema:
+                anyOf:
+                - $ref: '#/components/schemas/RateLimitExceededError'
+                - $ref: '#/components/schemas/ErrorObject'
         '404':
           description: thread_id does not exist or is not owned by the caller.
           content:
@@ -840,6 +905,19 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorObject'
+        '429':
+          description: 'Too many requests. With error_type RATE_LIMIT_EXCEEDED, the
+            request hit a rate limit: retry after the interval in the Retry-After
+            header. With code budget_exceeded, the API key or its owner has used a
+            spend budget: do not retry automatically. A budget response carries the
+            header x-should-retry: false, and Retry-After with the seconds until the
+            budget resets, except for a total budget.'
+          content:
+            application/json:
+              schema:
+                anyOf:
+                - $ref: '#/components/schemas/RateLimitExceededError'
+                - $ref: '#/components/schemas/ErrorObject'
         '404':
           description: thread_id does not exist or is not owned by the caller.
           content:
@@ -1022,6 +1100,7 @@ components:
       - UNSUPPORTED_CONTENT_FORMAT
       - PLACEHOLDER_CARD
       - VARIABLE_COST_NOT_REQUESTED
+      - BUDGET_EXCEEDED
       title: APIErrorType
     AgentAnswerAssumption:
       properties:
@@ -1653,13 +1732,12 @@ components:
           - type: boolean
           - type: 'null'
           title: Variable Cost
-          description: 'Return data from sources priced per unit, such as web traffic
-            and SEO data. Such data adds a charge above the request''s own price,
-            which the response''s `usage` object reports as `variable_cost`. Set it
-            to false and each such card is a placeholder with its title and no data
-            points. Leave it out and your account''s default applies: on for a contract
-            account with signed terms, off otherwise. A contract account without signed
-            terms gets placeholders whatever you send.'
+          description: Return data from sources priced per unit, such as web traffic
+            and SEO data. Such data adds a charge above the request's own price, which
+            the response's `usage` object reports as `variable_cost`. Defaults to
+            true. Set it to false and each such card is a placeholder with its title,
+            a description and no data points. To get a placeholder's data, request
+            the card's URL from POST /api/v1/contents.
         output_schema:
           anyOf:
           - additionalProperties: true
@@ -1769,6 +1847,53 @@ components:
       - error_message
       - error_type
       title: BaseAPIError
+    BudgetExceededError:
+      properties:
+        error_message:
+          type: string
+          title: Error Message
+        error_type:
+          $ref: '#/components/schemas/APIErrorType'
+          default: BUDGET_EXCEEDED
+        budget_scope:
+          type: string
+          enum:
+          - api_key
+          - member
+          title: Budget Scope
+          description: api_key when the key's own budget is used up; member when its
+            owner's budget is.
+        budget_cents:
+          type: integer
+          title: Budget Cents
+          description: The budget amount, in cents.
+        period:
+          type: string
+          enum:
+          - day
+          - week
+          - month
+          - total
+          title: Period
+          description: The budget period, on UTC boundaries.
+        resets_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Resets At
+          description: When the budget resets and requests resume, or null for a total
+            budget.
+      type: object
+      required:
+      - error_message
+      - budget_scope
+      - budget_cents
+      - period
+      - resets_at
+      title: BudgetExceededError
+      description: '429: the API key or its owner has used a spend budget for the
+        current period.'
     ColumnDescriptor:
       properties:
         name:
@@ -2126,15 +2251,17 @@ components:
             type: object
           - type: 'null'
           title: Premium Rows
-          description: Per premium class ('company_record', 'person_contact'), the
-            number of delivered rows with at least one non-null cell in a column of
-            that class, whether revealed or withheld. Multiply by export_pricing.premium_row_cpm_usd[class]
-            / 1000 to price the premium part of an export before asking for it. A
-            row with cells of two classes counts once in each. Empty for a card with
-            no premium columns; null for web text. On an agent run card, it counts
-            every row of the card, so a premium=true export of all total_rows rows
-            bills exactly these rows when total_rows is within max_rows_ceiling. It's
-            set wherever total_rows is.
+          description: 'Per premium class (''company_record'', ''person_contact''),
+            the number of distinct records that the delivered rows hold a value for
+            in a column of that class, whether revealed or withheld: one per company
+            for ''company_record'' and one per person for ''person_contact''. A row
+            whose record can''t be identified counts as its own record. Multiply by
+            export_pricing.premium_row_cpm_usd[class] / 1000 to price the premium
+            part of an export before asking for it. A row with cells of two classes
+            counts in each. Empty for a card with no premium columns; null for web
+            text. On an agent run card, it counts every row of the card, so a premium=true
+            export of all total_rows rows bills exactly these records when total_rows
+            is within max_rows_ceiling. It''s set wherever total_rows is.'
         redacted_cells:
           anyOf:
           - additionalProperties:
@@ -2154,6 +2281,24 @@ components:
           type: string
           title: Source Url
           description: The originating result URL from the request.
+        description:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Description
+          description: 'The card''s description: what the card shows and what its
+            data says. It describes the whole card, not only the rows this request
+            delivered, so a figure it states may fall outside them. Null for a web
+            URL. For a card that search returned as a placeholder, it describes the
+            data the request unlocked, and it''s null when the request fetched no
+            data, such as a `quote_only` request.'
+        offset:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Offset
+          description: The request's offset, echoed on a Tako card export. Null for
+            web text and quotes.
       type: object
       required:
       - source_url
@@ -2291,6 +2436,29 @@ components:
             export instead, set max_rows.'
           examples:
           - 100
+        offset:
+          type: integer
+          maximum: 100000
+          minimum: 0
+          title: Offset
+          description: 'Number of rows to skip before the export starts, counted in
+            the card''s own row order. Use it with max_rows to export one slice of
+            a long list, such as rows 100 to 149 with offset=100 and max_rows=50.
+            It works only on cards whose export keeps their first rows. A card with
+            a date column, a sports card, or content_format=card_json answers 422
+            to any offset above 0, because those exports don''t keep rows in a fixed
+            order from the top: a dated card keeps its newest rows, a sports card
+            keeps rows by tab or table, and card_json cuts each card type its own
+            way. offset plus max_rows can''t reach past the card''s export_pricing.max_rows_ceiling.
+            An offset at or past the card''s last row returns an empty payload with
+            total_rows set, and an API-key caller isn''t charged for it. To page through
+            a card, stop when a call returns fewer rows than max_rows: truncated stays
+            true on a card that lists a capped slice of a larger set. The row order
+            isn''t guaranteed to stay the same between calls, so check the rows you
+            receive, for example by name. Web URLs ignore this field.'
+          default: 0
+          examples:
+          - 100
         max_chars:
           type: integer
           maximum: 1000000
@@ -2313,11 +2481,14 @@ components:
             Test ''content_format'' for null to tell a quote from a delivery. `max_rows`
             shapes the quote. An omitted `max_rows` defaults the way a real export
             does: the whole card for mode ''url'', and 2,000 rows for ''inline''.
-            The quote reads `mode` only for that default. Every format prices a quote
-            from `max_rows`, so a quote is instant and makes no call to a data provider.
-            A quote is an upper bound on the charge: an export of a card with fewer
-            rows than the cap bills less. For a card with data from a source priced
-            per unit, the quote also covers the most that data can charge, which `export_pricing`
+            The quote reads `mode` only for that default. A quote ignores `offset`
+            when pricing, so it stays an upper bound, and it can''t tell whether the
+            card has a date column: a quote with `offset` above 0 can succeed on a
+            card whose export then answers 422. Every format prices a quote from `max_rows`,
+            so a quote is instant and makes no call to a data provider. A quote is
+            an upper bound on the charge: an export of a card with fewer rows than
+            the cap bills less. For a card with data from a source priced per unit,
+            the quote also covers the most that data can charge, which `export_pricing`
             reports as `variable_cost_max_usd`. A card_json export is truncated to
             `max_rows` like every other format, so the charge can never exceed the
             quote for the same cap. A card_json quote reports no `total_rows`, because
@@ -2331,12 +2502,13 @@ components:
           description: 'When true, reveal premium cells and bill them. A card''s premium
             columns (see manifest[].premium_class) are withheld by default: a withheld
             cell reads [premium: withheld] in CSV and is null in JSON formats. This
-            is the only way to receive their values. The export then adds export_pricing.premium_row_cpm_usd[class]
-            per 1,000 rows that hold a value in a column of that class, on top of
-            the standard row rate; premium_rows on the item reports the counts. The
-            flag has no effect on a card without premium columns and on web URLs,
-            and is rejected with content_format=card_json, which carries no premium
-            plumbing.'
+            is the only way to receive their values. The export then charges export_pricing.premium_row_cpm_usd[class]
+            per 1,000 premium records, on top of the standard row rate. A premium
+            record is a distinct company or person that the delivered rows hold a
+            value for in a column of that class; premium_rows on the item reports
+            the counts. The flag has no effect on a card without premium columns and
+            on web URLs, and is rejected with content_format=card_json, which carries
+            no premium plumbing.'
           default: false
         highlights:
           anyOf:
@@ -2775,12 +2947,13 @@ components:
             type: number
           type: object
           title: Premium Row Cpm Usd
-          description: USD charged per 1,000 premium rows, keyed by premium class
+          description: USD charged per 1,000 premium records, keyed by premium class
             ('company_record', 'person_contact'), added on top of row_cpm_usd when
-            a /contents export passes premium=true. A premium row is a delivered row
-            with at least one non-null cell in a column of that class; the item's
-            premium_rows reports the count per class. Empty when the card has no premium
-            columns. Not affected by a row-charge waiver.
+            a /contents export passes premium=true. A premium record is a distinct
+            company or person that the delivered rows hold a non-null value for in
+            a column of that class; the item's premium_rows reports the count per
+            class. Empty when the card has no premium columns. Not affected by a row-charge
+            waiver.
         free_rows:
           type: integer
           title: Free Rows
@@ -2823,7 +2996,10 @@ components:
         own price = baseline_usd + row_cpm_usd * rows / 1000 + sum over classes c
         of
 
-        premium_row_cpm_usd[c] * premium_rows[c] / 1000, rows <= max_rows_ceiling.
+        premium_row_cpm_usd[c] * premium_rows[c] / 1000, rows <= max_rows_ceiling,
+        and
+
+        premium_rows[c] the export''s premium record count for class c.
 
         For a card with data from a source priced per unit, the export charges the
 
@@ -3308,6 +3484,18 @@ components:
       title: PremiumClass
       description: The price class of a premium column. Person and company records
         are licensed at different per-record rates.
+    RateLimitExceededError:
+      properties:
+        error_message:
+          type: string
+          title: Error Message
+        error_type:
+          $ref: '#/components/schemas/APIErrorType'
+          default: RATE_LIMIT_EXCEEDED
+      type: object
+      required:
+      - error_message
+      title: RateLimitExceededError
     ReasoningEvent:
       properties:
         kind:
@@ -3568,15 +3756,17 @@ components:
             type: object
           - type: 'null'
           title: Premium Rows
-          description: Per premium class ('company_record', 'person_contact'), the
-            number of delivered rows with at least one non-null cell in a column of
-            that class, whether revealed or withheld. Multiply by export_pricing.premium_row_cpm_usd[class]
-            / 1000 to price the premium part of an export before asking for it. A
-            row with cells of two classes counts once in each. Empty for a card with
-            no premium columns; null for web text. On an agent run card, it counts
-            every row of the card, so a premium=true export of all total_rows rows
-            bills exactly these rows when total_rows is within max_rows_ceiling. It's
-            set wherever total_rows is.
+          description: 'Per premium class (''company_record'', ''person_contact''),
+            the number of distinct records that the delivered rows hold a value for
+            in a column of that class, whether revealed or withheld: one per company
+            for ''company_record'' and one per person for ''person_contact''. A row
+            whose record can''t be identified counts as its own record. Multiply by
+            export_pricing.premium_row_cpm_usd[class] / 1000 to price the premium
+            part of an export before asking for it. A row with cells of two classes
+            counts in each. Empty for a card with no premium columns; null for web
+            text. On an agent run card, it counts every row of the card, so a premium=true
+            export of all total_rows rows bills exactly these records when total_rows
+            is within max_rows_ceiling. It''s set wherever total_rows is.'
         redacted_cells:
           anyOf:
           - additionalProperties:
@@ -3654,7 +3844,8 @@ components:
 
         SMALLER of the rows the export returns and `max_rows` clamped to
 
-        `max_rows_ceiling`, `premium_rows` is this item''s per-class count, and the
+        `max_rows_ceiling`, `premium_rows` is this item''s per-class record count,
+        and the
 
         premium term applies only to an export that passes `premium=true`. One
 
@@ -4268,13 +4459,12 @@ components:
           - type: boolean
           - type: 'null'
           title: Variable Cost
-          description: 'Return data from sources priced per unit, such as web traffic
-            and SEO data. Such data adds a charge above the request''s own price,
-            which the response''s `usage` object reports as `variable_cost`. Set it
-            to false and each such card is a placeholder with its title and no data
-            points. Leave it out and your account''s default applies: on for a contract
-            account with signed terms, off otherwise. A contract account without signed
-            terms gets placeholders whatever you send.'
+          description: Return data from sources priced per unit, such as web traffic
+            and SEO data. Such data adds a charge above the request's own price, which
+            the response's `usage` object reports as `variable_cost`. Defaults to
+            true. Set it to false and each such card is a placeholder with its title,
+            a description and no data points. To get a placeholder's data, request
+            the card's URL from POST /api/v1/contents.
       additionalProperties: false
       type: object
       required:
