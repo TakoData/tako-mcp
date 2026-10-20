@@ -1000,6 +1000,199 @@ paths:
                 $ref: '#/components/schemas/ErrorObject'
       security:
       - apiKey: []
+  /v1/agent/company/runs:
+    get:
+      tags:
+      - agent
+      summary: List company agent runs
+      description: List the authenticated caller's company agent runs, newest first.
+        Returns trimmed run summaries. Fetch full detail via GET /v1/agent/company/runs/{run_id}.
+      operationId: listCompanyAgentRuns
+      parameters:
+      - description: Opaque pagination cursor from a previous response's next_cursor.
+        required: false
+        schema:
+          type: string
+        name: cursor
+        in: query
+      - description: Max items to return (default 20, max 100).
+        required: false
+        schema:
+          type: integer
+          maximum: 100
+          minimum: 1
+        name: limit
+        in: query
+      responses:
+        '200':
+          description: A page of the caller's company agent runs, newest first.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CompanyAgentRunList'
+        '400':
+          description: Invalid pagination parameter (limit or cursor).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+        '401':
+          description: Missing or invalid API key.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+      security:
+      - apiKey: []
+    post:
+      tags:
+      - agent
+      summary: Dispatch a company agent run
+      description: 'Dispatch a company agent run, which builds lists of companies
+        and the people at them from company registries and licensed company and people
+        data. Returns 202 with a CompanyAgentRun object. Poll GET /v1/agent/company/runs/{run_id}
+        until status is ''completed'' or ''failed''. Contact columns on the result''s
+        list cards are locked: export a card through POST /v1/contents with premium
+        set to true to reveal and pay for them. A run that returns data from sources
+        priced per unit, such as web traffic and SEO data, adds a charge above the
+        run''s own price, which the completed run''s `usage` object reports as `variable_cost`.
+        A failed run pays no such charge.'
+      operationId: createCompanyAgentRun
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CompanyAgentRunRequest'
+        required: true
+      responses:
+        '202':
+          description: 'Run dispatched. With Accept: application/json, poll GET /v1/agent/company/runs/{run_id}
+            for the run status. With Accept: text/event-stream, the response is an
+            SSE stream of RetrievalAgentStreamEnvelope events. The stream ends at
+            stream_done. If the stream ends without an agent_result event, poll GET
+            /v1/agent/company/runs/{run_id} for the terminal status.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CompanyAgentRun'
+            text/event-stream:
+              schema:
+                $ref: '#/components/schemas/RetrievalAgentStreamEnvelope'
+        '400':
+          description: 'Invalid request: for example, a blank query, a malformed body,
+            or an output_schema, which the company agent doesn''t support.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+        '401':
+          description: Missing or invalid API key.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+        '402':
+          description: Insufficient API credit balance (PAYG pre-dispatch gate).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+        '429':
+          description: 'Too many requests. With error_type RATE_LIMIT_EXCEEDED, the
+            request hit a rate limit: retry after the interval in the Retry-After
+            header. With code budget_exceeded, the API key or its owner has used a
+            spend budget: do not retry automatically. A budget response carries the
+            header x-should-retry: false, and Retry-After with the seconds until the
+            budget resets, except for a total budget.'
+          content:
+            application/json:
+              schema:
+                anyOf:
+                - $ref: '#/components/schemas/RateLimitExceededError'
+                - $ref: '#/components/schemas/ErrorObject'
+        '404':
+          description: The company agent isn't available in this environment, or thread_id
+            does not exist or is not owned by the caller.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+        '409':
+          description: 'Conflict. code is one of: ''conflict'' (the thread already
+            has a run in flight); ''thread_product_mismatch'' (the thread belongs
+            to a different agent product); ''source_indexes_mismatch'' (a follow-up
+            changed the thread''s pinned source_indexes); ''effort_mismatch'' (a follow-up
+            changed the thread''s effort).'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+        '500':
+          description: Failed to dispatch the agent run.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+      security:
+      - apiKey: []
+  /v1/agent/company/runs/{run_id}:
+    get:
+      tags:
+      - agent
+      summary: Poll a company agent run
+      description: Retrieve the current state of a company agent run. Poll until status
+        is 'completed' or 'failed'. The response includes result when status is 'completed'.
+      operationId: getCompanyAgentRun
+      parameters:
+      - description: The run ID from the POST /v1/agent/company/runs response.
+        required: true
+        schema:
+          type: string
+        name: run_id
+        in: path
+      - description: 'SSE resume cursor (Accept: text/event-stream only). The stream
+          replays events with seq greater than this value. It is equivalent to the
+          Last-Event-ID header.'
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+        name: starting_after
+        in: query
+      responses:
+        '200':
+          description: 'Current state of the agent run. With Accept: text/event-stream,
+            the response replays and then follows the run as an SSE stream of RetrievalAgentStreamEnvelope
+            events. Use starting_after or Last-Event-ID to resume. If the stream ends
+            without an agent_result event, poll this endpoint with Accept: application/json
+            for the terminal status.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CompanyAgentRun'
+            text/event-stream:
+              schema:
+                $ref: '#/components/schemas/RetrievalAgentStreamEnvelope'
+        '401':
+          description: Missing or invalid API key.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+        '403':
+          description: The run is not owned by the caller.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+        '404':
+          description: Run not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+      security:
+      - apiKey: []
 components:
   schemas:
     TakoDataset:
@@ -1963,6 +2156,232 @@ components:
         manifest is positionally aligned with the exported columns (manifest entry
 
         ``i`` describes column ``i``).'
+    CompanyAgentEffort:
+      type: string
+      enum:
+      - low
+      - medium
+      - high
+      title: CompanyAgentEffort
+      description: 'Effort levels for the company-research agent (POST /v1/agent/company/runs).
+
+
+        All three are available. ''medium'' is the default. ''medium'' and ''high''
+        differ
+
+        in model strength and budget, and ''high'' always takes longer.
+
+
+        ''low'' is not a smaller ''medium''. It answers from the company registry
+        and
+
+        the web only: it screens companies by status, incorporation date, registered
+
+        location and industry, and it resolves named companies and people. It cannot
+
+        filter or rank by financial metrics such as revenue, market cap or
+
+        headcount, and it cannot screen by SIC code. Ask it for one of those and it
+
+        answers the part it can and tells you which part it could not.
+
+
+        The effort is fixed for the life of a thread. A follow-up that sends a
+
+        different effort gets a 409 response with the code ''effort_mismatch''. To
+        use
+
+        a different effort, start a new thread.'
+    CompanyAgentRun:
+      properties:
+        run_id:
+          type: string
+          title: Run Id
+        object:
+          type: string
+          const: agent.company.run
+          title: Object
+          default: agent.company.run
+        thread_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Thread Id
+        status:
+          $ref: '#/components/schemas/AgentRunStatus'
+        created_at:
+          type: string
+          title: Created At
+        completed_at:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Completed At
+        result:
+          anyOf:
+          - $ref: '#/components/schemas/RetrievalAgentResult'
+          - type: 'null'
+        error:
+          anyOf:
+          - $ref: '#/components/schemas/ErrorObject'
+          - type: 'null'
+        usage:
+          anyOf:
+          - $ref: '#/components/schemas/Usage'
+          - type: 'null'
+        request:
+          anyOf:
+          - $ref: '#/components/schemas/CompanyAgentRunRequest'
+          - type: 'null'
+      type: object
+      required:
+      - run_id
+      - status
+      - created_at
+      title: CompanyAgentRun
+      description: 'The company-agent run resource returned by dispatch (202) and
+        poll (GET):
+
+        the retrieval run''s shape, with its own object type and the company request
+        echoed.'
+    CompanyAgentRunList:
+      properties:
+        object:
+          type: string
+          const: list
+          title: Object
+          default: list
+        data:
+          items:
+            $ref: '#/components/schemas/CompanyAgentRunSummary'
+          type: array
+          title: Data
+        has_more:
+          type: boolean
+          title: Has More
+          default: false
+        next_cursor:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Next Cursor
+      type: object
+      required:
+      - data
+      title: CompanyAgentRunList
+      description: 'List envelope for GET /v1/agent/company/runs. The shape follows
+        the
+
+        OpenAI and Exa list convention.'
+    CompanyAgentRunRequest:
+      properties:
+        query:
+          type: string
+          title: Query
+          description: Natural-language company or people research request for the
+            company agent.
+          examples:
+          - Directors of publicly traded US banks
+        thread_id:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+          title: Thread Id
+          description: Existing thread to continue (follow-up). Omit to start a new
+            thread.
+        effort:
+          anyOf:
+          - $ref: '#/components/schemas/CompanyAgentEffort'
+          - type: 'null'
+          description: 'Company-research effort tier: low, medium, or high. Omit it
+            on a new thread and Tako uses medium; omit it on a follow-up and the run
+            keeps the thread''s tier.'
+        source_indexes:
+          anyOf:
+          - items:
+              type: string
+              enum:
+              - data
+              - web
+            type: array
+          - type: 'null'
+          title: Source Indexes
+          description: 'Which sources the agent may use: ''data'' (curated knowledge),
+            ''web'' (open-web search), or both. Omit it on a new thread and the agent
+            uses both; omit it on a follow-up and the run keeps the thread''s sources.
+            Tako accepts the legacy value ''tako'' as a synonym for ''data''.'
+          examples:
+          - - data
+          - - web
+          - - data
+            - web
+        cards:
+          type: boolean
+          title: Cards
+          description: 'Whether the agent may build visualization cards. True is permissive:
+            the agent may build cards, but it does not have to (a completed run with
+            no cards is legitimate). Set false to suppress card building entirely.'
+          default: true
+        locale:
+          type: string
+          title: Locale
+          description: BCP-47 locale. Drives the language of the agent's answer and
+            the locale used when rendering card preview images.
+          default: en-US
+        timezone:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Timezone
+          description: IANA timezone (for example, 'America/New_York'). The agent
+            uses it to render dates and times in card preview images. It does not
+            affect the returned data.
+        output_settings:
+          anyOf:
+          - $ref: '#/components/schemas/AgentOutputSettings'
+          - type: 'null'
+          description: Settings that control the response and rendering.
+      type: object
+      required:
+      - query
+      title: CompanyAgentRunRequest
+      description: Request body for POST /v1/agent/company/runs.
+    CompanyAgentRunSummary:
+      properties:
+        run_id:
+          type: string
+          title: Run Id
+        status:
+          $ref: '#/components/schemas/AgentRunStatus'
+        created_at:
+          type: string
+          title: Created At
+        completed_at:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Completed At
+        thread_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Thread Id
+        usage:
+          anyOf:
+          - $ref: '#/components/schemas/Usage'
+          - type: 'null'
+        object:
+          type: string
+          const: agent.company.run
+          title: Object
+          default: agent.company.run
+      type: object
+      required:
+      - run_id
+      - status
+      - created_at
+      title: CompanyAgentRunSummary
     ComponentConfig:
       properties:
         component_type:
@@ -2508,7 +2927,8 @@ components:
             value for in a column of that class; premium_rows on the item reports
             the counts. The flag has no effect on a card without premium columns and
             on web URLs, and is rejected with content_format=card_json, which carries
-            no premium plumbing.'
+            no premium plumbing. Over MPP, premium=true is refused with a 403 before
+            any charge, unless quote_only is also true.'
           default: false
         highlights:
           anyOf:
