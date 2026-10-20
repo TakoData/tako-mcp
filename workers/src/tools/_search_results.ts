@@ -398,8 +398,8 @@ function capCsv(csv: string, cap: number): { data: string; truncated: boolean } 
  * of a caller who set include_contents and omitted max_rows.
  */
 /**
- * The four keys that carry a ROW PAYLOAD, and the ten that carry metadata about
- * one. Declared rather than left implicit in the destructure below because the
+ * The four keys that carry a ROW PAYLOAD, and the sixteen that carry metadata
+ * about one. Declared rather than left implicit in the destructure below because the
  * `card_data` leak was exactly this list falling behind the backend: it named
  * three keys while the generated `ContentItem` had four, so a call asking to drop
  * every row shipped the whole rich card_json object.
@@ -418,6 +418,10 @@ function capCsv(csv: string, cap: number): { data: string; truncated: boolean } 
  * rows rather than carry them, so none of them can leak a row out on a call
  * that asked for none. `premium` is a flag, and `premium_rows` and
  * `redacted_cells` are a per-class count and a set of positions.
+ *
+ * `description` and `offset` are METADATA too: the first is the card's prose
+ * summary, which search already returns without rows, and the second echoes
+ * the request's offset.
  *
  * Known caveat, live only once a card actually carries a premium column (today
  * none does, and `premium` is false on every search and answer card): both
@@ -444,6 +448,8 @@ export const CONTENT_META_KEYS = [
   "premium",
   "premium_rows",
   "redacted_cells",
+  "description",
+  "offset",
 ] as const;
 
 export function slimCardContent(
