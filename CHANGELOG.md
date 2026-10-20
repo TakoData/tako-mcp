@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.4.4](https://github.com/TakoData/tako-mcp/compare/v1.4.3...v1.4.4) (2026-10-20)
+
+
+### Bug Fixes
+
+* classify ContentItem description and offset as metadata ([3591f3e](https://github.com/TakoData/tako-mcp/commit/3591f3ed3621f311a0515053a50bdccd6f58ce46))
+
+
+### Chores
+
+* sync OpenAPI spec from monorepo ([f3b5c42](https://github.com/TakoData/tako-mcp/commit/f3b5c42dbd1c861c552d1251eb472fd5c4d17203))
+* sync OpenAPI spec from TakoData/tako ([5143863](https://github.com/TakoData/tako-mcp/commit/514386319ec8709bafe58850cff48f119ed660b3))
+
 ## [1.4.3](https://github.com/TakoData/tako-mcp/compare/v1.4.2...v1.4.3) (2026-10-13)
 
 
