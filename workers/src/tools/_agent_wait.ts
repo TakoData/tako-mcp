@@ -401,6 +401,10 @@ export async function waitForRun(
       if (callWindow.signal.aborted) return undefined;
       if (wire !== undefined) {
         noteThread(wire.thread_id);
+        if (!agentRunSchema.shape.status.safeParse(wire.status).success) {
+          logWireGuardFailure(AGENT_TOOL_NAME[product], "poll-status", undefined, wire);
+          throw new Error(`The ${product} agent run endpoint returned an unexpected shape.`);
+        }
         if (isTerminal(wire.status)) {
           const run = parseRun(product, backendRunId, wire);
           if (run === undefined) {

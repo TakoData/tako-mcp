@@ -396,21 +396,20 @@ describe("waitForRun", () => {
       );
     });
 
-    it("keeps polling a body with no status until the window ends, then returns running", async () => {
+    it("throws the unexpected-shape error when a poll body has no status", async () => {
       vi.mocked(djangoGet).mockResolvedValue({ run_id: RUN });
 
-      const outcome = await pollOutcome(AGENT_CALL_WINDOW_MS + 1_000);
-
-      expect(outcome.kind).toBe("running");
-      expect(vi.mocked(djangoGet).mock.calls.length).toBeGreaterThan(1);
+      await expect(pollOutcome(0)).rejects.toThrow(
+        "The answer agent run endpoint returned an unexpected shape.",
+      );
     });
 
-    it("keeps polling a body with an unknown status until the window ends, then returns running", async () => {
+    it("throws the unexpected-shape error when a poll body has an unknown status", async () => {
       vi.mocked(djangoGet).mockResolvedValue({ run_id: RUN, status: "paused" });
 
-      const outcome = await pollOutcome(AGENT_CALL_WINDOW_MS + 1_000);
-
-      expect(outcome.kind).toBe("running");
+      await expect(pollOutcome(0)).rejects.toThrow(
+        "The answer agent run endpoint returned an unexpected shape.",
+      );
     });
 
     it.each(["running", "queued"])(
