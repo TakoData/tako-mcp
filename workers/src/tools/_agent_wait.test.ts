@@ -360,6 +360,35 @@ describe("waitForRun", () => {
     expect(outcome.run.result?.answer).toBe("F");
   });
 
+  it("returns running instead of throwing when the fallback poll fails three times in a row", async () => {
+    stubStream(scriptedStream([{ atMs: 0, text: status("Searching") }], 0));
+    vi.mocked(djangoGet).mockRejectedValue(new Error("connection reset"));
+
+    const pending = waitForRun(makeCtx(), "answer", RUN, {
+      windowMs: AGENT_CALL_WINDOW_MS,
+      createdAtMs: Date.now(),
+    });
+    await vi.advanceTimersByTimeAsync(10_000);
+    const outcome = await pending;
+
+    expect(outcome).toEqual({ kind: "running", progress: "Searching", threadId: "t1" });
+    expect(djangoGet).toHaveBeenCalledTimes(3);
+  });
+
+  it("throws DjangoNotFoundError when the poll finds no run", async () => {
+    stubStream(scriptedStream([], 0));
+    vi.mocked(djangoGet).mockRejectedValue(
+      new DjangoNotFoundError({ path: "/api/v1/agent/answer/runs/r1", method: "GET" }),
+    );
+
+    const err = await waitForRun(makeCtx(), "answer", RUN, {
+      windowMs: AGENT_CALL_WINDOW_MS,
+      createdAtMs: Date.now(),
+    }).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(DjangoNotFoundError);
+  });
+
   it("throws DjangoNotFoundError when the run doesn't exist", async () => {
     vi.stubGlobal(
       "fetch",

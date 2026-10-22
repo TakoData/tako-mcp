@@ -267,8 +267,9 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
  * seconds since `opts.createdAtMs`. Returns `terminal` once the stream's
  * `run_summary` arrives. If the stream breaks first, polls the run's JSON
  * resource every 5 s for the rest of the window. Returns `running` when the
- * window ends or `opts.signal` aborts; it never cancels the run. Throws the
- * `DjangoError` for a 400, 401, or 404 from the backend.
+ * window ends, when `opts.signal` aborts, or when the poll fails three times in
+ * a row; it never cancels the run. Throws the `DjangoError` for a 400, 401, or
+ * 404 from the backend.
  */
 export async function waitForRun(
   ctx: ToolContext,
@@ -390,7 +391,7 @@ export async function waitForRun(
           `[tako] agent poll transient error run_id=${backendRunId} attempt=${transient}/${MAX_TRANSIENT_ERRORS}:`,
           err,
         );
-        if (transient > MAX_TRANSIENT_ERRORS) throw err;
+        if (transient > MAX_TRANSIENT_ERRORS) return undefined;
       }
       if (callWindow.signal.aborted) return undefined;
       if (wire !== undefined) {
