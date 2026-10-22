@@ -346,11 +346,18 @@ describe("runAgentCall", () => {
     }
   });
 
-  it("maps thread_product_mismatch to the other tool's name", async () => {
+  it("maps thread_product_mismatch to the other tool's name when the connection registered it", async () => {
     const body = JSON.stringify({ code: "thread_product_mismatch", message: "x" });
+    const registered = { ...ctx, registeredTools: new Set(["tako_agent", "tako_company_agent"]) };
 
-    const fromAnswer = await startError("answer", httpError(409, body));
-    const fromCompany = await startError("company", httpError(409, body));
+    vi.mocked(djangoPost).mockRejectedValue(httpError(409, body));
+    const fromAnswer = (await runAgentCall(registered, "answer", { query: "q" }, startBody).catch(
+      (e: unknown) => e,
+    )) as DjangoHttpError;
+    vi.mocked(djangoPost).mockRejectedValue(httpError(409, body));
+    const fromCompany = (await runAgentCall(registered, "company", { query: "q" }, startBody).catch(
+      (e: unknown) => e,
+    )) as DjangoHttpError;
 
     expect(fromAnswer.modelGuidance).toBe(
       "This thread belongs to `tako_company_agent`. Use that tool, or omit `thread_id`.",
@@ -358,6 +365,23 @@ describe("runAgentCall", () => {
     expect(fromCompany.modelGuidance).toBe(
       "This thread belongs to `tako_agent`. Use that tool, or omit `thread_id`.",
     );
+  });
+
+  it("doesn't name the other agent tool when the connection didn't register it", async () => {
+    const body = JSON.stringify({ code: "thread_product_mismatch", message: "x" });
+    const answerOnly = { ...ctx, registeredTools: new Set(["tako_search", "tako_agent"]) };
+    vi.mocked(djangoPost).mockRejectedValue(httpError(409, body));
+
+    const err = (await runAgentCall(answerOnly, "answer", { query: "q" }, startBody).catch(
+      (e: unknown) => e,
+    )) as DjangoHttpError;
+    const unknownRegistry = await startError("company", httpError(409, body));
+
+    for (const guidance of [err.modelGuidance, unknownRegistry.modelGuidance]) {
+      expect(guidance).toBe(
+        "This thread belongs to a different agent. Omit `thread_id` to start a new conversation.",
+      );
+    }
   });
 
   it("leaves a 409 with an unparseable or unknown body unchanged", async () => {

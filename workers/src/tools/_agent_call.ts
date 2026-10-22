@@ -65,7 +65,22 @@ function conflictCode(err: DjangoHttpError): string | undefined {
   return typeof code === "string" ? code : undefined;
 }
 
-function conflictGuidance(code: string | undefined, product: AgentProduct): string | undefined {
+function threadProductMismatchGuidance(
+  product: AgentProduct,
+  registeredTools: ReadonlySet<string> | undefined,
+): string {
+  const otherTool = OTHER_TOOL[product];
+  if (registeredTools?.has(otherTool) !== true) {
+    return "This thread belongs to a different agent. Omit `thread_id` to start a new conversation.";
+  }
+  return `This thread belongs to \`${otherTool}\`. Use that tool, or omit \`thread_id\`.`;
+}
+
+function conflictGuidance(
+  code: string | undefined,
+  product: AgentProduct,
+  registeredTools: ReadonlySet<string> | undefined,
+): string | undefined {
   switch (code) {
     case "conflict":
       return "A run is still going on this thread. Call this tool again with that run's `run_id` to keep waiting. If you don't have it, omit `thread_id` to start a new conversation.";
@@ -74,7 +89,7 @@ function conflictGuidance(code: string | undefined, product: AgentProduct): stri
     case "source_indexes_mismatch":
       return "This thread's sources are fixed. Omit `sources` to keep them, or omit `thread_id` to start a new thread.";
     case "thread_product_mismatch":
-      return `This thread belongs to \`${OTHER_TOOL[product]}\`. Use that tool, or omit \`thread_id\`.`;
+      return threadProductMismatchGuidance(product, registeredTools);
     default:
       return undefined;
   }
@@ -85,13 +100,15 @@ function conflictGuidance(code: string | undefined, product: AgentProduct): stri
  *
  * Maps a 404 to thread-not-found when the request sent a `thread_id`, or to
  * "unavailable" for the company product when it didn't. Maps a 409 by its
- * `code`. Leaves every other error, and a 409 whose body doesn't parse,
- * unchanged. Returns `err`.
+ * `code`; a `thread_product_mismatch` names the other agent tool only when
+ * `registeredTools` holds it. Leaves every other error, and a 409 whose body
+ * doesn't parse, unchanged. Returns `err`.
  */
 export function mapStartError(
   err: DjangoError,
   product: AgentProduct,
   sentThreadId: boolean,
+  registeredTools?: ReadonlySet<string>,
 ): DjangoError {
   if (err instanceof DjangoNotFoundError) {
     if (sentThreadId) {
@@ -102,7 +119,7 @@ export function mapStartError(
     return err;
   }
   if (err instanceof DjangoHttpError && err.status === 409) {
-    const guidance = conflictGuidance(conflictCode(err), product);
+    const guidance = conflictGuidance(conflictCode(err), product, registeredTools);
     if (guidance !== undefined) err.modelGuidance = guidance;
   }
   return err;
@@ -198,7 +215,7 @@ async function startRun(
     });
   } catch (err) {
     if (err instanceof DjangoNotFoundError || err instanceof DjangoHttpError) {
-      mapStartError(err, product, input.thread_id !== undefined);
+      mapStartError(err, product, input.thread_id !== undefined, ctx.registeredTools);
     }
     throw err;
   }
