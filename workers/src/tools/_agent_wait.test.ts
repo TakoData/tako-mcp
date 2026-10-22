@@ -360,6 +360,76 @@ describe("waitForRun", () => {
     expect(outcome.run.result?.answer).toBe("F");
   });
 
+  describe("poll wire drift", () => {
+    async function pollOutcome(advanceMs: number): Promise<Awaited<ReturnType<typeof waitForRun>>> {
+      stubStream(scriptedStream([], 0));
+      const pending = waitForRun(makeCtx(), "answer", RUN, {
+        windowMs: AGENT_CALL_WINDOW_MS,
+        createdAtMs: Date.now(),
+      });
+      pending.catch(() => undefined);
+      await vi.advanceTimersByTimeAsync(advanceMs);
+      return pending;
+    }
+
+    it("returns a completed run with no result as terminal and projects it without an answer", async () => {
+      vi.mocked(djangoGet).mockResolvedValue({ run_id: RUN, status: "completed" });
+
+      const outcome = await pollOutcome(0);
+
+      if (outcome.kind !== "terminal") throw new Error("expected terminal");
+      const projected = projectAgentRun(outcome.run, "answer_run_1");
+      expect(projected.status).toBe("completed");
+      expect(projected.answer).toBeUndefined();
+      expect(projected.cards).toEqual([]);
+    });
+
+    it("throws the unexpected-shape error when a completed run's citation lacks a title", async () => {
+      vi.mocked(djangoGet).mockResolvedValue({
+        run_id: RUN,
+        status: "completed",
+        result: { answer: "x", cards: [], citations: [{ index: 1 }] },
+      });
+
+      await expect(pollOutcome(0)).rejects.toThrow(
+        "The answer agent run endpoint returned an unexpected shape.",
+      );
+    });
+
+    it("keeps polling a body with no status until the window ends, then returns running", async () => {
+      vi.mocked(djangoGet).mockResolvedValue({ run_id: RUN });
+
+      const outcome = await pollOutcome(AGENT_CALL_WINDOW_MS + 1_000);
+
+      expect(outcome.kind).toBe("running");
+      expect(vi.mocked(djangoGet).mock.calls.length).toBeGreaterThan(1);
+    });
+
+    it("keeps polling a body with an unknown status until the window ends, then returns running", async () => {
+      vi.mocked(djangoGet).mockResolvedValue({ run_id: RUN, status: "paused" });
+
+      const outcome = await pollOutcome(AGENT_CALL_WINDOW_MS + 1_000);
+
+      expect(outcome.kind).toBe("running");
+    });
+
+    it.each(["running", "queued"])(
+      "keeps polling a %s body with no result without throwing",
+      async (inFlight) => {
+        vi.mocked(djangoGet)
+          .mockResolvedValueOnce({ run_id: RUN, status: inFlight })
+          .mockResolvedValueOnce({ run_id: RUN, status: inFlight })
+          .mockResolvedValueOnce({ run_id: RUN, status: "completed", result: { answer: "done" } });
+
+        const outcome = await pollOutcome(10_000);
+
+        if (outcome.kind !== "terminal") throw new Error("expected terminal");
+        expect(outcome.run.result?.answer).toBe("done");
+        expect(djangoGet).toHaveBeenCalledTimes(3);
+      },
+    );
+  });
+
   it("returns running instead of throwing when the fallback poll fails three times in a row", async () => {
     stubStream(scriptedStream([{ atMs: 0, text: status("Searching") }], 0));
     vi.mocked(djangoGet).mockRejectedValue(new Error("connection reset"));
