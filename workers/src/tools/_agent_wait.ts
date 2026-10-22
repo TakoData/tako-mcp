@@ -273,8 +273,8 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
  * `run_summary` arrives. If the stream breaks first, polls the run's JSON
  * resource every 5 s for the rest of the window. Returns `running` when the
  * window ends, when `opts.signal` aborts, or when the poll fails three times in
- * a row; it never cancels the run. Throws the `DjangoError` for a 400, 401, or
- * 404 from the backend.
+ * a row; it never cancels the run. Throws the `DjangoError` for any 4xx from the
+ * backend except 408 and 429.
  */
 export async function waitForRun(
   ctx: ToolContext,

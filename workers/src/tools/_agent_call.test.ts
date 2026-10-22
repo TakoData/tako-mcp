@@ -252,8 +252,37 @@ describe("runAgentCall", () => {
     );
 
     expect(err.modelGuidance).toBe(
-      "A run is still going on this thread. Call this tool again with that run's `run_id` to keep waiting.",
+      "A run is still going on this thread. Call this tool again with that run's `run_id` to keep waiting. If you don't have it, omit `thread_id` to start a new conversation.",
     );
+  });
+
+  it("keeps the run_id in the guidance when the wait throws a DjangoError", async () => {
+    vi.mocked(djangoPost).mockResolvedValue({ run_id: "r1", thread_id: "t1", created_at: CREATED_AT });
+    const original = httpError(403, "", "GET");
+    vi.mocked(waitForRun).mockRejectedValue(original);
+
+    const err = (await runAgentCall(ctx, "answer", { query: "q" }, startBody).catch(
+      (e: unknown) => e,
+    )) as DjangoHttpError;
+
+    expect(err).toBe(original);
+    expect(err.modelGuidance).toBe(
+      "Run `answer_run_r1` started, but waiting on it failed. Call this tool again with run_id=`answer_run_r1`; don't start a new run.",
+    );
+  });
+
+  it("keeps the run_id in the message when the wait throws a plain Error", async () => {
+    vi.mocked(djangoPost).mockResolvedValue({ run_id: "r1", thread_id: "t1", created_at: CREATED_AT });
+    const original = new Error("unexpected shape");
+    vi.mocked(waitForRun).mockRejectedValue(original);
+
+    const err = (await runAgentCall(ctx, "answer", { query: "q" }, startBody).catch(
+      (e: unknown) => e,
+    )) as Error;
+
+    expect(err.message).toContain("answer_run_r1");
+    expect(err.message).toContain("don't start a new run");
+    expect(err.cause).toBe(original);
   });
 
   it("maps effort_mismatch to the brief's copy", async () => {

@@ -1,5 +1,5 @@
 import {
-  type DjangoError,
+  DjangoError,
   DjangoHttpError,
   DjangoNotFoundError,
   djangoGet,
@@ -67,7 +67,7 @@ function conflictCode(err: DjangoHttpError): string | undefined {
 function conflictGuidance(code: string | undefined, product: AgentProduct): string | undefined {
   switch (code) {
     case "conflict":
-      return "A run is still going on this thread. Call this tool again with that run's `run_id` to keep waiting.";
+      return "A run is still going on this thread. Call this tool again with that run's `run_id` to keep waiting. If you don't have it, omit `thread_id` to start a new conversation.";
     case "effort_mismatch":
       return "This thread's effort is fixed. Omit `effort` to keep the thread's tier, or omit `thread_id` to start a new thread at a different effort.";
     case "source_indexes_mismatch":
@@ -118,6 +118,10 @@ export function mapResumeError(err: DjangoError, _product: AgentProduct): Django
     err.modelGuidance = RUN_NOT_FOUND_GUIDANCE;
   }
   return err;
+}
+
+function waitFailedGuidance(publicRunId: string): string {
+  return `Run \`${publicRunId}\` started, but waiting on it failed. Call this tool again with run_id=\`${publicRunId}\`; don't start a new run.`;
 }
 
 function createdAtMs(createdAt: string | undefined): number {
@@ -194,12 +198,21 @@ async function startRun(
   }
   const startedAtMs = createdAtMs(started.created_at);
   const threadId = nonEmpty(started.thread_id);
-  const outcome = await waitForRun(ctx, product, backendRunId, {
-    windowMs: AGENT_CALL_WINDOW_MS,
-    createdAtMs: startedAtMs,
-    ...(ctx.signal === undefined ? {} : { signal: ctx.signal }),
-  });
-  return projectOutcome(product, backendRunId, outcome, startedAtMs, threadId);
+  try {
+    const outcome = await waitForRun(ctx, product, backendRunId, {
+      windowMs: AGENT_CALL_WINDOW_MS,
+      createdAtMs: startedAtMs,
+      ...(ctx.signal === undefined ? {} : { signal: ctx.signal }),
+    });
+    return projectOutcome(product, backendRunId, outcome, startedAtMs, threadId);
+  } catch (err) {
+    const guidance = waitFailedGuidance(toPublicRunId(product, backendRunId));
+    if (err instanceof DjangoError) {
+      err.modelGuidance = guidance;
+      throw err;
+    }
+    throw new Error(guidance, { cause: err });
+  }
 }
 
 async function resumeRun(
