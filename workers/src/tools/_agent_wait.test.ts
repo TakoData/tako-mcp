@@ -4,7 +4,7 @@ vi.mock("../django.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../django.js")>();
   return { ...actual, djangoGet: vi.fn(), djangoPost: vi.fn() };
 });
-import { DjangoNotFoundError, djangoGet, djangoPost } from "../django.js";
+import { DjangoHttpError, DjangoNotFoundError, djangoGet, djangoPost } from "../django.js";
 import type { Env } from "../env.js";
 import { projectAgentRun } from "./_agent_run.js";
 import {
@@ -402,6 +402,26 @@ describe("waitForRun", () => {
 
     expect(err).toBeInstanceOf(DjangoNotFoundError);
     expect(djangoGet).not.toHaveBeenCalled();
+  });
+
+  it("throws a 403 from the poll instead of retrying it", async () => {
+    stubStream(scriptedStream([], 0));
+    vi.mocked(djangoGet).mockRejectedValue(
+      new DjangoHttpError({
+        path: "/api/v1/agent/answer/runs/r1",
+        method: "GET",
+        status: 403,
+        body: "",
+      }),
+    );
+
+    const err = await waitForRun(makeCtx(), "answer", RUN, {
+      windowMs: AGENT_CALL_WINDOW_MS,
+      createdAtMs: Date.now(),
+    }).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(DjangoHttpError);
+    expect(djangoGet).toHaveBeenCalledTimes(1);
   });
 
   it("returns running with the last progress and thread_id when the window ends", async () => {

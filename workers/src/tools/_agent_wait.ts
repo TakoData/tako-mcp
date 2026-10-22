@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import {
   DjangoBadRequestError,
+  DjangoHttpError,
   DjangoNotFoundError,
   DjangoUnauthorizedError,
   djangoGet,
@@ -191,11 +192,15 @@ class ProgressRelay {
 }
 
 function isClientError(err: unknown): boolean {
-  return (
+  if (
     err instanceof DjangoNotFoundError ||
     err instanceof DjangoUnauthorizedError ||
     err instanceof DjangoBadRequestError
-  );
+  ) {
+    return true;
+  }
+  if (!(err instanceof DjangoHttpError) || err.status === undefined) return false;
+  return err.status >= 400 && err.status < 500 && err.status !== 408 && err.status !== 429;
 }
 
 function isTerminal(status: string | undefined): boolean {

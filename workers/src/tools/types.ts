@@ -66,6 +66,8 @@ export interface ToolContext {
     progress: number,
     opts?: { total?: number; message?: string },
   ) => Promise<void>;
+  /** Aborts when the client drops the request. `undefined` outside an HTTP context. */
+  signal?: AbortSignal | undefined;
   /**
    * The path-selected surface serving the current request — see
    * `surface.ts`. Tools that need to vary presentation across the two
