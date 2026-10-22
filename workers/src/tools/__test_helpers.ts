@@ -17,14 +17,8 @@ import type { ToolContext } from "./types.js";
 /**
  * No-op `sendProgress` for test contexts, to satisfy the `ToolContext` shape.
  *
- * NO TOOL CALLS `sendProgress` any more. `tako_agent`'s run-polling loop was
- * the last caller and dropped it: the transport runs
- * `enableJsonResponse: true`, which discards every request-scoped
- * notification, so no host ever received one (TAKO-4485). This helper exists
- * because the field is still required on the context, not because a tool emits
- * progress. A test asserting progress emissions would be asserting a channel
- * that does not exist — `tako_agent.test.ts` pins `not.toHaveBeenCalled()`
- * instead.
+ * Agent tool calls stream progress over SSE, so a real context carries a live
+ * `sendProgress`. Use this no-op in tests that don't assert progress.
  */
 export const noopSendProgress: ToolContext["sendProgress"] = async () => {
   /* no-op */

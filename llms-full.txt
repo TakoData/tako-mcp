@@ -122,10 +122,20 @@ Parameters:
 Never send sensitive data in `components` — it becomes a public page. No credentials, payment or bank details, health information, government identifiers, precise home addresses, or personal data the subject has not agreed to publish.
 
 ### tako_agent
-Opt-in tool — name `agent` in `?tools=` on the endpoint URL (see Connecting). Run Tako's Answer Agent on a question that needs research rather than a lookup: cohorts, ranking or screening by criteria, multi-step aggregation, multi-hop reasoning; also the fallback when `tako_search` / `tako_search_advanced` find nothing. Returns a written `answer` with numbered citations plus the chart `cards` it built. Not on the ChatGPT app surface (`/mcp/chatgpt`). A call returns within 45 s. If `status` is `running`, call again with `run_id`; don't start a new run.
+Opt-in tool — name `agent` in `?tools=` on the endpoint URL (see Connecting). Run Tako's Answer Agent on a question that needs research rather than a lookup: ranking or screening by financial or economic metrics, multi-step aggregation, multi-hop reasoning; also the fallback when `tako_search` / `tako_search_advanced` find nothing. For which companies or people match registry facts (status, incorporation date, location, industry), use `tako_company_agent` instead. Returns a written `answer` with numbered citations plus the chart `cards` it built. Not on the ChatGPT app surface (`/mcp/chatgpt`). A call returns within 45 s. If `status` is `running`, call again with `run_id`; don't start a new run.
 
 Parameters:
 - `query` (string, optional): The question to research, in natural language. Ask one question per call; the agent plans its own sub-steps. Send `query` or `run_id`, not both.
 - `run_id` (string, optional): A `run_id` from an earlier call that returned `status: running`. Send it instead of `query` to keep waiting for that run.
 - `sources` (array, optional): Which corpora to search; default is both (`["data","web"]`). Narrow to `["data"]` once `tako_available_data` confirms coverage; narrow to `["web"]` only for news or page text — website traffic is in the data graph.
 - `thread_id` (string UUID, optional): A `thread_id` from an earlier run. Pass it back to ask a follow-up in that conversation; omit it to start a new one.
+
+### tako_company_agent
+Opt-in tool — name `company_agent` in `?tools=` on the endpoint URL (see Connecting). Run Tako's Company Agent on a question about which companies or people match registry facts: screening by status, incorporation date, registered location, or industry; resolving named companies; finding a company's officers and directors. It searches the company registry and the web, and returns a written `answer` with numbered citations plus any list `cards` it built. Not on the ChatGPT app surface (`/mcp/chatgpt`). A call returns within 45 s. If `status` is `running`, call again with `run_id`; don't start a new run.
+
+Parameters:
+- `query` (string, optional): The question to research, in natural language. Ask one question per call. Send `query` or `run_id`, not both.
+- `run_id` (string, optional): A `company_run_` `run_id` from an earlier call that returned `status: running`. Send it instead of `query` to keep waiting for that run.
+- `sources` (array, optional): Which corpora to search; default is both (`["data","web"]`).
+- `thread_id` (string UUID, optional): A `thread_id` from an earlier run. Pass it back to ask a follow-up in that conversation; omit it to start a new one.
+- `effort` (string, optional): Research depth. `medium` is the default; `high` is stronger and slower. `low` can't filter or rank by financial metrics such as revenue or headcount. Effort is fixed for a thread.
