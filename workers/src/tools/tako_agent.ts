@@ -12,14 +12,10 @@
  * This is opt-in on the generic surface only: name `agent` in `?tools=`. It is
  * off the chatgpt surface (`CHATGPT_TOOL_NAMES` in `_surface.ts`).
  *
- * PRODUCT: the public agent split (TAKO-3371) has two products — the Answer
- * Agent (cited prose + cards; this tool) and the Retrieval Agent (structured
- * output / dataset slots). MCP exposes ONLY the Answer Agent: chat hosts want
- * a synthesized answer, and the Retrieval Agent's structured-output feature has
- * no chat-host consumer (it lives in the SDK). `effort: "medium"` already
- * routed to the Answer Agent (ORCHESTRATOR) on the retired generic
- * `/v1/agent/runs`, so pointing at `/v1/agent/answer/runs` is
- * behaviour-preserving.
+ * PRODUCT: this tool wraps the Answer Agent (cited prose + cards), and
+ * `tako_company_agent` wraps the Company Agent. MCP doesn't expose the
+ * Retrieval Agent: its structured-output feature has no chat-host consumer
+ * (it lives in the SDK).
  *
  * BILLING: agent runs over MCP are not yet metered for PAYG orgs (TAKO-3245).
  */

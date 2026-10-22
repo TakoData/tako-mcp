@@ -12,8 +12,8 @@
  *
  * Both channels now carry the same projected result. Every field is mapped on
  * purpose, so an unknown backend key cannot leak; wire-drift protection is the
- * generated-contract guard in `pollAgentRun` plus the conformance test in
- * `_agent_run.test.ts`.
+ * `agentRunSchema` guard in `waitForRun` and `runAgentCall` plus the
+ * conformance test in `_agent_run.test.ts`.
  *
  * What the projection drops, and why (sizes measured on two staging runs,
  * 2026-08-30 — `effort: "medium"`):
@@ -32,7 +32,7 @@
  *     generated contract states the Answer Agent "populates source_index and
  *     leaves the rest null", and both live runs confirm it.
  *   - `result.request_id`: a correlation id with no model reader.
- *     `pollAgentRun` logs `run_id` on the TERMINAL poll, which is where a
+ *     `waitForRun` logs `run_id` when the run ends, which is where a
  *     support question gets answered.
  *   - `timed_out`: deleted outright, not just dropped here. It was
  *     MCP-synthetic, only ever `true` on the `onTimeout: "return"` arm that

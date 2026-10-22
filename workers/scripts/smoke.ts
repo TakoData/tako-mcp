@@ -25,6 +25,8 @@
  *        a2. `tako_available_data "US GDP"` — text plus a match with an id (read-only)
  *        b. `tako_search_advanced "US GDP" include_answer` — answer text returned (read-only)
  *        c. `tako_contents {urls}` — a card's rows in BOTH channels, then a web url's page text (read-only)
+ *        c2. `tako_company_agent` at `effort: "low"` — starts one billable
+ *            company-agent run, which the smoke doesn't cancel
  *        d. `tako_visualize`              — creates a card (charges 1 credit)
  *   6. Native-card proxy on the card step 5d just created — all three of its
  *      routes, since the feature is only as live as its weakest one:
