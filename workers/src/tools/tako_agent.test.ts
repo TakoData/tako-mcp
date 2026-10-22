@@ -57,11 +57,8 @@ describe("tako_agent", () => {
     // generic agent's web_results).
     expect(out.citations).toHaveLength(1);
     expect(out.citations[0]?.index).toBe(1);
-    // The lifecycle fields the old advertised shape was made of are GONE from
-    // the model-facing result: `run_id` and `status` have no model reader and
-    // no poll tool (see _agent_run.ts).
-    expect(out).not.toHaveProperty("run_id");
-    expect(out).not.toHaveProperty("status");
+    expect(out.run_id).toBe("answer_run_run_1");
+    expect(out.status).toBe("completed");
   });
 
   it("surfaces the Answer Agent metadata (definitions/assumptions/methodology) instead of dropping it", async () => {

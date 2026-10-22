@@ -271,7 +271,7 @@ describe("waitForRun", () => {
 
     if (outcome.kind !== "terminal") throw new Error("expected terminal");
     expect(outcome.run.result?.answer).toBe("B");
-    expect(projectAgentRun(outcome.run).answer).toBe("B");
+    expect(projectAgentRun(outcome.run, "answer_run_1").answer).toBe("B");
     expect(vi.mocked(djangoGet).mock.calls[0]![2]).toBe("/api/v1/agent/answer/runs/r1");
   });
 
@@ -305,7 +305,7 @@ describe("waitForRun", () => {
     const outcome = await pending;
 
     if (outcome.kind !== "terminal") throw new Error("expected terminal");
-    expect(projectAgentRun(outcome.run).answer).toBe("G");
+    expect(projectAgentRun(outcome.run, "answer_run_1").answer).toBe("G");
   });
 
   it("falls back to the JSON poll on a stream_reset", async () => {

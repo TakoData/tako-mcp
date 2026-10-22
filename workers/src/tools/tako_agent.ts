@@ -51,6 +51,7 @@ import {
   type AgentRun,
   type AgentRunOutput,
 } from "./_agent_run.js";
+import { toPublicRunId } from "./_agent_product.js";
 import { looseArray } from "./_loose_array.js";
 import { logWireGuardFailure } from "./_log.js";
 import { renderAgentRunMarkdown } from "./_render_markdown.js";
@@ -356,7 +357,7 @@ const takoAgent = {
   async handler(input, ctx): Promise<AgentRunOutput> {
     const runId = await dispatchAgentRun(ctx, input.query, input.sources, input.thread_id);
     const run = await pollAgentRun(ctx, runId, { budgetMs: AGENT_POLL_BUDGET_MS });
-    return projectAgentRun(run);
+    return projectAgentRun(run, toPublicRunId("answer", runId));
   },
   renderText(output, _ctx) {
     void _ctx;

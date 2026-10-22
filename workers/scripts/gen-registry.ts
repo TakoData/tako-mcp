@@ -996,7 +996,7 @@ const AGENT_SAMPLE_FIXTURE = resolve(HERE, "../test/fixtures/tako_agent_sample.j
 
 function buildAgentSample(tool: ToolModule): ToolSample {
   const raw = JSON.parse(readFileSync(AGENT_SAMPLE_FIXTURE, "utf8")) as AgentRunWireLike;
-  const output = projectAgentRun(raw);
+  const output = projectAgentRun(raw, "answer_run_sample");
   return {
     structured: pickDeclared(
       // One schema on both surfaces (no widget fields), but resolved through

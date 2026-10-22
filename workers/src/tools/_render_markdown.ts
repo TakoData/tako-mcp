@@ -860,6 +860,10 @@ function renderCitation(c: ProjectedCitation): string {
  *  sources its [n] markers join to, and the reasoning notes behind it. */
 export function renderAgentRunMarkdown(o: AgentRunOutput): string {
   const blocks: string[] = [];
+  if (o.status === "running") {
+    if (o.message !== undefined) blocks.push(oneLine(o.message));
+    blocks.push(`run_id: ${o.run_id}`);
+  }
   if (o.answer !== undefined) blocks.push(o.answer);
   if (o.guidance !== undefined) blocks.push(`> ${o.guidance}`);
   if (o.error !== undefined) {

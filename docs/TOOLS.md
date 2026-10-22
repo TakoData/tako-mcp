@@ -138,6 +138,20 @@ Annotations:
   "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
   "properties": {
+    "status": {
+      "type": "string",
+      "enum": [
+        "completed",
+        "failed",
+        "running"
+      ]
+    },
+    "run_id": {
+      "type": "string"
+    },
+    "message": {
+      "type": "string"
+    },
     "answer": {
       "description": "Its [n] markers join to `citations`.",
       "type": "string"
@@ -174,7 +188,6 @@ Annotations:
             "type": "string"
           },
           "last_updated": {
-            "description": "When Tako last refreshed the card.",
             "type": "string"
           },
           "total_rows": {
@@ -204,7 +217,7 @@ Annotations:
             "type": "string"
           },
           "source_index": {
-            "description": "`web` → a page `tako_contents` can fetch. `data` → a source's home page.",
+            "description": "`web` → a page `tako_contents` can fetch.",
             "type": "string",
             "enum": [
               "data",
@@ -261,8 +274,7 @@ Annotations:
         {
           "type": "null"
         }
-      ],
-      "description": "Null when not metered."
+      ]
     },
     "error": {
       "type": "object",
@@ -282,6 +294,8 @@ Annotations:
     }
   },
   "required": [
+    "status",
+    "run_id",
     "cards",
     "citations",
     "usage"
@@ -297,6 +311,8 @@ Annotations:
 
 ```json
 {
+  "status": "completed",
+  "run_id": "answer_run_sample",
   "answer": "Surf Air Mobility grew revenue fastest among the screened US airline companies from 2022 to 2025, with a three-year CAGR of 73.9% [1]. Global Crossing Airlines Group ranked second at 36.4% [1].\n\nAmong larger scheduled carriers, Alaska Air Group led at 13.9% CAGR, with revenue rising from $9.6 billion to $14.2 billion [1]. United Airlines Holdings followed at 9.4%, and Delta Air Lines at 8.5% [1]. Coverage of the 2025 filing season is still incomplete for smaller charter operators [3].\n\nThe ranking uses revenue CAGR, calculated as (2025 revenue / 2022 revenue)^(1/3) - 1, over the 21 US-headquartered companies with normalized revenue for both endpoint years [1].",
   "cards": [
     {

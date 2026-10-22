@@ -31,16 +31,9 @@
  *   - `citations[].source_name`, `.excerpt`, `.publish_date`, `.content`: the
  *     generated contract states the Answer Agent "populates source_index and
  *     leaves the rest null", and both live runs confirm it.
- *   - `run_id` and `result.request_id`: correlation ids with no model reader
- *     and no poll tool to spend them on. `pollAgentRun` logs `run_id` on the
- *     TERMINAL poll, which is where a support question gets answered — the
- *     same bargain `request_id` makes on the search tools, where `mcp.ts`
- *     logs it. Delete that log and this drop stops being safe: `mcp.ts`
- *     itself never sees `run_id`, so nothing else would record it.
- *   - `status`: `pollAgentRun` throws on the budget rather than returning a
- *     non-terminal run, so the only values that can ship are `completed` and
- *     `failed`, and `error` already distinguishes them. It comes back the day
- *     a non-terminal run can be returned.
+ *   - `result.request_id`: a correlation id with no model reader.
+ *     `pollAgentRun` logs `run_id` on the TERMINAL poll, which is where a
+ *     support question gets answered.
  *   - `timed_out`: deleted outright, not just dropped here. It was
  *     MCP-synthetic, only ever `true` on the `onTimeout: "return"` arm that
  *     went with `tako_agent_wait`, and its own describe told the model to
@@ -176,7 +169,7 @@ export const projectedAgentCardShape = z.looseObject({
   image_url: z.string().optional(),
   embed_url: z.string().optional(),
   source: z.string().optional(),
-  last_updated: z.string().optional().describe("When Tako last refreshed the card."),
+  last_updated: z.string().optional(),
   total_rows: z.number().optional(),
 });
 export type ProjectedAgentCard = {
@@ -199,7 +192,7 @@ export const projectedCitationShape = z.looseObject({
   source_index: z
     .enum(["data", "web"])
     .optional()
-    .describe("`web` → a page `tako_contents` can fetch. `data` → a source's home page."),
+    .describe("`web` → a page `tako_contents` can fetch."),
 });
 export type ProjectedCitation = {
   index: number;
@@ -217,6 +210,9 @@ export type ProjectedCitation = {
  *  advertised shape and the projection that fills it drift the moment they
  *  live in different files. `_contents.ts` keeps the same pairing. */
 export const agentRunOutputShape = z.looseObject({
+  status: z.enum(["completed", "failed", "running"]),
+  run_id: z.string(),
+  message: z.string().optional(),
   answer: z.string().optional().describe("Its [n] markers join to `citations`."),
   guidance: z.string().optional().describe("Rejected queries only."),
   cards: z
@@ -234,12 +230,15 @@ export const agentRunOutputShape = z.looseObject({
   thread_id: z.string().optional().describe("Send back as `thread_id` for a follow-up."),
   // Nullable, unlike tako_contents' always-present `usage`: agent runs over
   // MCP are not metered for every org yet (TAKO-3245), so null is a real state.
-  usage: usageAdvertisedSchema.nullable().describe("Null when not metered."),
+  usage: usageAdvertisedSchema.nullable(),
   error: z.looseObject({ code: z.string(), message: z.string() }).optional(),
 });
 
 /** The projected agent run: what both channels carry. */
 export type AgentRunOutput = {
+  status: "completed" | "failed" | "running";
+  run_id: string;
+  message?: string;
   answer?: string;
   /** Refusal only — see `refusalGuidance`. */
   guidance?: string;
@@ -288,9 +287,6 @@ export type AgentRunWireLike = {
     | null
     | undefined;
   error?: { code: string; message: string } | null | undefined;
-  // Read ONLY to tell a failed run from a legitimately prose-free one when the
-  // backend leaves `error` null. It is never projected — `status` had two
-  // reachable values and `error` carries the distinction the model acts on.
   status?: string | undefined;
 };
 
@@ -410,9 +406,11 @@ export function noteMap(
 }
 
 /** Project a terminal agent run into the shape both channels carry. */
-export function projectAgentRun(run: AgentRunWireLike): AgentRunOutput {
+export function projectAgentRun(run: AgentRunWireLike, publicRunId: string): AgentRunOutput {
   const result = run.result;
   const out: AgentRunOutput = {
+    status: run.status === "failed" ? "failed" : "completed",
+    run_id: publicRunId,
     cards: [],
     citations: [],
     usage: run.usage ?? null,
@@ -448,18 +446,36 @@ export function projectAgentRun(run: AgentRunWireLike): AgentRunOutput {
   else if (run.status === "failed") {
     out.error = { code: "agent_run_failed", message: "The agent run failed without a reason." };
   }
-  // NON-TERMINAL, and the renderer cannot tell it from a prose-free completed
-  // run: both project to no answer and no error, so the text channel states
-  // "The agent returned no answer." about a run that is still going.
-  // `pollAgentRun` cannot hand one over any more — it throws on the budget
-  // instead of returning `status: "running"` — but this projection is
-  // exported and the wire type takes any status string, so the guard is what
-  // keeps the statement true for a caller that builds one another way.
-  else if (run.status !== undefined && run.status !== "completed") {
-    out.error = {
-      code: "agent_run_incomplete",
-      message: `The agent run ended while still ${run.status}.`,
-    };
-  }
+  return out;
+}
+
+/** The text that tells the model how to keep waiting for a run. */
+export function runningMessage(
+  toolName: string,
+  publicRunId: string,
+  elapsedS: number,
+  progress?: string,
+): string {
+  const state = progress === undefined ? `${elapsedS} s` : `${elapsedS} s; latest step: ${progress}`;
+  return `The run is still working (${state}). Call \`${toolName}\` again with run_id=\`${publicRunId}\` to keep waiting. Don't start a new run for the same question.`;
+}
+
+/** Project a run that is still working when the call's window ends. */
+export function projectRunningRun(args: {
+  toolName: string;
+  publicRunId: string;
+  threadId?: string;
+  elapsedS: number;
+  progress?: string;
+}): AgentRunOutput {
+  const out: AgentRunOutput = {
+    status: "running",
+    run_id: args.publicRunId,
+    message: runningMessage(args.toolName, args.publicRunId, args.elapsedS, args.progress),
+    cards: [],
+    citations: [],
+    usage: null,
+  };
+  if (args.threadId !== undefined) out.thread_id = args.threadId;
   return out;
 }
