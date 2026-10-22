@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../django.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../django.js")>();
@@ -42,7 +42,16 @@ async function startError(
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.useFakeTimers();
 });
+
+afterEach(() => {
+  vi.useRealTimers();
+});
+
+function resolveAfter<T>(delayMs: number, value: T): Promise<T> {
+  return new Promise((resolve) => setTimeout(() => resolve(value), delayMs));
+}
 
 describe("runAgentCall", () => {
   it("rejects a call with both query and run_id", async () => {
@@ -92,6 +101,34 @@ describe("runAgentCall", () => {
         signal,
       }),
     );
+  });
+
+  it("counts the start request against the call window", async () => {
+    vi.mocked(djangoPost).mockImplementation(() =>
+      resolveAfter(20_000, { run_id: "r1", thread_id: "t1", created_at: CREATED_AT }),
+    );
+    vi.mocked(waitForRun).mockResolvedValue({ kind: "running" });
+
+    const pending = runAgentCall(ctx, "answer", { query: "q" }, startBody);
+    await vi.advanceTimersByTimeAsync(20_000);
+    await pending;
+
+    expect(vi.mocked(djangoPost).mock.calls[0]?.[4]?.timeoutMs).toBeLessThanOrEqual(30_000);
+    expect(vi.mocked(waitForRun).mock.calls[0]?.[3]?.windowMs).toBe(AGENT_CALL_WINDOW_MS - 20_000);
+  });
+
+  it("counts the resume request against the call window", async () => {
+    vi.mocked(djangoGet).mockImplementation(() =>
+      resolveAfter(12_000, { run_id: "r1", status: "running", created_at: CREATED_AT }),
+    );
+    vi.mocked(waitForRun).mockResolvedValue({ kind: "running" });
+
+    const pending = runAgentCall(ctx, "answer", { run_id: "answer_run_r1" }, startBody);
+    await vi.advanceTimersByTimeAsync(12_000);
+    await pending;
+
+    expect(vi.mocked(djangoGet).mock.calls[0]?.[3]?.timeoutMs).toBeLessThanOrEqual(30_000);
+    expect(vi.mocked(waitForRun).mock.calls[0]?.[3]?.windowMs).toBe(AGENT_CALL_WINDOW_MS - 12_000);
   });
 
   it("falls back to the current time when created_at is missing", async () => {

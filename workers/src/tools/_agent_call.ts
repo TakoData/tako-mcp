@@ -33,6 +33,7 @@ export type AgentCallInput = {
 };
 
 const REQUEST_TIMEOUT_MS = 30_000;
+const REQUEST_MARGIN_MS = 1_000;
 
 const OTHER_TOOL: Record<AgentProduct, string> = {
   answer: AGENT_TOOL_NAME.company,
@@ -124,6 +125,14 @@ function waitFailedGuidance(publicRunId: string): string {
   return `Run \`${publicRunId}\` started, but waiting on it failed. Call this tool again with run_id=\`${publicRunId}\`; don't start a new run.`;
 }
 
+function remainingMs(deadline: number): number {
+  return Math.max(0, deadline - Date.now());
+}
+
+function requestTimeoutMs(deadline: number): number {
+  return Math.min(REQUEST_TIMEOUT_MS, Math.max(0, remainingMs(deadline) - REQUEST_MARGIN_MS));
+}
+
 function createdAtMs(createdAt: string | undefined): number {
   const parsed = createdAt === undefined ? Number.NaN : Date.parse(createdAt);
   return Number.isNaN(parsed) ? Date.now() : parsed;
@@ -179,11 +188,12 @@ async function startRun(
   product: AgentProduct,
   input: AgentCallInput,
   startBody: () => unknown,
+  deadline: number,
 ): Promise<AgentRunOutput> {
   let started: RunWire;
   try {
     started = await djangoPost<RunWire>(ctx.env, ctx.token, runsPath(product), startBody(), {
-      timeoutMs: REQUEST_TIMEOUT_MS,
+      timeoutMs: requestTimeoutMs(deadline),
       caller: ctx.caller,
     });
   } catch (err) {
@@ -200,7 +210,7 @@ async function startRun(
   const threadId = nonEmpty(started.thread_id);
   try {
     const outcome = await waitForRun(ctx, product, backendRunId, {
-      windowMs: AGENT_CALL_WINDOW_MS,
+      windowMs: remainingMs(deadline),
       createdAtMs: startedAtMs,
       ...(ctx.signal === undefined ? {} : { signal: ctx.signal }),
     });
@@ -219,6 +229,7 @@ async function resumeRun(
   ctx: ToolContext,
   product: AgentProduct,
   publicRunId: string,
+  deadline: number,
 ): Promise<AgentRunOutput> {
   const backendRunId = toBackendRunId(product, publicRunId);
   try {
@@ -226,14 +237,14 @@ async function resumeRun(
       ctx.env,
       ctx.token,
       `${runsPath(product)}/${backendRunId}`,
-      { timeoutMs: REQUEST_TIMEOUT_MS, caller: ctx.caller },
+      { timeoutMs: requestTimeoutMs(deadline), caller: ctx.caller },
     );
     if (wire.status === "completed" || wire.status === "failed") {
       return projectAgentRun(parseTerminalRun(product, backendRunId, wire), publicRunId);
     }
     const startedAtMs = createdAtMs(wire.created_at);
     const outcome = await waitForRun(ctx, product, backendRunId, {
-      windowMs: AGENT_CALL_WINDOW_MS,
+      windowMs: remainingMs(deadline),
       createdAtMs: startedAtMs,
       ...(ctx.signal === undefined ? {} : { signal: ctx.signal }),
     });
@@ -247,8 +258,9 @@ async function resumeRun(
 }
 
 /**
- * Start an agent run with `query`, or resume one with `run_id`, and wait up to
- * `AGENT_CALL_WINDOW_MS` for it.
+ * Start an agent run with `query`, or resume one with `run_id`, and return
+ * within `AGENT_CALL_WINDOW_MS` of the call's start. The start or resume
+ * request counts against that window.
  *
  * Returns the finished run, or a `running` result that carries the prefixed
  * `run_id` to resume with. Throws `AgentInputError` unless exactly one of
@@ -262,6 +274,7 @@ export async function runAgentCall(
   input: AgentCallInput,
   startBody: () => unknown,
 ): Promise<AgentRunOutput> {
+  const deadline = Date.now() + AGENT_CALL_WINDOW_MS;
   const hasQuery = input.query !== undefined;
   const hasRunId = input.run_id !== undefined;
   if (hasQuery === hasRunId) {
@@ -269,6 +282,6 @@ export async function runAgentCall(
       "Send exactly one of `query` (start a run) or `run_id` (keep waiting for a run).",
     );
   }
-  if (input.run_id !== undefined) return resumeRun(ctx, product, input.run_id);
-  return startRun(ctx, product, input, startBody);
+  if (input.run_id !== undefined) return resumeRun(ctx, product, input.run_id, deadline);
+  return startRun(ctx, product, input, startBody, deadline);
 }
