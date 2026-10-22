@@ -1,4 +1,5 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { CfWorkerJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/cfworker";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -24,6 +25,7 @@ import {
   authModeFor,
   createMcpServer,
   djangoErrorToToolResult,
+  isAgentToolCall,
   logSdkValidationRejections,
   PAYMENT_REQUIRED_MESSAGE,
   PAYMENT_REQUIRED_REMEDY_FALLBACK,
@@ -34,6 +36,8 @@ import {
 } from "./mcp.js";
 import type { Surface } from "./surface.js";
 import { TOOL_REGISTRY } from "./tools/_registry.js";
+import { projectRunningRun } from "./tools/_agent_run.js";
+import takoAgent from "./tools/tako_agent.js";
 import {
   CHATGPT_CLOSED_WORLD_TOOLS,
   toolAnnotationsForSurface,
@@ -2138,5 +2142,241 @@ describe("caller attribution through handleMcpRequest", () => {
     expect(requestFrom(fetchMock.mock.calls[0]!).headers.get("x-tako-caller")).toBe(
       "channel=mcp, surface=generic, tier=anonymous, tool=tako_search",
     );
+  });
+});
+
+describe("agent tool calls over SSE", () => {
+  const env = { DJANGO_BASE_URL: "http://localhost:8000" } as unknown as Env;
+  const RUNNING = projectRunningRun({
+    toolName: "tako_agent",
+    publicRunId: "answer_run_abc",
+    elapsedS: 45,
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  function mcpPost(
+    path: string,
+    body: unknown,
+    init: { accept?: string; signal?: AbortSignal } = {},
+  ): Request {
+    return new Request(`https://mcp.tako.com${path}`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: init.accept ?? "application/json, text/event-stream",
+        authorization: "Bearer raw-tako-token-no-dots",
+      },
+      body: JSON.stringify(body),
+      ...(init.signal !== undefined ? { signal: init.signal } : {}),
+    });
+  }
+
+  function toolsCall(name: string, meta?: Record<string, unknown>): unknown {
+    return {
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: {
+        name,
+        arguments: { query: "who founded Tako" },
+        ...(meta !== undefined ? { _meta: meta } : {}),
+      },
+    };
+  }
+
+  type SseMessage = {
+    id?: unknown;
+    method?: string;
+    params?: { progressToken?: unknown; progress?: unknown; message?: unknown };
+    result?: { structuredContent?: unknown; isError?: unknown };
+  };
+
+  function sseMessages(body: string): SseMessage[] {
+    return body
+      .split("\n\n")
+      .flatMap((event) => event.split("\n"))
+      .filter((line) => line.startsWith("data: "))
+      .map((line) => JSON.parse(line.slice("data: ".length)) as SseMessage);
+  }
+
+  function untilAborted(signal: AbortSignal | undefined): Promise<void> {
+    if (signal === undefined || signal.aborted) return Promise.resolve();
+    return new Promise((resolve) => {
+      signal.addEventListener("abort", () => resolve(), { once: true });
+    });
+  }
+
+  function stubAgentHandler(
+    run: (ctx: ToolContext) => Promise<void> = async (ctx) => {
+      await ctx.sendProgress(3, { message: "Searching" });
+    },
+  ): { contexts: ToolContext[] } {
+    const contexts: ToolContext[] = [];
+    vi.spyOn(takoAgent, "handler").mockImplementation(async (_input, ctx) => {
+      contexts.push(ctx);
+      await run(ctx);
+      return RUNNING;
+    });
+    return { contexts };
+  }
+
+  it("answers an agent tools/call as text/event-stream with progress before the result", async () => {
+    stubAgentHandler();
+    const closeSpy = vi.spyOn(McpServer.prototype, "close");
+
+    const res = await worker.fetch(
+      mcpPost("/mcp?tools=agent", toolsCall("tako_agent", { progressToken: "p1" })),
+      env,
+    );
+
+    expect(res.headers.get("content-type")).toContain("text/event-stream");
+    const messages = sseMessages(await res.text());
+    expect(messages.map((m) => m.method ?? `result:${String(m.id)}`)).toEqual([
+      "notifications/progress",
+      "result:1",
+    ]);
+    expect(messages[0]!.params).toEqual({
+      progressToken: "p1",
+      progress: 3,
+      message: "Searching",
+    });
+    expect(messages[1]!.result?.structuredContent).toEqual(RUNNING);
+    await vi.waitFor(() => expect(closeSpy).toHaveBeenCalledTimes(1));
+  });
+
+  it("sends no progress notification when the request has no progressToken", async () => {
+    stubAgentHandler();
+    const errorSpy = vi.spyOn(console, "error");
+
+    const res = await worker.fetch(
+      mcpPost("/mcp?tools=agent", toolsCall("tako_agent")),
+      env,
+    );
+
+    expect(res.headers.get("content-type")).toContain("text/event-stream");
+    const messages = sseMessages(await res.text());
+    expect(messages).toHaveLength(1);
+    expect(messages[0]!.id).toBe(1);
+    expect(messages[0]!.result?.isError).toBeUndefined();
+    expect(messages[0]!.result?.structuredContent).toEqual(RUNNING);
+    expect(errorSpy).not.toHaveBeenCalled();
+  });
+
+  it("keeps JSON responses for tools/list and non-agent tools/call", async () => {
+    mockFetchSequence([jsonResponse(200, {})]);
+
+    const list = await worker.fetch(
+      mcpPost("/mcp?tools=agent", { jsonrpc: "2.0", id: 1, method: "tools/list" }),
+      env,
+    );
+    const search = await worker.fetch(
+      mcpPost("/mcp?tools=agent", toolsCall("tako_search", { progressToken: "p1" })),
+      env,
+    );
+
+    expect(list.headers.get("content-type")).toContain("application/json");
+    expect(search.headers.get("content-type")).toContain("application/json");
+    expect(((await search.json()) as { id: unknown }).id).toBe(1);
+  });
+
+  it("keeps JSON for an agent tool the connection didn't register", async () => {
+    const chatgpt = await worker.fetch(
+      mcpPost("/mcp/chatgpt", toolsCall("tako_agent", { progressToken: "p1" })),
+      env,
+    );
+    const companyNotOptedIn = await worker.fetch(
+      mcpPost("/mcp?tools=agent", toolsCall("tako_company_agent", { progressToken: "p1" })),
+      env,
+    );
+
+    for (const res of [chatgpt, companyNotOptedIn]) {
+      expect(res.headers.get("content-type")).toContain("application/json");
+      const body = (await res.json()) as { result?: { isError?: unknown } };
+      expect(body.result?.isError).toBe(true);
+    }
+  });
+
+  it("closes the server when an agent call gets a JSON error response", async () => {
+    const closeSpy = vi.spyOn(McpServer.prototype, "close");
+
+    const res = await worker.fetch(
+      mcpPost("/mcp?tools=agent", toolsCall("tako_agent"), { accept: "application/json" }),
+      env,
+    );
+
+    expect(res.status).toBe(406);
+    expect(closeSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("aborts ctx.signal when the client drops the SSE response", async () => {
+    const { contexts } = stubAgentHandler(async (ctx) => {
+      await ctx.sendProgress(1, { message: "Searching" });
+      await untilAborted(ctx.signal);
+    });
+    const closeSpy = vi.spyOn(McpServer.prototype, "close");
+
+    const res = await worker.fetch(
+      mcpPost("/mcp?tools=agent", toolsCall("tako_agent", { progressToken: "p1" })),
+      env,
+    );
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    let seen = "";
+    while (!seen.includes("notifications/progress")) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      seen += decoder.decode(value, { stream: true });
+    }
+    await reader.cancel();
+
+    await vi.waitFor(() => expect(contexts[0]?.signal?.aborted).toBe(true));
+    await vi.waitFor(() => expect(closeSpy).toHaveBeenCalledTimes(1));
+  });
+
+  it("aborts ctx.signal when the request's own signal aborts", async () => {
+    const { contexts } = stubAgentHandler(async (ctx) => {
+      await untilAborted(ctx.signal);
+    });
+    const clientGone = new AbortController();
+
+    const pending = worker.fetch(
+      mcpPost("/mcp?tools=agent", toolsCall("tako_agent"), { signal: clientGone.signal }),
+      env,
+    );
+    await vi.waitFor(() => expect(contexts).toHaveLength(1));
+    clientGone.abort();
+
+    const messages = sseMessages(await (await pending).text());
+    expect(contexts[0]?.signal?.aborted).toBe(true);
+    expect(messages.at(-1)?.result?.structuredContent).toEqual(RUNNING);
+  });
+});
+
+describe("isAgentToolCall", () => {
+  const call = (name: string) => ({
+    jsonrpc: "2.0",
+    id: 1,
+    method: "tools/call",
+    params: { name, arguments: {} },
+  });
+
+  it("is true for a single tools/call to either agent tool", () => {
+    expect(isAgentToolCall(call("tako_agent"))).toBe(true);
+    expect(isAgentToolCall(call("tako_company_agent"))).toBe(true);
+  });
+
+  it("is false for other tools and methods", () => {
+    expect(isAgentToolCall(call("tako_search"))).toBe(false);
+    expect(isAgentToolCall({ jsonrpc: "2.0", id: 1, method: "tools/list" })).toBe(false);
+    expect(isAgentToolCall(null)).toBe(false);
+    expect(isAgentToolCall("tools/call")).toBe(false);
+  });
+
+  it("isAgentToolCall is false for a batch", () => {
+    expect(isAgentToolCall([call("tako_agent")])).toBe(false);
   });
 });
