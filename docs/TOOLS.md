@@ -75,7 +75,7 @@ Parameters:
 |---|---|---|---|---|
 | `query` | string | no |  | The question to research, in natural language. Ask one question per call; the agent plans its own sub-steps. Send `query` or `run_id`, not both. |
 | `run_id` | string | no |  | A `run_id` from an earlier call that returned `status: running`. Send it instead of `query` to keep waiting for that run. |
-| `sources` | array | no | `["data","web"]` | Which corpora to search; default is both. Narrow to ["data"] once `tako_available_data` confirms coverage; narrow to ["web"] only for news or page text — website traffic is in the data graph. |
+| `sources` | array | no |  | Which corpora to search; default is both. Narrow to ["data"] once `tako_available_data` confirms coverage; narrow to ["web"] only for news or page text — website traffic is in the data graph. |
 | `thread_id` | string | no |  | A `thread_id` from an earlier run. Pass it back to ask a follow-up in that conversation; omit it to start a new one. |
 
 Fixed request inputs (the caller cannot change these):
@@ -109,10 +109,6 @@ Annotations:
       "description": "A `run_id` from an earlier call that returned `status: running`. Send it instead of `query` to keep waiting for that run."
     },
     "sources": {
-      "default": [
-        "data",
-        "web"
-      ],
       "description": "Which corpora to search; default is both. Narrow to [\"data\"] once `tako_available_data` confirms coverage; narrow to [\"web\"] only for news or page text — website traffic is in the data graph.",
       "minItems": 1,
       "type": "array",

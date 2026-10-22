@@ -253,9 +253,9 @@ describe("tako_agent over MCP", () => {
 });
 
 describe("tako_agent input schema", () => {
-  it("defaults sources to both data and web (matches the backend default)", () => {
+  it("leaves sources unset when the caller omits them", () => {
     const parsed = tool.inputSchema.parse({ query: "hello" });
-    expect(parsed.sources).toEqual(["data", "web"]);
+    expect(parsed.sources).toBeUndefined();
   });
 
   it("accepts web and data", () => {
@@ -280,9 +280,12 @@ describe("tako_agent input schema", () => {
 });
 
 describe("tako_agent contract guards", () => {
-  it("agent default sources mirror the backend (data+web)", () => {
-    const parsed = tool.inputSchema.parse({ query: "compare cohorts" });
-    expect(parsed.sources).toEqual(["data", "web"]);
+  it("omits source_indexes when the caller omits sources, so a follow-up keeps the thread's sources", () => {
+    const body = buildAgentBody(
+      tool.inputSchema.parse({ query: "and in 2024?", thread_id: "6f1c1d2e-3a4b-4c5d-8e9f-0a1b2c3d4e5f" }),
+    );
+    expect(body).not.toHaveProperty("source_indexes");
+    expect(body.thread_id).toBe("6f1c1d2e-3a4b-4c5d-8e9f-0a1b2c3d4e5f");
   });
 
   it("passes the sources array straight through to source_indexes", () => {

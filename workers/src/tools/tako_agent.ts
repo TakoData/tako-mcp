@@ -58,11 +58,7 @@ export const inputSchema = z.object({
   // contains a comma. See
   // _loose_array.ts.
   sources: looseArray(
-    z
-      .array(z.enum(["data", "web"]))
-      .min(1)
-      .default(["data", "web"])
-      .describe(SOURCES_DESCRIBE),
+    z.array(z.enum(["data", "web"])).min(1).optional().describe(SOURCES_DESCRIBE),
     // The label names the file the schema is declared in.
     { field: "tako_agent.sources", commaSeparated: true },
   ),
@@ -93,11 +89,10 @@ type Output = z.infer<typeof agentRunOutputShape>;
  * request contract changes (new required field, renamed key, changed enum),
  * this line fails to compile.
  *
- * Parity note: the generated AnswerAgentRunRequest has `source_indexes` as
- * optional (the backend defaults to ["data","web"] when absent), but we always
- * send it explicitly to keep the MCP behaviour predictable regardless of
- * backend defaults. `effort` only accepts the literal "medium" on the Answer
- * Agent (AnswerAgentEffort) — the sole launched level.
+ * The body sends `source_indexes` only when the caller set `sources`, so a
+ * follow-up inherits the thread's sources; a new thread gets the backend's
+ * default of data and web. `effort` only accepts the literal "medium" on the
+ * Answer Agent (AnswerAgentEffort) — the sole launched level.
  */
 export function buildAgentBody(input: AgentInput): z.input<typeof AnswerAgentRunRequest> {
   if (input.query === undefined) {
@@ -105,10 +100,10 @@ export function buildAgentBody(input: AgentInput): z.input<typeof AnswerAgentRun
   }
   const body: z.input<typeof AnswerAgentRunRequest> = {
     query: input.query,
-    source_indexes: [...input.sources],
     effort: "medium",
   };
   if (input.thread_id !== undefined) body.thread_id = input.thread_id;
+  if (input.sources !== undefined) body.source_indexes = [...input.sources];
   return body satisfies z.input<typeof AnswerAgentRunRequest>; // ← build-time guard: backend request drift breaks here
 }
 

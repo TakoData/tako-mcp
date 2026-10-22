@@ -51,11 +51,7 @@
         },
         "sources": {
           "type": "array",
-          "description": "Which corpora to search; default is both. Narrow to [\"data\"] once `tako_available_data` confirms coverage; narrow to [\"web\"] only for news or page text — website traffic is in the data graph.",
-          "default": [
-            "data",
-            "web"
-          ]
+          "description": "Which corpora to search; default is both. Narrow to [\"data\"] once `tako_available_data` confirms coverage; narrow to [\"web\"] only for news or page text — website traffic is in the data graph."
         },
         "thread_id": {
           "type": "string",
