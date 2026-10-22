@@ -59,8 +59,99 @@ import {
   nonEmpty,
   sourceNamesOf,
   usageAdvertisedSchema,
+  usageSchema,
   type Usage,
 } from "./_search_results.js";
+
+const takoCardSchema = z
+  .object({
+    card_id: z.string().nullable().optional(),
+    title: z.string().nullable().optional(),
+    embed_url: z.string().nullable().optional(),
+    image_url: z.string().nullable().optional(),
+  })
+  .loose();
+
+// One indexed source behind the answer. The answer's inline [n] markers join
+// to a citation's `index`. Mirrors the generated AgentAnswerCitation — the
+// unified top-level registry (Answer Agent, S1 §5.2) that replaced the generic
+// agent's per-answer `web_results`. The required fields (`index`, `title`) match
+// the contract non-null; the object stays `.loose()` so additive backend fields
+// (source_index, content, …) pass through untouched.
+const citationSchema = z
+  .object({
+    index: z.number().int(),
+    title: z.string(),
+    url: z.string().nullable().optional(),
+    source_name: z.string().nullable().optional(),
+    excerpt: z.string().nullable().optional(),
+    publish_date: z.string().nullable().optional(),
+  })
+  .loose();
+
+// The answer's reasoning scaffolding (Answer Agent, AnswerAgentMetadata): term
+// definitions, stated assumptions, and methodology notes behind the prose.
+// Surfaced so chat hosts can show *why* the answer holds, not just the text.
+// Leaves stay `.loose()` so additive backend fields pass through.
+const definitionSchema = z
+  .object({ term: z.string(), definition: z.string(), source_ref: z.number().int().nullable().optional() })
+  .loose();
+const assumptionSchema = z
+  .object({
+    title: z.string(),
+    description: z.string(),
+    category: z.string().nullable().optional(),
+    source_ref: z.number().int().nullable().optional(),
+  })
+  .loose();
+const methodologyNoteSchema = z.object({ title: z.string(), description: z.string() }).loose();
+const metadataSchema = z
+  .object({
+    definitions: z.array(definitionSchema).nullable().optional(),
+    assumptions: z.array(assumptionSchema).nullable().optional(),
+    methodology: z.array(methodologyNoteSchema).nullable().optional(),
+  })
+  .loose();
+
+export const agentRunSchema = z.object({
+  run_id: z.string(),
+  // Metered cost of the run. Forwarded to the projected output as `usage` —
+  // the one field a caller acts on, and absent from both channels until this
+  // pass (agent runs over MCP are not yet metered for PAYG orgs, TAKO-3245,
+  // so the wire figure can be present while nothing is charged).
+  usage: usageSchema.nullable().optional(),
+  // Surfaced so the caller can pass it back as `thread_id` to ask a follow-up
+  // in the same conversation.
+  thread_id: z.string().nullable().optional(),
+  // Mirrors the backend AgentRunStatus StrEnum exactly (api/ga/v1/agent/types.py)
+  // — kept in lockstep on purpose. A new backend status must be added here too,
+  // or the poll will reject the run as an "unexpected shape".
+  status: z.enum(["queued", "running", "completed", "failed"]),
+  result: z
+    .object({
+      answer: z.string().nullable().optional(),
+      cards: z.array(takoCardSchema).default([]),
+      // The unified top-level citation registry (Answer Agent, S1 §5.2): the
+      // indexed sources the answer's [n] markers join to. This replaced the
+      // generic agent's `web_results` — dropping it loses all citations.
+      citations: z.array(citationSchema).default([]),
+      // Definitions / assumptions / methodology behind the answer
+      // (AnswerAgentMetadata); a plain z.object would otherwise strip it.
+      metadata: metadataSchema.nullable().optional(),
+      // Set when Tako rejected the query BEFORE the agent ran; null on normal
+      // runs. A strict `z.object` used to strip it, so a rejected run reached
+      // the model as a completed run with no answer and no reason. It is now
+      // the tool's one `guidance` branch (`refusalGuidance` in _agent_run.ts).
+      // New codes are additive, so never switch on the value.
+      refusal_code: z.string().nullable().optional(),
+      request_id: z.string().nullable().optional(),
+    })
+    .nullable()
+    .optional(),
+  error: z.object({ code: z.string(), message: z.string() }).nullable().optional(),
+});
+
+export type AgentRun = z.infer<typeof agentRunSchema>;
 
 /**
  * One chart card an agent run built.
