@@ -1769,7 +1769,7 @@ async function peekJsonBody(request: Request): Promise<unknown> {
   }
 }
 
-type StreamingResponse = Response & { body: ReadableStream<Uint8Array> };
+export type StreamingResponse = Response & { body: ReadableStream<Uint8Array> };
 
 function isEventStream(response: Response): response is StreamingResponse {
   return (
@@ -1778,7 +1778,14 @@ function isEventStream(response: Response): response is StreamingResponse {
   );
 }
 
-function closeWhenStreamEnds(
+/**
+ * Pass an SSE response through and close the MCP server once it ends.
+ *
+ * Calls `close` once when the upstream stream finishes, fails, or the client
+ * cancels the response. Calls `onClientGone` when the client cancels or the
+ * upstream read fails, so a running tool call stops waiting.
+ */
+export function closeWhenStreamEnds(
   response: StreamingResponse,
   close: () => Promise<void>,
   onClientGone: (reason: unknown) => void,
@@ -1805,14 +1812,18 @@ function closeWhenStreamEnds(
         }
         controller.enqueue(value);
       } catch (err) {
+        onClientGone(err);
         controller.error(err);
         await closeOnce();
       }
     },
     async cancel(reason) {
       onClientGone(reason);
-      await reader.cancel(reason);
-      await closeOnce();
+      try {
+        await reader.cancel(reason);
+      } finally {
+        await closeOnce();
+      }
     },
   });
   return new Response(body, { status: response.status, headers: response.headers });

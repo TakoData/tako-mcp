@@ -23,6 +23,7 @@ import { GENERIC_SIGN_IN_HINT } from "./tools/_shared_prose.js";
 import {
   AUTH_INVALID_MESSAGE,
   authModeFor,
+  closeWhenStreamEnds,
   createMcpServer,
   djangoErrorToToolResult,
   isAgentToolCall,
@@ -2353,6 +2354,79 @@ describe("agent tool calls over SSE", () => {
     const messages = sseMessages(await (await pending).text());
     expect(contexts[0]?.signal?.aborted).toBe(true);
     expect(messages.at(-1)?.result?.structuredContent).toEqual(RUNNING);
+  });
+
+  it("streams a tool error result and closes once when the agent handler throws a DjangoHttpError", async () => {
+    vi.spyOn(takoAgent, "handler").mockRejectedValue(
+      new DjangoHttpError({
+        path: "/api/v1/agent/answer/runs",
+        method: "POST",
+        status: 500,
+        body: "boom",
+      }),
+    );
+    const closeSpy = vi.spyOn(McpServer.prototype, "close");
+
+    const res = await worker.fetch(
+      mcpPost("/mcp?tools=agent", toolsCall("tako_agent", { progressToken: "p1" })),
+      env,
+    );
+
+    expect(res.headers.get("content-type")).toContain("text/event-stream");
+    const messages = sseMessages(await res.text());
+    expect(messages).toHaveLength(1);
+    expect(messages[0]!.id).toBe(1);
+    expect(messages[0]!.result?.isError).toBe(true);
+    await vi.waitFor(() => expect(closeSpy).toHaveBeenCalledTimes(1));
+  });
+});
+
+describe("closeWhenStreamEnds", () => {
+  type StreamingResponse = Parameters<typeof closeWhenStreamEnds>[0];
+
+  function sseResponse(body: ReadableStream<Uint8Array>): StreamingResponse {
+    return {
+      body,
+      status: 200,
+      headers: new Headers({ "content-type": "text/event-stream" }),
+    } as StreamingResponse;
+  }
+
+  it("signals the client is gone and closes once when the upstream read fails", async () => {
+    const readFailure = new Error("upstream broke");
+    const close = vi.fn(async () => {});
+    const onClientGone = vi.fn();
+    const upstream = new ReadableStream<Uint8Array>({
+      pull() {
+        throw readFailure;
+      },
+    });
+
+    const res = closeWhenStreamEnds(sseResponse(upstream), close, onClientGone);
+
+    await expect(res.text()).rejects.toBe(readFailure);
+    expect(onClientGone).toHaveBeenCalledWith(readFailure);
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  it("closes once when the client cancels and cancelling upstream throws", async () => {
+    const close = vi.fn(async () => {});
+    const onClientGone = vi.fn();
+    const upstream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("data: {}\n\n"));
+      },
+      cancel() {
+        return Promise.reject(new Error("cancel failed"));
+      },
+    });
+
+    const res = closeWhenStreamEnds(sseResponse(upstream), close, onClientGone);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await res.body!.cancel("client left").catch(() => undefined);
+
+    expect(onClientGone).toHaveBeenCalledWith("client left");
+    expect(close).toHaveBeenCalledTimes(1);
   });
 });
 
