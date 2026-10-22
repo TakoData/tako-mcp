@@ -31,30 +31,47 @@ export function toPublicRunId(
   return `${RUN_ID_PREFIX[product]}${backendRunId}`;
 }
 
+function escapeRegExp(literal: string): string {
+  return literal.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function runIdPattern(product: AgentProduct): RegExp {
+  return new RegExp(`^${escapeRegExp(RUN_ID_PREFIX[product])}[A-Za-z0-9-]+$`);
+}
+
 function wrongPrefixMessage(product: AgentProduct): string {
   const other = OTHER_PRODUCT[product];
   return (
-    `This run_id starts with \`${RUN_ID_PREFIX[product]}\` on \`${AGENT_TOOL_NAME[product]}\`. ` +
+    `\`${AGENT_TOOL_NAME[product]}\` takes a run_id that starts with \`${RUN_ID_PREFIX[product]}\`. ` +
     `A \`${RUN_ID_PREFIX[other]}\` id belongs to \`${AGENT_TOOL_NAME[other]}\`; call that tool instead.`
   );
+}
+
+function malformedRunIdMessage(product: AgentProduct): string {
+  return `This run_id isn't one \`${AGENT_TOOL_NAME[product]}\` returned. Send the \`run_id\` from an earlier \`status: running\` result unchanged.`;
+}
+
+function invalidRunIdMessage(product: AgentProduct, publicRunId: unknown): string {
+  return typeof publicRunId === "string" && publicRunId.startsWith(RUN_ID_PREFIX[product])
+    ? malformedRunIdMessage(product)
+    : wrongPrefixMessage(product);
 }
 
 export function toBackendRunId(
   product: AgentProduct,
   publicRunId: string,
 ): string {
-  const prefix = RUN_ID_PREFIX[product];
-  if (!publicRunId.startsWith(prefix)) {
-    throw new AgentInputError(wrongPrefixMessage(product));
+  if (!runIdPattern(product).test(publicRunId)) {
+    throw new AgentInputError(invalidRunIdMessage(product, publicRunId));
   }
-  return publicRunId.slice(prefix.length);
+  return publicRunId.slice(RUN_ID_PREFIX[product].length);
 }
 
 export function runIdInputSchema(product: AgentProduct): z.ZodString {
   return z
     .string()
-    .regex(new RegExp(`^${RUN_ID_PREFIX[product]}`), {
-      message: wrongPrefixMessage(product),
+    .regex(runIdPattern(product), {
+      error: (issue) => invalidRunIdMessage(product, issue.input),
     })
     .describe(
       "A `run_id` from an earlier call that returned `status: running`. Send it instead of `query` to keep waiting for that run.",

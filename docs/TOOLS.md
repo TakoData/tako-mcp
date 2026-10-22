@@ -105,7 +105,7 @@ Annotations:
     },
     "run_id": {
       "type": "string",
-      "pattern": "^answer_run_",
+      "pattern": "^answer_run_[A-Za-z0-9-]+$",
       "description": "A `run_id` from an earlier call that returned `status: running`. Send it instead of `query` to keep waiting for that run."
     },
     "sources": {
@@ -915,7 +915,7 @@ Annotations:
     },
     "run_id": {
       "type": "string",
-      "pattern": "^company_run_",
+      "pattern": "^company_run_[A-Za-z0-9-]+$",
       "description": "A `run_id` from an earlier call that returned `status: running`. Send it instead of `query` to keep waiting for that run."
     },
     "sources": {
