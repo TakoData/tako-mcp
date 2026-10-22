@@ -97,6 +97,7 @@ import type { ToolAnnotations, ToolModule } from "../src/tools/types.js";
 export const MCP_TOOL_ALLOWLIST = [
   "tako_agent",
   "tako_available_data",
+  "tako_company_agent",
   "tako_contents",
   "tako_graph_related",
   "tako_search",
@@ -993,6 +994,10 @@ function buildGraphRelatedSample(tool: ToolModule): ToolSample {
 }
 
 const AGENT_SAMPLE_FIXTURE = resolve(HERE, "../test/fixtures/tako_agent_sample.json");
+const COMPANY_AGENT_SAMPLE_FIXTURE = resolve(
+  HERE,
+  "../test/fixtures/tako_company_agent_sample.json",
+);
 
 function buildAgentSample(tool: ToolModule): ToolSample {
   const raw = JSON.parse(readFileSync(AGENT_SAMPLE_FIXTURE, "utf8")) as AgentRunWireLike;
@@ -1002,6 +1007,20 @@ function buildAgentSample(tool: ToolModule): ToolSample {
       // One schema on both surfaces (no widget fields), but resolved through
       // the same helper the server uses, so a future per-surface variant
       // cannot silently skip the sample.
+      outputSchemaForSurface(tool, "generic"),
+      output as unknown as Record<string, unknown>,
+    ),
+    text: renderAgentRunMarkdown(output),
+  };
+}
+
+function buildCompanyAgentSample(tool: ToolModule): ToolSample {
+  const raw = JSON.parse(
+    readFileSync(COMPANY_AGENT_SAMPLE_FIXTURE, "utf8"),
+  ) as AgentRunWireLike;
+  const output = projectAgentRun(raw, "company_run_sample");
+  return {
+    structured: pickDeclared(
       outputSchemaForSurface(tool, "generic"),
       output as unknown as Record<string, unknown>,
     ),
@@ -1020,6 +1039,7 @@ export function buildToolSamples(modules: ReadonlyArray<ToolModule>): Map<string
     if (m.name === "tako_available_data") samples.set(m.name, buildAvailableDataSample(m));
     if (m.name === "tako_graph_related") samples.set(m.name, buildGraphRelatedSample(m));
     if (m.name === "tako_agent") samples.set(m.name, buildAgentSample(m));
+    if (m.name === "tako_company_agent") samples.set(m.name, buildCompanyAgentSample(m));
     if (m.name === "tako_search_advanced") samples.set(m.name, buildAdvancedSample(m));
   }
   return samples;

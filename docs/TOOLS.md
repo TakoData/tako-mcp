@@ -22,6 +22,7 @@ Default listing:
 Opt-in (name them in `?tools=`):
 
 - `tako_agent` — `?tools=available_data,contents,graph_related,search,agent`
+- `tako_company_agent` — `?tools=available_data,contents,graph_related,search,company_agent`
 - `tako_search_advanced` — `?tools=available_data,contents,graph_related,search,search_advanced`
 - `tako_visualize` — `?tools=available_data,contents,graph_related,search,visualize`
 
@@ -863,6 +864,335 @@ verified: coverage
 
 ## Next call
 tako_search: Carnival, Inc. Revenues
+```
+</details>
+
+### tako_company_agent
+
+**Tako: Company Agent**
+
+- Listed by default on: none (opt-in on `/mcp`)
+- Runs anonymously (on `/mcp`): no (answers with sign-in instructions)
+
+Description:
+
+Run Tako's Company Agent on a question about which companies or people match registry facts. It searches the company registry and the web over several steps, and returns a written `answer` with numbered citations plus any list `cards` it built.
+
+Best for: screening companies by status, incorporation date, registered location, or industry; resolving named companies; finding a company's officers and directors. At `medium` and `high` effort it can also filter by financial metrics such as revenue or headcount.
+
+A call returns within 45 s. If `status` is `running`, call again with `run_id`; don't start a new run.
+
+Parameters:
+
+| Name | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `query` | string | no |  | The question to research, in natural language. Ask one question per call; the agent plans its own sub-steps. Send `query` or `run_id`, not both. |
+| `run_id` | string | no |  | A `run_id` from an earlier call that returned `status: running`. Send it instead of `query` to keep waiting for that run. |
+| `sources` | array | no |  | Which corpora to search; default is both. Narrow to ["data"] once `tako_available_data` confirms coverage; narrow to ["web"] only for news or page text — website traffic is in the data graph. |
+| `thread_id` | string | no |  | A `thread_id` from an earlier run. Pass it back to ask a follow-up in that conversation; omit it to start a new one. |
+| `effort` | string ("low" \\| "medium" \\| "high") | no |  | Research depth. `medium` is the default. `high` is stronger and slower. `low` answers from the company registry and the web only, and can't filter or rank by financial metrics such as revenue or headcount. Effort is fixed for a thread. |
+
+Fixed request inputs (the caller cannot change these):
+
+- `cards` = `true` — The agent may build list cards.
+
+Fixed worker-side settings (not request fields):
+
+- `call window` = `45 s` — A call returns within the window; resume a running run with run_id.
+
+Annotations:
+
+- `/mcp`: title: Tako: Company Agent; readOnlyHint: false; destructiveHint: false; idempotentHint: false; openWorldHint: true
+- `/mcp/chatgpt`: title: Tako: Company Agent; readOnlyHint: false; destructiveHint: false; idempotentHint: false; openWorldHint: true
+
+<details><summary>wire — Published input schema (JSON Schema)</summary>
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "query": {
+      "description": "The question to research, in natural language. Ask one question per call; the agent plans its own sub-steps. Send `query` or `run_id`, not both.",
+      "type": "string",
+      "minLength": 1
+    },
+    "run_id": {
+      "type": "string",
+      "pattern": "^company_run_",
+      "description": "A `run_id` from an earlier call that returned `status: running`. Send it instead of `query` to keep waiting for that run."
+    },
+    "sources": {
+      "description": "Which corpora to search; default is both. Narrow to [\"data\"] once `tako_available_data` confirms coverage; narrow to [\"web\"] only for news or page text — website traffic is in the data graph.",
+      "minItems": 1,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "data",
+          "web"
+        ]
+      }
+    },
+    "thread_id": {
+      "description": "A `thread_id` from an earlier run. Pass it back to ask a follow-up in that conversation; omit it to start a new one.",
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+    },
+    "effort": {
+      "description": "Research depth. `medium` is the default. `high` is stronger and slower. `low` answers from the company registry and the web only, and can't filter or rank by financial metrics such as revenue or headcount. Effort is fixed for a thread.",
+      "type": "string",
+      "enum": [
+        "low",
+        "medium",
+        "high"
+      ]
+    }
+  }
+}
+```
+</details>
+
+<details><summary>wire — Published output schema (JSON Schema)</summary>
+
+```json
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": [
+        "completed",
+        "failed",
+        "running"
+      ]
+    },
+    "run_id": {
+      "type": "string"
+    },
+    "message": {
+      "type": "string"
+    },
+    "answer": {
+      "description": "Its [n] markers join to `citations`.",
+      "type": "string"
+    },
+    "guidance": {
+      "description": "Rejected queries only.",
+      "type": "string"
+    },
+    "cards": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "exportable": {
+            "type": "boolean",
+            "description": "false → the rows are locked."
+          },
+          "url": {
+            "type": "string"
+          },
+          "image_url": {
+            "type": "string"
+          },
+          "embed_url": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "last_updated": {
+            "type": "string"
+          },
+          "total_rows": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "exportable"
+        ],
+        "additionalProperties": {}
+      },
+      "description": "Pass an exportable card's `url` to tako_contents for its rows."
+    },
+    "citations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "index": {
+            "type": "number",
+            "description": "The number an [n] marker joins to; sparse."
+          },
+          "title": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "source_index": {
+            "description": "`web` → a page `tako_contents` can fetch.",
+            "type": "string",
+            "enum": [
+              "data",
+              "web"
+            ]
+          }
+        },
+        "required": [
+          "index",
+          "title"
+        ],
+        "additionalProperties": {}
+      }
+    },
+    "definitions": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "assumptions": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "methodology": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "thread_id": {
+      "description": "Send back as `thread_id` for a follow-up.",
+      "type": "string"
+    },
+    "usage": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "total_cost_usd": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "total_cost_usd"
+          ],
+          "additionalProperties": {}
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "error": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "additionalProperties": {}
+    }
+  },
+  "required": [
+    "status",
+    "run_id",
+    "cards",
+    "citations",
+    "usage"
+  ],
+  "additionalProperties": false
+}
+```
+</details>
+
+<details><summary>illustrative — Sample result (generated from the checked-in fixture)</summary>
+
+`structuredContent` (as served on `/mcp`):
+
+```json
+{
+  "status": "completed",
+  "run_id": "company_run_sample",
+  "answer": "Three active companies registered in Leeds were incorporated in 2024 and list software development as their industry [1]. Northern Lattice Ltd was incorporated first, on 12 February 2024 [1]. Its directors include Priya Nair, per its latest filing [2].",
+  "cards": [
+    {
+      "exportable": true,
+      "title": "Leeds Software Companies Incorporated in 2024",
+      "description": "Active companies registered in Leeds, incorporated in 2024, with software development as their industry.",
+      "url": "https://tako.com/card/Kd3vQ8mXr2LpT9-aYwNe/",
+      "image_url": "https://tako.com/api/v1/image/Kd3vQ8mXr2LpT9-aYwNe/",
+      "embed_url": "https://tako.com/embed/Kd3vQ8mXr2LpT9-aYwNe/?showShare=true",
+      "source": "Companies House"
+    }
+  ],
+  "citations": [
+    {
+      "index": 1,
+      "title": "Companies House",
+      "url": "https://www.gov.uk/government/organisations/companies-house",
+      "source_index": "data"
+    },
+    {
+      "index": 2,
+      "title": "Northern Lattice Ltd confirmation statement",
+      "url": "https://find-and-update.company-information.service.gov.uk/company/00000000/filing-history",
+      "source_index": "web"
+    }
+  ],
+  "thread_id": "5a2e8c71-0f3b-4d96-b1a4-7c6e9d2f8031",
+  "usage": {
+    "total_cost_usd": 0.04127,
+    "compute": {
+      "cost_usd": 0.04127
+    }
+  }
+}
+```
+
+`content[0].text`:
+
+```markdown
+Three active companies registered in Leeds were incorporated in 2024 and list software development as their industry [1]. Northern Lattice Ltd was incorporated first, on 12 February 2024 [1]. Its directors include Priya Nair, per its latest filing [2].
+
+## Cards (1)
+
+### Leeds Software Companies Incorporated in 2024
+Active companies registered in Leeds, incorporated in 2024, with software development as their industry.
+- url: https://tako.com/card/Kd3vQ8mXr2LpT9-aYwNe/ · exportable
+- image: https://tako.com/api/v1/image/Kd3vQ8mXr2LpT9-aYwNe/ · embed: https://tako.com/embed/Kd3vQ8mXr2LpT9-aYwNe/?showShare=true
+- source: Companies House
+
+## Citations (2)
+
+[1] Companies House — https://www.gov.uk/government/organisations/companies-house (data)
+[2] Northern Lattice Ltd confirmation statement — https://find-and-update.company-information.service.gov.uk/company/00000000/filing-history (web)
+
+thread_id: 5a2e8c71-0f3b-4d96-b1a4-7c6e9d2f8031 — send it back to ask a follow-up.
+
+usage: $0.04127
 ```
 </details>
 
