@@ -76,8 +76,8 @@ function frontmatterOf(markdown: string): string {
 describe("bundled plugin skills", () => {
   const names = skillDirNames();
 
-  it("ships the tako-search skill", () => {
-    expect(names).toEqual(["tako-search"]);
+  it("ships the tako-agent and tako-search skills", () => {
+    expect(names).toEqual(["tako-agent", "tako-search"]);
   });
 
   for (const name of names) {
