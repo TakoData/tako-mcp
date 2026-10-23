@@ -183,6 +183,16 @@ export const searchSlimOutputShape = z.looseObject(searchCoreFields);
 export const searchChatgptOutputShape = z.looseObject({
   ...searchCoreFields,
   ...autoChainShape,
+  charts: z
+    .array(
+      z.object({
+        pub_id: z.string(),
+        embed_url: z.string(),
+        image_url: z.string(),
+      }),
+    )
+    .optional()
+    .describe("One chart per card, in card order."),
 });
 
 /** `tako_search_advanced` only: the core plus the answer endpoint's four, and

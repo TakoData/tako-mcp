@@ -1308,6 +1308,7 @@ export type SearchOutput = {
   dark_mode?: boolean;
   width?: number;
   height?: number;
+  charts?: CardChart[];
 };
 
 // Which sources a search actually hit, for tailoring zero-result guidance.
@@ -1705,7 +1706,8 @@ export function buildSearchOutput(
   // and `{}` makes every key optional again, which is exactly the widening
   // `exactOptionalPropertyTypes` rejects against `SearchOutput`.
   const chart = topCardChartFields(rawCards, env);
-  return chart === undefined ? base : { ...base, ...chart };
+  if (chart === undefined) return base;
+  return { ...base, ...chart, charts: cardCharts(rawCards, env) };
 }
 
 /**
@@ -1736,19 +1738,28 @@ export function topCardChartFields(
   // are built from restores it, and lets the answer path's hooks read
   // `output.image_url` off a typed value instead of casting.
 ): TopCardChartFields | undefined {
-  const topCardId = cards[0]?.card_id;
-  if (typeof topCardId !== "string" || topCardId === "") return undefined;
-  const { embed_url, image_url } = buildChartUrls(
-    env,
-    topCardId,
-    DEFAULT_DARK_MODE,
-  );
+  const first = cardCharts(cards, env)[0];
+  if (first === undefined) return undefined;
   return {
-    pub_id: topCardId,
-    embed_url,
-    image_url,
+    ...first,
     dark_mode: DEFAULT_DARK_MODE,
     width: DEFAULT_WIDTH,
     height: DEFAULT_HEIGHT,
   };
+}
+
+export type CardChart = { pub_id: string; embed_url: string; image_url: string };
+
+/** One chart per card that has a `card_id`, in the order given. */
+export function cardCharts(
+  cards: readonly { card_id?: string | null | undefined }[],
+  env: Env,
+): CardChart[] {
+  const charts: CardChart[] = [];
+  for (const { card_id } of cards) {
+    if (typeof card_id !== "string" || card_id === "") continue;
+    const { embed_url, image_url } = buildChartUrls(env, card_id, DEFAULT_DARK_MODE);
+    charts.push({ pub_id: card_id, embed_url, image_url });
+  }
+  return charts;
 }

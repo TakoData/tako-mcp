@@ -23,6 +23,7 @@ import {
   buildChartAppUiResourceFromOutputPubId,
   buildChartExtraMeta,
   fetchPngContentBlock,
+  fetchPngDimensions,
 } from "./_chart_widget.js";
 import { looseArray } from "./_loose_array.js";
 import {
@@ -32,7 +33,7 @@ import {
 } from "./_render_markdown.js";
 import { runSearch } from "./_run_search.js";
 import { SOURCES_DESCRIBE } from "./_shared_prose.js";
-import type { SearchOutput } from "./_search_results.js";
+import type { CardChart, SearchOutput } from "./_search_results.js";
 import type { AppUiResource, ToolContentBlock, ToolContext, ToolModule } from "./types.js";
 
 const DESCRIPTION = [
@@ -148,6 +149,21 @@ export function buildSearchBody(input: Input, tier: Tier): z.input<typeof Search
 }
 
 
+async function fetchChartDims(
+  charts: readonly CardChart[],
+): Promise<({ image_natural_width: number; image_natural_height: number } | null)[]> {
+  return Promise.all(
+    charts.map(async ({ image_url }) => {
+      const dims = await fetchPngDimensions(image_url);
+      if (dims === undefined) return null;
+      return {
+        image_natural_width: dims.naturalWidth,
+        image_natural_height: dims.naturalHeight,
+      };
+    }),
+  );
+}
+
 const tako_search = {
   name: "tako_search",
   description: DESCRIPTION,
@@ -225,12 +241,20 @@ const tako_search = {
     // Cast: the widget fields are declared only on the chatgpt advertised
     // schema now, so the loose base Output no longer types them.
     const o = output as SearchOutput;
-    return buildChartExtraMeta(o.image_url, {
-      bakeImage: ctx.surface !== "chatgpt",
-      env: ctx.env,
-      origin: ctx.origin,
-      pubId: o.pub_id,
-    });
+    const charts = o.charts ?? [];
+    const [meta, chartDims] = await Promise.all([
+      buildChartExtraMeta(o.image_url, {
+        bakeImage: ctx.surface !== "chatgpt",
+        env: ctx.env,
+        origin: ctx.origin,
+        pubId: o.pub_id,
+      }),
+      ctx.surface === "chatgpt" && charts.length >= 2
+        ? fetchChartDims(charts)
+        : undefined,
+    ]);
+    if (chartDims === undefined) return meta;
+    return { ...meta, chart_dims: chartDims };
   },
   async extraContentBlocks(output, _ctx): Promise<ToolContentBlock[]> {
     void _ctx;

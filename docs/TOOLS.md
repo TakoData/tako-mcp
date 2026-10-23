@@ -2232,6 +2232,30 @@ The chart-widget fields are declared only here; the widget reads them from `wind
       "type": "integer",
       "exclusiveMinimum": 0,
       "maximum": 9007199254740991
+    },
+    "charts": {
+      "description": "One chart per card, in card order.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "pub_id": {
+            "type": "string"
+          },
+          "embed_url": {
+            "type": "string"
+          },
+          "image_url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "pub_id",
+          "embed_url",
+          "image_url"
+        ],
+        "additionalProperties": false
+      }
     }
   },
   "required": [

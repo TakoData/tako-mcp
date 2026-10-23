@@ -25,6 +25,7 @@ import {
   buildDataGapGuidance,
   buildReferenceMaps,
   buildSearchOutput,
+  cardCharts,
   projectCard,
   projectCardRows,
   projectWebResult,
@@ -1508,4 +1509,36 @@ describe("the published snippet contract", () => {
       }
     });
   }
+});
+
+describe("cardCharts", () => {
+  const ENV: Env = { DJANGO_BASE_URL: "https://staging.trytako.com" };
+
+  it("cardCharts skips a card with no card_id and keeps the others in order", () => {
+    const charts = cardCharts([{ card_id: "a" }, { card_id: null }, { card_id: "c" }], ENV);
+    expect(charts.map((c) => c.pub_id)).toEqual(["a", "c"]);
+  });
+
+  it("the top-level chart fields describe the first chart", () => {
+    const out = buildSearchOutput(
+      [{ card_id: "a" }, { card_id: "b" }],
+      [],
+      "req-charts",
+      null,
+      ENV,
+      ["data"],
+      false,
+      "authenticated",
+      OPTS,
+    );
+    expect(out.charts?.length).toBe(2);
+    expect(out.pub_id).toBe(out.charts?.[0]?.pub_id);
+    expect(out.embed_url).toBe(out.charts?.[0]?.embed_url);
+    expect(out.image_url).toBe(out.charts?.[0]?.image_url);
+  });
+
+  it("a zero-card result carries no charts", () => {
+    const out = buildSearchOutput([], [], "req-none", null, ENV, ["data"], false, "authenticated", OPTS);
+    expect(out.charts).toBeUndefined();
+  });
 });

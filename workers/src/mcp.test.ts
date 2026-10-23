@@ -597,6 +597,39 @@ describe("chart render gates per surface", () => {
     expect(pngRequest.headers.get("range")).not.toBeNull();
   });
 
+  function twoCardSearchResponse(): Response {
+    return jsonResponse(200, {
+      cards: [
+        { card_id: "c1", title: "US GDP", embed_url: "https://trytako.com/embed/c1/" },
+        { card_id: "c2", title: "US CPI", embed_url: "https://trytako.com/embed/c2/" },
+      ],
+      web_results: [],
+      request_id: "req-2cards",
+    });
+  }
+
+  it("the chatgpt surface returns every card's chart", async () => {
+    mockFetchSequence([
+      twoCardSearchResponse(),
+      realPngResponse(),
+      realPngResponse(),
+      realPngResponse(),
+    ]);
+
+    const result = await callSearch("chatgpt");
+
+    const charts = result.structuredContent?.charts as { pub_id: string }[] | undefined;
+    expect(charts?.map((c) => c.pub_id)).toEqual(["c1", "c2"]);
+  });
+
+  it("the generic surface doesn't return charts", async () => {
+    mockFetchSequence([twoCardSearchResponse(), pngResponse()]);
+
+    const result = await callSearch("generic");
+
+    expect(result.structuredContent?.charts).toBeUndefined();
+  });
+
   it("generic surface: no image block when the search returns zero cards", async () => {
     // Empty result → no top card → no image_url → `extraMeta`'s PNG
     // prefetch must not fire (queue holds only the search response; an

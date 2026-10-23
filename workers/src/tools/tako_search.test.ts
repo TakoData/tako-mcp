@@ -686,3 +686,56 @@ describe("tako_search never inlines rows", () => {
     ]);
   });
 });
+
+describe("tako_search extraMeta chart_dims", () => {
+  const pngBytes = (width: number, height: number): Uint8Array => {
+    const bytes = new Uint8Array(64);
+    const view = new DataView(bytes.buffer);
+    view.setUint32(0, 0x89504e47);
+    view.setUint32(16, width);
+    view.setUint32(20, height);
+    return bytes;
+  };
+
+  const chartFor = (pubId: string) => ({
+    pub_id: pubId,
+    embed_url: `https://staging.trytako.com/embed/${pubId}/`,
+    image_url: `https://staging.trytako.com/api/v1/image/${pubId}/`,
+  });
+
+  const stubPngFetch = (failingPubId?: string) => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((async (input: RequestInfo | URL) => {
+      const url = new Request(input as RequestInfo).url;
+      if (failingPubId !== undefined && url.includes(failingPubId)) {
+        return new Response("nope", { status: 500 });
+      }
+      return new Response(pngBytes(2400, 1100), {
+        status: 206,
+        headers: { "content-type": "image/png" },
+      });
+    }) as typeof fetch);
+  };
+
+  it("extraMeta sends one dimension pair per chart on chatgpt", async () => {
+    stubPngFetch("card_b");
+    const charts = [chartFor("card_a"), chartFor("card_b"), chartFor("card_c")];
+    const meta = await tako_search.extraMeta!(
+      { ...charts[0], charts } as never,
+      { ...CTX, surface: "chatgpt" } as never,
+    );
+    const dims = (meta as { chart_dims?: unknown[] }).chart_dims;
+    expect(dims).toHaveLength(3);
+    expect(dims?.[1]).toBeNull();
+    expect(dims?.[0]).toEqual({ image_natural_width: 2400, image_natural_height: 1100 });
+  });
+
+  it("extraMeta sends no chart_dims for a single chart", async () => {
+    stubPngFetch();
+    const charts = [chartFor("card_a")];
+    const meta = await tako_search.extraMeta!(
+      { ...charts[0], charts } as never,
+      { ...CTX, surface: "chatgpt" } as never,
+    );
+    expect((meta as { chart_dims?: unknown } | undefined)?.chart_dims).toBeUndefined();
+  });
+});
