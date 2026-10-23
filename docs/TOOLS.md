@@ -29,7 +29,7 @@ Opt-in (name them in `?tools=`):
 Server instructions:
 
 ```text
-Tako searches the web and a proprietary knowledge graph of live structured data in the same call. Default sources are data + web, so one call answers a question that mixes a figure with context. Coverage includes finance, markets, company KPIs, economics, website/app traffic, sports, weather, elections, prediction markets, demographics, energy, real estate, health, and more.
+Tako searches the web and a proprietary knowledge graph of live structured data in the same call. Default sources are data + web, so one call answers a question that mixes a figure with context. Coverage includes finance, markets, company KPIs, economics, website traffic, sports, weather, elections, prediction markets, demographics, energy, real estate, health, and more.
 
 `tako_search` finds cards and web links. `tako_contents` fetches a url in full: a web page returns its text, and an exportable Tako card returns its data rows. `tako_available_data` answers what data Tako has on an entity or metric, including a metric's canonical name. `tako_graph_related` lists a node's related metrics, entities, competitors, and sources.
 ```
@@ -49,7 +49,7 @@ Default listing:
 Server instructions:
 
 ```text
-Tako searches the web and a proprietary knowledge graph of live structured data in the same call. Default sources are data + web, so one call answers a question that mixes a figure with context. Coverage includes finance, markets, company KPIs, economics, website/app traffic, sports, weather, elections, prediction markets, demographics, energy, real estate, health, and more.
+Tako searches the web and a proprietary knowledge graph of live structured data in the same call. Default sources are data + web, so one call answers a question that mixes a figure with context. Coverage includes finance, markets, company KPIs, economics, website traffic, sports, weather, elections, prediction markets, demographics, energy, real estate, health, and more.
 
 `tako_search` finds cards and web links. `tako_contents` fetches a url in full: a web page returns its text, and an exportable Tako card returns its data rows. `tako_available_data` answers what data Tako has on an entity or metric, including a metric's canonical name. `tako_graph_related` lists a node's related metrics, entities, competitors, and sources. Use `tako_company_agent` for a list of companies or people, such as a registry screen, and `tako_agent` for a ranking, trend, or aggregate of metrics.
 ```
@@ -77,7 +77,7 @@ Parameters:
 |---|---|---|---|---|
 | `query` | string | no |  | The question to research, in natural language. Ask one question per call; the agent plans its own sub-steps. Send `query` or `run_id`, not both. |
 | `run_id` | string | no |  | A `run_id` from an earlier call that returned `status: running`. Send it instead of `query` to keep waiting for that run. |
-| `sources` | array | no |  | Which corpora to search; default is both. Narrow to ["data"] once `tako_available_data` confirms coverage; narrow to ["web"] only for news or page text — website traffic is in the data graph. A thread keeps its sources, so omit this on a follow-up. |
+| `sources` | array | no |  | Which corpora to search; default is both. Narrow to ["web"] only for news or page text — website traffic is in the data graph. A thread keeps its sources, so omit this on a follow-up. |
 | `thread_id` | string | no |  | A `thread_id` from an earlier run. Pass it back to ask a follow-up in that conversation; omit it to start a new one. |
 
 Fixed request inputs (the caller cannot change these):
@@ -111,7 +111,7 @@ Annotations:
       "description": "A `run_id` from an earlier call that returned `status: running`. Send it instead of `query` to keep waiting for that run."
     },
     "sources": {
-      "description": "Which corpora to search; default is both. Narrow to [\"data\"] once `tako_available_data` confirms coverage; narrow to [\"web\"] only for news or page text — website traffic is in the data graph. A thread keeps its sources, so omit this on a follow-up.",
+      "description": "Which corpora to search; default is both. Narrow to [\"web\"] only for news or page text — website traffic is in the data graph. A thread keeps its sources, so omit this on a follow-up.",
       "minItems": 1,
       "type": "array",
       "items": {
@@ -1785,14 +1785,14 @@ Search Tako's data graph and the live web in one call: many results at once, as 
 
 It finds data; `tako_contents` fetches it. Each card carries a headline value, node ids, and a url — pass the url to `tako_contents` for rows (`exportable: true` cards) or a web result's full page text. When `exportable` is false the rows are locked — read the headline value from the card's `description`. Website-traffic and SEO cards bill a per-unit data minimum above the search price.
 
-Best for: breadth — fan out several narrow queries in parallel. Each query resolves one metric — for one entity, or a comparison set ("Apple revenue", "Nvidia vs AMD gross margin"); several metrics or topics in one query retrieve poorly. To learn what Tako covers, or a metric's canonical name, run `tako_available_data` first, then search on the canonical name it returns.
+Best for: breadth — fan out several narrow queries in parallel. Each query resolves one metric — for one entity, or a comparison set ("Apple revenue", "Nvidia vs AMD gross margin"); several metrics or topics in one query retrieve poorly.
 
 Parameters:
 
 | Name | Type | Required | Default | Description |
 |---|---|---|---|---|
 | `query` | string | yes |  | Natural-language search query (e.g. "US GDP growth", "Intel vs Nvidia revenue"). Double-quote a multi-word name to keep it one entity ("tesla motors" club revenue); an unpaired quote disables quoting. Website-traffic data is keyed by domain — query "openai.com monthly visits", not "OpenAI website visits". |
-| `sources` | array | no | `["data","web"]` | Which corpora to search; default is both. Narrow to ["data"] once `tako_available_data` confirms coverage; narrow to ["web"] only for news or page text — website traffic is in the data graph. |
+| `sources` | array | no | `["data","web"]` | Which corpora to search; default is both. Narrow to ["web"] only for news or page text — website traffic is in the data graph. |
 | `country_code` | string | no |  | ISO 3166-1 alpha-2 country code for localized results. Omit it and the server uses US. Set it to localize for the user. |
 | `locale` | string | no |  | BCP-47 locale tag for language and formatting. Omit it and the server uses en-US. Set it to localize for the user. |
 
@@ -1823,7 +1823,7 @@ Annotations:
         "data",
         "web"
       ],
-      "description": "Which corpora to search; default is both. Narrow to [\"data\"] once `tako_available_data` confirms coverage; narrow to [\"web\"] only for news or page text — website traffic is in the data graph.",
+      "description": "Which corpora to search; default is both. Narrow to [\"web\"] only for news or page text — website traffic is in the data graph.",
       "minItems": 1,
       "type": "array",
       "items": {

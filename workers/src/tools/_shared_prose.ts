@@ -22,7 +22,7 @@
  * cannot hold it, and Tako's does.
  */
 export const SOURCES_DESCRIBE =
-  'Which corpora to search; default is both. Narrow to ["data"] once `tako_available_data` confirms coverage; narrow to ["web"] only for news or page text — website traffic is in the data graph.';
+  'Which corpora to search; default is both. Narrow to ["web"] only for news or page text — website traffic is in the data graph.';
 
 /** The `sources` rule both agent tools share: a thread's sources are fixed. */
 export const AGENT_SOURCES_THREAD_RULE =

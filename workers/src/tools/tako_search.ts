@@ -42,7 +42,7 @@ const DESCRIPTION = [
   "",
   // `Best for:` verbatim: AGENTS.md's tool-description rule, and the form the
   // other three default tools already use in docs/TOOLS.md.
-  'Best for: breadth — fan out several narrow queries in parallel. Each query resolves one metric — for one entity, or a comparison set ("Apple revenue", "Nvidia vs AMD gross margin"); several metrics or topics in one query retrieve poorly. To learn what Tako covers, or a metric\'s canonical name, run `tako_available_data` first, then search on the canonical name it returns.',
+  'Best for: breadth — fan out several narrow queries in parallel. Each query resolves one metric — for one entity, or a comparison set ("Apple revenue", "Nvidia vs AMD gross margin"); several metrics or topics in one query retrieve poorly.',
 ].join("\n");
 
 const inputSchema = z.object({

@@ -157,7 +157,7 @@ import { GENERIC_DEFAULT_TOOL_NAMES } from "./tools/_surface.js";
  * serve; if misrouting shows up, this hedge is the first thing to restore.
  */
 const SHARED_INSTRUCTION_PARAGRAPHS = [
-  "Tako searches the web and a proprietary knowledge graph of live structured data in the same call. Default sources are data + web, so one call answers a question that mixes a figure with context. Coverage includes finance, markets, company KPIs, economics, website/app traffic, sports, weather, elections, prediction markets, demographics, energy, real estate, health, and more.",
+  "Tako searches the web and a proprietary knowledge graph of live structured data in the same call. Default sources are data + web, so one call answers a question that mixes a figure with context. Coverage includes finance, markets, company KPIs, economics, website traffic, sports, weather, elections, prediction markets, demographics, energy, real estate, health, and more.",
 ];
 
 /**

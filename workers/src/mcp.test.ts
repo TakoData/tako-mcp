@@ -1708,7 +1708,7 @@ describe.each(DEFAULT_ROUTING_TOOLS_BY_SURFACE)("$surface default instructions",
   // Tako. Cheap to delete as "filler" during a trim; the most expensive line
   // here to lose.
   it("keeps the domain list that makes the server discoverable", () => {
-    for (const domain of ["finance", "economics", "website/app traffic", "elections"]) {
+    for (const domain of ["finance", "economics", "website traffic", "elections"]) {
       expect(instructions).toContain(domain);
     }
   });
