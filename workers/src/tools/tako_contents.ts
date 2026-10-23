@@ -10,13 +10,12 @@
  * `_render_markdown.ts`; the note there records what the old
  * payload-in-structured-only split cost on the hosts that read `content`.
  *
- * Delivery and serialization are no longer the caller's decision. `mode` and
- * `content_format` are gone from the input surface: every call is `inline`
- * (the MCP-ergonomics divergence from the backend's `url` default — an agent
- * wants to read the data, and a 5-minute presigned S3 link is 1,560 chars a
- * model cannot use) and every card comes back as `json_compact`, projected to
- * one `rows` shape. That is why `data`, `records`, `dataset` and `format` are
- * gone from the output too.
+ * `mode` and `content_format` are gone from the input surface. A call that
+ * omits `delivery` and `format`, which is every `/mcp/chatgpt` call, is
+ * `inline` (the MCP-ergonomics divergence from the backend's `url` default —
+ * a ChatGPT model can't use a 5-minute presigned S3 link) and every card comes
+ * back as `json_compact`, projected to one `rows` shape. That is why `data`,
+ * `records`, `dataset` and `format` are gone from the output too.
  *
  * A Tako card export returns the WHOLE card by default, up to
  * `MAX_CONTENTS_ROWS` (2,000); `max_rows` caps it lower. Every row delivered bills per
@@ -45,6 +44,8 @@ import {
 } from "../django.js";
 import { ContentsHighlights, ContentsRequest, ContentsResponse } from "../generated/schemas.js";
 import {
+  CARD_FALLBACK_NOTE,
+  chatgptContentsOutputShape,
   contentsOutputShape,
   contentsUsage,
   projectContentsItem,
@@ -258,7 +259,7 @@ const inputSchema = chatgptInputSchema
       .enum(["inline", "link"])
       .optional()
       .describe(
-        'Tako cards only. `inline` returns the data in the result. `link` returns a download link: a CSV file, or a JSON file with `format: \"card\"`. It expires in 5 minutes. Use `link` when you can run shell commands and want to analyze the data in code. If the download fails, call again without `delivery`. Web pages ignore it.',
+        'Tako cards only. `inline` returns the data in the result. `link` returns a download link: a CSV file, or a JSON file with `format: "card"`. It expires in 5 minutes. Use `link` when you can run shell commands and want to analyze the data in code. If the download fails, call again without `delivery`. Web pages ignore it.',
       ),
     format: z
       .enum(["rows", "card"])
@@ -399,6 +400,7 @@ async function fetchOne(
   batchSize: number,
 ): Promise<ProjectedContentsItem> {
   const body = buildContentsBody(url, input, batchSize);
+  if (body.content_format === "card_json") return fetchCard(url, body, ctx);
   if (body.highlights === undefined) {
     const queryDropped = input.query !== undefined && isTakoHostUrl(url);
     return fetchPage(url, body, input, ctx, batchSize, queryDropped ? TAKO_URL_QUERY_NOTE : undefined);
@@ -413,6 +415,20 @@ async function fetchOne(
   }
   const { highlights: _unavailable, ...pageBody } = body;
   return fetchPage(url, pageBody, input, ctx, batchSize, wholePageNote);
+}
+
+async function fetchCard(
+  url: string,
+  body: z.input<typeof ContentsRequest> & { max_chars: number },
+  ctx: ToolContext,
+): Promise<ProjectedContentsItem> {
+  try {
+    return projectContentsItem(await postContents(body, ctx), url, {});
+  } catch (err) {
+    if (!(err instanceof DjangoHttpError) || err.status !== 422) throw err;
+  }
+  const rowsBody = { ...body, content_format: "json_compact" as const };
+  return projectContentsItem(await postContents(rowsBody, ctx), url, { cardNote: CARD_FALLBACK_NOTE });
 }
 
 async function fetchPage(
@@ -525,9 +541,10 @@ const takoContents = {
   // The ADVERTISED output IS the projected shape (`_contents.ts`), typed field
   // by field: the handler builds every key, so nothing needs a loose stub and
   // no undeclared wire key can reach a strict client. The wire guard stays the
-  // generated `ContentsResponse` safeParse above. No per-surface variant — no
-  // widget reads this tool's output on any surface.
+  // generated `ContentsResponse` safeParse above. `/mcp/chatgpt` advertises
+  // `chatgptContentsOutputShape`, which has no `download` or `card`.
   outputSchema: contentsOutputShape,
+  outputSchemaBySurface: { chatgpt: chatgptContentsOutputShape },
   annotations: {
     title: "Tako: Fetch Contents",
     readOnlyHint: true,

@@ -46,21 +46,39 @@ import {
  * `max_chars` cut are the same fact about the same item, and giving it two
  * homes is what this pass removes everywhere else.
  */
-const projectedContentsItemShape = z.looseObject({
-  // Declaration order IS the shipped order. `contentsOutputShape.safeParse` in
-  // the handler rebuilds every object in SHAPE order, not in the order the
-  // projection spread it, so this list is what a truncating host reads.
-  // Anchor, then the note that explains the payload, then the payload, then
-  // the chrome; `cost` stays last so a cut tail loses it and never the rows.
-  url: z.string().describe("The url this entry is for."),
-  note: z.string().optional().describe("Whether `text` holds the passages for `query` or the whole page."),
-  rows: projectedRowsShape.optional().describe("Tako cards only: the card's data."),
-  text: z.string().optional().describe("Web pages only: the page text, or its passages when `query` is set."),
-  error: z.string().optional().describe("Why this url alone failed; the others are unaffected."),
-  truncated: z.boolean().optional().describe("Part of this payload was cut."),
-  source_url: z.string().optional().describe("Where a redirect landed."),
-  cost: z.number().describe("USD billed for this url."),
+const downloadShape = z.object({
+  url: z.string(),
+  expires_at: z.string(),
+  file_format: z.enum(["csv", "json"]),
+  total_rows: z.number().optional(),
 });
+
+const linkAndCardFields = {
+  download: downloadShape.optional().describe("Link delivery: the file."),
+  card: z.record(z.string(), z.unknown()).optional().describe("Card format: its structure."),
+};
+
+function itemShapeWith<Extra extends z.ZodRawShape>(extra: Extra) {
+  return z.looseObject({
+    // Declaration order IS the shipped order. `contentsOutputShape.safeParse` in
+    // the handler rebuilds every object in SHAPE order, not in the order the
+    // projection spread it, so this list is what a truncating host reads.
+    // Anchor, then the note that explains the payload, then the payload, then
+    // the chrome; `cost` stays last so a cut tail loses it and never the rows.
+    url: z.string().describe("The url this entry is for."),
+    note: z.string().optional().describe("Whether `text` holds the passages for `query` or the whole page."),
+    rows: projectedRowsShape.optional().describe("Tako cards only: the card's data."),
+    text: z.string().optional().describe("Web pages only: the page text, or its passages when `query` is set."),
+    ...extra,
+    error: z.string().optional().describe("Why this url alone failed; the others are unaffected."),
+    truncated: z.boolean().optional().describe("Part of this payload was cut."),
+    source_url: z.string().optional().describe("Where a redirect landed."),
+    cost: z.number().describe("USD billed for this url."),
+  });
+}
+
+const chatgptProjectedContentsItemShape = itemShapeWith({});
+const projectedContentsItemShape = itemShapeWith(linkAndCardFields);
 
 export type ProjectedContentsItem = z.infer<typeof projectedContentsItemShape>;
 
@@ -76,6 +94,11 @@ export type ProjectedContentsItem = z.infer<typeof projectedContentsItemShape>;
  * learn WHICH url was expensive, which is the fact a caller acts on by
  * lowering `max_rows` on that one url.
  */
+export const chatgptContentsOutputShape = z.looseObject({
+  results: z.array(chatgptProjectedContentsItemShape).describe("One per requested url, in order."),
+  usage: usageAdvertisedSchema.describe("What this request cost."),
+});
+
 export const contentsOutputShape = z.looseObject({
   results: z.array(projectedContentsItemShape).describe("One per requested url, in order."),
   usage: usageAdvertisedSchema.describe("What this request cost."),
@@ -94,12 +117,17 @@ export interface ContentsWireItem {
   truncated?: boolean | null | undefined;
   cost?: number | null | undefined;
   source_url?: string | null | undefined;
+  url?: string | null | undefined;
+  expires_at?: string | null | undefined;
+  card_data?: Record<string, unknown> | null | undefined;
 }
 
 /** What an item says when the backend delivered neither rows nor text. One
  *  message for both shapes: the cause is the same — the payload channel this
  *  item declared arrived empty — and a card-specific and a page-specific
  *  wording would be two names for one state. */
+export const CARD_FALLBACK_NOTE = "This card type has no structure of its own, so this is its data as rows.";
+
 export const EMPTY_PAYLOAD_ERROR =
   "Tako returned no data for this url. Retry once; if it persists, flag it to the Tako team.";
 
@@ -117,12 +145,18 @@ export const EMPTY_PAYLOAD_ERROR =
 export function projectContentsItem(
   item: ContentsWireItem,
   url: string,
-  opts: { note?: string | undefined; effectiveMaxChars?: number | undefined },
+  opts: {
+    note?: string | undefined;
+    cardNote?: string | undefined;
+    effectiveMaxChars?: number | undefined;
+  },
 ): ProjectedContentsItem {
   const isCard = item.content_format != null;
   let cut = item.truncated === true;
   let rows: ProjectedRows | undefined;
   let text: string | undefined;
+  let download: ProjectedContentsItem["download"];
+  let card: Record<string, unknown> | undefined;
   let note: string | undefined;
 
   if (isCard) {
@@ -135,6 +169,16 @@ export function projectContentsItem(
       if (typeof total === "number") rows.total_rows = total;
       if (dataset.truncated === true) cut = true;
     }
+    if (item.url != null && item.expires_at != null) {
+      download = {
+        url: item.url,
+        expires_at: item.expires_at,
+        file_format: item.content_format === "csv" ? "csv" : "json",
+        ...(typeof item.total_rows === "number" ? { total_rows: item.total_rows } : {}),
+      };
+    }
+    if (item.card_data != null) card = item.card_data;
+    note = opts.cardNote;
   } else if (typeof item.data === "string") {
     text = item.data;
     // Derived truncation for capped web text: the backend's `truncated` flag is
@@ -160,7 +204,7 @@ export function projectContentsItem(
   // and `ContentsWireItem` widens all of them, so `tsc` accepts it too. This
   // branch is the only guard between that and a billed item the caller reads
   // as an empty success.
-  const empty = rows === undefined && text === undefined;
+  const empty = rows === undefined && text === undefined && download === undefined && card === undefined;
 
   // Built in the shape's declared order so the two agree on sight. The order
   // that actually SHIPS is the shape's, because the handler re-parses this
@@ -170,6 +214,8 @@ export function projectContentsItem(
     ...(note !== undefined ? { note } : {}),
     ...(rows !== undefined ? { rows } : {}),
     ...(text !== undefined ? { text } : {}),
+    ...(download !== undefined ? { download } : {}),
+    ...(card !== undefined ? { card } : {}),
     ...(cut ? { truncated: true } : {}),
     ...(item.source_url != null && item.source_url !== url ? { source_url: item.source_url } : {}),
     cost: item.cost ?? 0,

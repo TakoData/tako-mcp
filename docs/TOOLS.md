@@ -1348,6 +1348,146 @@ Annotations:
             "description": "Web pages only: the page text, or its passages when `query` is set.",
             "type": "string"
           },
+          "download": {
+            "description": "Link delivery: the file.",
+            "type": "object",
+            "properties": {
+              "url": {
+                "type": "string"
+              },
+              "expires_at": {
+                "type": "string"
+              },
+              "file_format": {
+                "type": "string",
+                "enum": [
+                  "csv",
+                  "json"
+                ]
+              },
+              "total_rows": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "url",
+              "expires_at",
+              "file_format"
+            ],
+            "additionalProperties": false
+          },
+          "card": {
+            "description": "Card format: its structure.",
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          },
+          "error": {
+            "description": "Why this url alone failed; the others are unaffected.",
+            "type": "string"
+          },
+          "truncated": {
+            "description": "Part of this payload was cut.",
+            "type": "boolean"
+          },
+          "source_url": {
+            "description": "Where a redirect landed.",
+            "type": "string"
+          },
+          "cost": {
+            "type": "number",
+            "description": "USD billed for this url."
+          }
+        },
+        "required": [
+          "url",
+          "cost"
+        ],
+        "additionalProperties": {}
+      },
+      "description": "One per requested url, in order."
+    },
+    "usage": {
+      "type": "object",
+      "properties": {
+        "total_cost_usd": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "total_cost_usd"
+      ],
+      "additionalProperties": {},
+      "description": "What this request cost."
+    }
+  },
+  "required": [
+    "results",
+    "usage"
+  ],
+  "additionalProperties": false
+}
+```
+</details>
+
+<details><summary>wire — Published output schema on `/mcp/chatgpt` (JSON Schema)</summary>
+
+The chart-widget fields are declared only here; the widget reads them from `window.openai.toolOutput`, and `pickDeclared` strips them from `/mcp` responses by construction.
+
+```json
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "The url this entry is for."
+          },
+          "note": {
+            "description": "Whether `text` holds the passages for `query` or the whole page.",
+            "type": "string"
+          },
+          "rows": {
+            "description": "Tako cards only: the card's data.",
+            "type": "object",
+            "properties": {
+              "columns": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Column names, in row order; the unit is in the name."
+              },
+              "rows": {
+                "type": "array",
+                "items": {
+                  "type": "array",
+                  "items": {}
+                },
+                "description": "Positional cells; a missing cell is null."
+              },
+              "total_rows": {
+                "description": "Rows behind the card, before `max_rows`.",
+                "type": "number"
+              }
+            },
+            "required": [
+              "columns",
+              "rows"
+            ],
+            "additionalProperties": false
+          },
+          "text": {
+            "description": "Web pages only: the page text, or its passages when `query` is set.",
+            "type": "string"
+          },
           "error": {
             "description": "Why this url alone failed; the others are unaffected.",
             "type": "string"

@@ -12,6 +12,7 @@ vi.mock("../django.js", async (importOriginal) => ({
 
 import { DjangoBadRequestError, DjangoError, DjangoHttpError, DjangoNotFoundError, DjangoTimeoutError, DjangoUnauthorizedError, djangoPost } from "../django.js";
 import { djangoErrorToToolResult } from "../mcp.js";
+import { CARD_FALLBACK_NOTE, chatgptContentsOutputShape, EMPTY_PAYLOAD_ERROR } from "./_contents.js";
 import tool, {
   BATCH_CHAR_BUDGET,
   chatgptInputSchema,
@@ -36,8 +37,8 @@ const page = (data: string, cost = 0.01) => ({
   request_id: "r",
 });
 
-/** A Tako-card wire item. `json_compact` is the only serialization the tool
- *  requests now, so `dataset` is the only payload channel a card arrives in.
+/** A Tako-card wire item. A call without `delivery` or `format` requests
+ *  `json_compact`, so `dataset` is the payload channel a card arrives in.
  *  `ref`/`sources`/`provenance` ride because the generated `TakoDataset`
  *  requires them — and they are exactly what the projection drops. */
 const card = (over: Record<string, unknown> = {}) => ({
@@ -68,10 +69,9 @@ const card = (over: Record<string, unknown> = {}) => ({
 
 describe("tako_contents input schema", () => {
   it("takes four parameters — urls, max_rows, max_chars, query", () => {
-    // Down from seven. `mode` and `content_format` are server decisions now
-    // (see `fixedInputs`): one delivery, one serialization, so neither is a
-    // question the model should be answering. The deprecated single `url` went
-    // with them.
+    // The `/mcp/chatgpt` schema. `mode` and `content_format` are server
+    // decisions there (see `fixedInputs`), and the deprecated single `url`
+    // went with them.
     expect(Object.keys(chatgptInputSchema.shape).sort()).toEqual([
       "max_chars",
       "max_rows",
@@ -830,5 +830,82 @@ describe("tako_contents delivery and format", () => {
   it("chatgpt input schema is unchanged", () => {
     expect(Object.keys(chatgptInputSchema.shape)).toEqual(["urls", "max_rows", "max_chars", "query"]);
     expect(chatgptInputSchema.shape.max_rows.unwrap().maxValue).toBe(2000);
+  });
+});
+
+describe("tako_contents links and card structure", () => {
+  const cardUrl = "https://tako.com/card/abc";
+  const wire = (item: Record<string, unknown>) => ({
+    contents: [{ cost: 0.01, source_url: cardUrl, ...item }],
+    request_id: "r",
+  });
+  const http422 = () =>
+    new DjangoHttpError({ path: "/api/v1/contents/", method: "POST", status: 422, body: "" });
+
+  it("link mode returns a download with its expiry", async () => {
+    vi.mocked(djangoPost).mockResolvedValue(
+      wire({
+        content_format: "csv",
+        url: "https://s3/x.csv",
+        expires_at: "2026-10-23T20:00:00+00:00",
+        total_rows: 40,
+      }),
+    );
+    const out = await tool.handler(tool.inputSchema.parse({ urls: [cardUrl], delivery: "link" }), ctx);
+    expect(out.results[0]!.download).toEqual({
+      url: "https://s3/x.csv",
+      expires_at: "2026-10-23T20:00:00+00:00",
+      file_format: "csv",
+      total_rows: 40,
+    });
+    expect(out.results[0]!.rows).toBeUndefined();
+    expect(out.results[0]!.error).toBeUndefined();
+  });
+
+  it("link mode without url reports an error", async () => {
+    vi.mocked(djangoPost).mockResolvedValue(wire({ content_format: "csv", url: null, expires_at: null }));
+    const out = await tool.handler(tool.inputSchema.parse({ urls: [cardUrl], delivery: "link" }), ctx);
+    expect(out.results[0]!.error).toBe(EMPTY_PAYLOAD_ERROR);
+  });
+
+  it("card format returns the card object", async () => {
+    const card_data = { card_type: "company", tabs: [] };
+    vi.mocked(djangoPost).mockResolvedValue(wire({ content_format: "card_json", card_data }));
+    const out = await tool.handler(tool.inputSchema.parse({ urls: [cardUrl], format: "card" }), ctx);
+    expect(out.results[0]!.card).toEqual(card_data);
+  });
+
+  it("card falls back to rows on 422", async () => {
+    vi.mocked(djangoPost)
+      .mockRejectedValueOnce(http422())
+      .mockResolvedValueOnce(card());
+    const out = await tool.handler(
+      tool.inputSchema.parse({ urls: [cardUrl], format: "card", delivery: "link" }),
+      ctx,
+    );
+    const calls = vi.mocked(djangoPost).mock.calls;
+    expect(calls).toHaveLength(2);
+    const first = calls[0]![3] as { mode: string; content_format: string };
+    const second = calls[1]![3] as { mode: string; content_format: string };
+    expect(first.content_format).toBe("card_json");
+    expect(second.content_format).toBe("json_compact");
+    expect(second.mode).toBe(first.mode);
+    expect(out.results[0]!.note).toBe(CARD_FALLBACK_NOTE);
+    expect(out.results[0]!.rows).toBeDefined();
+  });
+
+  it("a 422 without format card is not retried", async () => {
+    vi.mocked(djangoPost).mockRejectedValue(http422());
+    await expect(tool.handler(tool.inputSchema.parse({ urls: [cardUrl] }), ctx)).rejects.toBeInstanceOf(
+      DjangoHttpError,
+    );
+    expect(vi.mocked(djangoPost)).toHaveBeenCalledTimes(1);
+  });
+
+  it("chatgpt output schema is unchanged", () => {
+    expect(tool.outputSchemaBySurface?.chatgpt).toBe(chatgptContentsOutputShape);
+    const item = chatgptContentsOutputShape.shape.results.element.shape;
+    expect(item).not.toHaveProperty("download");
+    expect(item).not.toHaveProperty("card");
   });
 });
