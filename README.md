@@ -14,7 +14,7 @@ Tako MCP gives your agent industry-leading live web search plus licensed data th
 Tako MCP lets an agent:
 
 - **Search** Tako's knowledge graph and the live web — top result renders inline as a chart, and `tako_contents` reads the rows behind it
-- **Discover** exactly what proprietary data exists for an entity or metric — free and fast
+- **Discover** exactly what proprietary data exists for an entity or metric
 - **Fetch** the underlying rows (JSON) or a page's text behind any result URL
 - **Visualize** your own structured data as an embeddable card — public and permanent, readable by anyone with the link _(opt-in; on by default on the ChatGPT app)_
 - **Run** Tako's Answer Agent for deep, multi-step research, or its Company Agent for company and registry-officer questions _(opt-in; on by default on the ChatGPT app)_
@@ -144,7 +144,7 @@ That installs the MCP connection, Tako's bundled [lookup skill](#agent-skills), 
 | --- | --- |
 | `/data <question>` | The answer, cited, across proprietary data **and** the full web, since `sources` defaults to both. One narrow `tako_search` (with rows) for a specific value, parallel searches for anything broad |
 | `/chart <question>` | The series as a chart, with the **Open in Tako** embed link |
-| `/coverage <entity or metric>` | What the proprietary graph has, before you spend a call. `tako_available_data` is free, and a miss there still leaves web search |
+| `/coverage <entity or metric>` | What the proprietary graph has on an entity or metric. A miss there still leaves web search |
 
 To unlock the full toolset and your own account limits, authenticate once: run `/mcp auth tako` inside Gemini CLI. A browser opens to sign you in with your Tako account, and a per-host API key is minted for you automatically (visible and revocable at [tako.com/console/api-keys](https://tako.com/console/api-keys)).
 
@@ -290,9 +290,9 @@ The full reference — every description and parameter exactly as the model sees
 | Tool | What it's for |
 | ---- | ------------- |
 | `tako_search` | **Find the data.** Fast search over Tako's curated graph and the live web. Four parameters — `query`, `sources`, `country_code`, `locale` — and no defaults of its own, so an omitted field takes the API's. Cards carry headline values, node ids and chart links; `tako_contents` reads the rows. The top result renders inline as a chart with an **Open in Tako** link. Parallelize broad questions into narrow single entity+metric searches. |
-| `tako_available_data` | **Find what structured data exists** on an entity or metric in one free call — the exact metric name to search on, an `id` for graph traversal, and a ready-to-run `next_call`. Ambiguous names come back as candidates with a `kind`; `metric` doubles as the substring browse filter; `limit` widens the candidate list. |
+| `tako_available_data` | **Find what structured data exists** on an entity or metric in one call — the exact metric name to search on, an `id` for graph traversal, and a ready-to-run `next_call`. Ambiguous names come back as candidates with a `kind`; `metric` doubles as the substring browse filter; `limit` widens the candidate list. |
 | `tako_contents` | Fetch what's behind result URLs (1-10 per call): a card's rows or a web page's text — set `query` to a question to get only the passages that answer it. Requires a signed-in connection. |
-| `tako_graph_related` | Explore a graph node: a map (each relation's key, total, first three names) or one paged relation — metrics, the entities a metric covers, competitors (`rel:competes_with`), memberships, sources. `q` is a substring filter. Free. |
+| `tako_graph_related` | Explore a graph node: a map (each relation's key, total, first three names) or one paged relation — metrics, the entities a metric covers, competitors (`rel:competes_with`), memberships, sources. `q` is a substring filter. |
 
 **Anonymous connections (no credentials):** the tool list is the same — it never changes with auth state. `tako_search` runs anonymously (rate-limited, on shared capacity); the others answer with sign-in instructions.
 
@@ -351,6 +351,8 @@ Two tools, one step apart — `tako_search` finds, `tako_contents` fetches:
 ## Agent Skills
 
 A ready-to-use skill for Claude Code. It teaches Claude when to look something up with Tako and how to report what it finds. Copy the block inside the dropdown and paste it into Claude Code — it sets up the connection and skill for you.
+
+The `tako-search` skill replaces the `tako-financial-research`, `tako-macroeconomics`, and `tako-web-traffic` skills. If you called one of them by name, such as `/tako:tako-financial-research`, call `/tako:tako-search` instead.
 
 <details>
 <summary><b>Tako</b></summary>

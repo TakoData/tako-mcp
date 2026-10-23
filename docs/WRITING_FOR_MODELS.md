@@ -48,12 +48,15 @@ served the production `tools/list` and logged every call:
 | Arm | Data questions | Web-only lookups | No-lookup tasks |
 |---|---|---|---|
 | No skill | 1 of 268 | 0 of 30 | 0 of 30 |
+| Three domain skills on `main` (finance, macroeconomics, web traffic) | 78 of 268 | 0 of 30 | 1 of 30 |
 | General search ("look something up… on any topic") | 167 of 268 | 16 of 30 | 1 of 30 |
 | General search plus "especially when the answer is a figure…" | 124 of 268 | 5 of 30 | 0 of 30 |
 
 That run used `gpt-6-luna` on Codex 0.164.0, with one question for each
-production-ready data manager spec family, asked twice. The one no-lookup
-trigger was "What does it mean when the yield curve inverts?".
+production-ready data manager spec family, asked twice. The three-skill arm
+ran a day after the others. Its one no-lookup trigger was "Explain the
+difference between CPI and PCE inflation.", and the general-search arm's was
+"What does it mean when the yield curve inverts?".
 
 An earlier run on `gpt-6-astra` (Codex 0.155.1) tested the tool description
 instead. Rewriting the `tako_search` description to list its domains and
