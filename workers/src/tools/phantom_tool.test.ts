@@ -281,6 +281,7 @@ describe("server instructions name no tool a connection may not have", () => {
 describe("server instructions name no tool outside the resolved ?tools= set", () => {
   const allowlists: ReadonlySet<string>[] = [
     new Set(["tako_agent"]),
+    new Set(["tako_agent", "tako_company_agent"]),
     new Set(["tako_search"]),
     new Set(["tako_search", "tako_contents"]),
     new Set(["tako_visualize", "tako_graph_related"]),
@@ -327,6 +328,18 @@ describe("server instructions name no tool outside the resolved ?tools= set", ()
     expect(text).not.toContain("tako_available_data");
     // And the shared routing paragraph is never a casualty of filtering.
     expect(text).toContain("knowledge graph of live structured data");
+  });
+
+  it("routes between the agent tools only when the connection registers both", () => {
+    const both = serverInstructionsFor(
+      resolveToolSet("generic", new Set(["tako_agent", "tako_company_agent"])),
+    );
+    const one = serverInstructionsFor(resolveToolSet("generic", new Set(["tako_agent"])));
+
+    expect(both).toContain("Use `tako_company_agent` when the answer is a list of companies or people");
+    expect(both).toContain("Use `tako_agent` when the answer is an analysis of metrics");
+    expect(one).not.toContain("tako_company_agent");
+    expect(SERVER_INSTRUCTIONS).not.toContain("tako_company_agent");
   });
 
   // Named by the invariant, not by a count. The assertion compares against

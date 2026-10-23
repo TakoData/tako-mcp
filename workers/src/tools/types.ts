@@ -45,16 +45,10 @@ export interface ToolContext {
    * arrives — so a long-running handler can stay under the per-call
    * timeout indefinitely as long as it keeps emitting progress.
    *
-   * NOTHING ABOVE REACHES A CLIENT TODAY, AND NO TOOL CALLS THIS. The
-   * transport runs `enableJsonResponse: true` (`mcp.ts`), and
-   * `webStandardStreamableHttp.js` skips the SSE write for every
-   * request-scoped notification in that mode, so no host has ever received
-   * one and `resetTimeoutOnProgress` cannot fire anywhere. `tako_agent`'s
-   * poll loop was the last caller and dropped the call rather than keep
-   * implying a channel that discards it. The plumbing below stays for
-   * TAKO-4485, which owns the real fix and is blocked on the
-   * `TODO(Phase 2)` unconditional `transport.close()`. Do not add a caller
-   * on the strength of this docstring's first paragraph.
+   * Only a tool that declares `streamsProgress` delivers progress: `mcp.ts`
+   * answers its calls over SSE. Every other request gets a buffered JSON
+   * response, where the transport drops request-scoped notifications, so
+   * progress from any other tool reaches no client.
    *
    * No-op when the request did not carry a progressToken (the client
    * isn't asking for progress, so we don't send any). No-op when the
@@ -66,6 +60,8 @@ export interface ToolContext {
     progress: number,
     opts?: { total?: number; message?: string },
   ) => Promise<void>;
+  /** Aborts when the client drops the request. `undefined` outside an HTTP context. */
+  signal?: AbortSignal | undefined;
   /**
    * The path-selected surface serving the current request — see
    * `surface.ts`. Tools that need to vary presentation across the two
@@ -429,6 +425,11 @@ export interface ToolModule<
   /** Request fields sent with a constant value — see {@link FixedInput}. */
   fixedInputs?: ReadonlyArray<FixedInput>;
   /**
+   * Answer this tool's calls over SSE so `ctx.sendProgress` reaches the
+   * client. Every other tool's calls get a buffered JSON response.
+   */
+  streamsProgress?: true;
+  /**
    * Optional anonymous-input gate, consulted by `registerTool` on
    * `tier: "free"` calls BEFORE the handler runs. Return the extra
    * model-facing sentence when the anonymous call must be refused
@@ -548,6 +549,8 @@ export interface AnyToolModule {
   annotationsBySurface?: { chatgpt?: Partial<ToolAnnotations> };
   /** Request fields sent with a constant value — see {@link FixedInput}. */
   fixedInputs?: ReadonlyArray<FixedInput>;
+  /** SSE responses for progress — see {@link ToolModule.streamsProgress}. */
+  streamsProgress?: true;
   /** Anonymous-input gate — see {@link ToolModule.anonymousInputRejects}. */
   anonymousInputRejects?: (input: Record<string, unknown>) => string | undefined;
   handler: (input: unknown, ctx: ToolContext) => Promise<unknown>;

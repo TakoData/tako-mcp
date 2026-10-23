@@ -851,15 +851,20 @@ function renderAgentCard(c: ProjectedAgentCard): string {
 }
 
 function renderCitation(c: ProjectedCitation): string {
+  const published = c.published !== undefined ? `, ${c.published}` : "";
   const url = c.url !== undefined ? ` — ${c.url}` : "";
   const corpus = c.source_index !== undefined ? ` (${c.source_index})` : "";
-  return `[${c.index}] ${oneLine(c.title)}${url}${corpus}`;
+  return `[${c.index}] ${oneLine(c.title)}${published}${url}${corpus}`;
 }
 
 /** An agent run as markdown: the answer, the cards it built, the indexed
  *  sources its [n] markers join to, and the reasoning notes behind it. */
 export function renderAgentRunMarkdown(o: AgentRunOutput): string {
   const blocks: string[] = [];
+  if (o.status === "running") {
+    if (o.message !== undefined) blocks.push(oneLine(o.message));
+    blocks.push(`run_id: ${o.run_id}`);
+  }
   if (o.answer !== undefined) blocks.push(o.answer);
   if (o.guidance !== undefined) blocks.push(`> ${o.guidance}`);
   if (o.error !== undefined) {

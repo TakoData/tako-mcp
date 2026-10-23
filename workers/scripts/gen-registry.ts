@@ -46,6 +46,7 @@ import {
   webResultSchema,
   type Usage,
 } from "../src/tools/_search_results.js";
+import { type AgentProduct, toPublicRunId } from "../src/tools/_agent_product.js";
 import { projectAgentRun, type AgentRunWireLike } from "../src/tools/_agent_run.js";
 import {
   fenceRunFor,
@@ -97,6 +98,7 @@ import type { ToolAnnotations, ToolModule } from "../src/tools/types.js";
 export const MCP_TOOL_ALLOWLIST = [
   "tako_agent",
   "tako_available_data",
+  "tako_company_agent",
   "tako_contents",
   "tako_graph_related",
   "tako_search",
@@ -992,11 +994,14 @@ function buildGraphRelatedSample(tool: ToolModule): ToolSample {
   };
 }
 
-const AGENT_SAMPLE_FIXTURE = resolve(HERE, "../test/fixtures/tako_agent_sample.json");
+const AGENT_SAMPLE_FIXTURE: Record<AgentProduct, string> = {
+  answer: resolve(HERE, "../test/fixtures/tako_agent_sample.json"),
+  company: resolve(HERE, "../test/fixtures/tako_company_agent_sample.json"),
+};
 
-function buildAgentSample(tool: ToolModule): ToolSample {
-  const raw = JSON.parse(readFileSync(AGENT_SAMPLE_FIXTURE, "utf8")) as AgentRunWireLike;
-  const output = projectAgentRun(raw);
+function buildAgentSample(tool: ToolModule, product: AgentProduct): ToolSample {
+  const raw = JSON.parse(readFileSync(AGENT_SAMPLE_FIXTURE[product], "utf8")) as AgentRunWireLike;
+  const output = projectAgentRun(raw, toPublicRunId(product, "sample"));
   return {
     structured: pickDeclared(
       // One schema on both surfaces (no widget fields), but resolved through
@@ -1019,7 +1024,8 @@ export function buildToolSamples(modules: ReadonlyArray<ToolModule>): Map<string
     if (m.name === "tako_visualize") samples.set(m.name, buildVisualizeSample(m));
     if (m.name === "tako_available_data") samples.set(m.name, buildAvailableDataSample(m));
     if (m.name === "tako_graph_related") samples.set(m.name, buildGraphRelatedSample(m));
-    if (m.name === "tako_agent") samples.set(m.name, buildAgentSample(m));
+    if (m.name === "tako_agent") samples.set(m.name, buildAgentSample(m, "answer"));
+    if (m.name === "tako_company_agent") samples.set(m.name, buildAgentSample(m, "company"));
     if (m.name === "tako_search_advanced") samples.set(m.name, buildAdvancedSample(m));
   }
   return samples;

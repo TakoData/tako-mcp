@@ -12,7 +12,7 @@
  *
  * Both channels now carry the same projected result. Every field is mapped on
  * purpose, so an unknown backend key cannot leak; wire-drift protection is the
- * generated-contract guard in `pollAgentRun` plus the conformance test in
+ * `parseRun` guard in `_agent_wait.ts` plus the conformance test in
  * `_agent_run.test.ts`.
  *
  * What the projection drops, and why (sizes measured on two staging runs,
@@ -28,19 +28,15 @@
  *     Those two fields alone were 81% of that run's card payload.
  *   - `cards[].content{}`: nulls plus `export_pricing`; `total_rows` is lifted
  *     out of it.
- *   - `citations[].source_name`, `.excerpt`, `.publish_date`, `.content`: the
- *     generated contract states the Answer Agent "populates source_index and
- *     leaves the rest null", and both live runs confirm it.
- *   - `run_id` and `result.request_id`: correlation ids with no model reader
- *     and no poll tool to spend them on. `pollAgentRun` logs `run_id` on the
- *     TERMINAL poll, which is where a support question gets answered — the
- *     same bargain `request_id` makes on the search tools, where `mcp.ts`
- *     logs it. Delete that log and this drop stops being safe: `mcp.ts`
- *     itself never sees `run_id`, so nothing else would record it.
- *   - `status`: `pollAgentRun` throws on the budget rather than returning a
- *     non-terminal run, so the only values that can ship are `completed` and
- *     `failed`, and `error` already distinguishes them. It comes back the day
- *     a non-terminal run can be returned.
+ *   - `citations[].source_name`, `.excerpt`, `.content`: the generated
+ *     contract states the Answer Agent "populates source_index and leaves the
+ *     rest null". The Company Agent fills `excerpt` on web citations, and
+ *     `tako_contents` fetches the page it came from.
+ *     `.publish_date` is kept as `published`, the name `tako_search` uses,
+ *     because the Company Agent fills it on web citations.
+ *   - `result.request_id`: a correlation id with no model reader.
+ *     `waitForRun` logs `run_id` when the run ends, which is where a
+ *     support question gets answered.
  *   - `timed_out`: deleted outright, not just dropped here. It was
  *     MCP-synthetic, only ever `true` on the `onTimeout: "return"` arm that
  *     went with `tako_agent_wait`, and its own describe told the model to
@@ -59,8 +55,99 @@ import {
   nonEmpty,
   sourceNamesOf,
   usageAdvertisedSchema,
+  usageSchema,
   type Usage,
 } from "./_search_results.js";
+
+const takoCardSchema = z
+  .object({
+    card_id: z.string().nullable().optional(),
+    title: z.string().nullable().optional(),
+    embed_url: z.string().nullable().optional(),
+    image_url: z.string().nullable().optional(),
+  })
+  .loose();
+
+// One indexed source behind the answer. The answer's inline [n] markers join
+// to a citation's `index`. Mirrors the generated AgentAnswerCitation — the
+// unified top-level registry (Answer Agent, S1 §5.2) that replaced the generic
+// agent's per-answer `web_results`. The required fields (`index`, `title`) match
+// the contract non-null; the object stays `.loose()` so additive backend fields
+// (source_index, content, …) pass through untouched.
+const citationSchema = z
+  .object({
+    index: z.number().int(),
+    title: z.string(),
+    url: z.string().nullable().optional(),
+    source_name: z.string().nullable().optional(),
+    excerpt: z.string().nullable().optional(),
+    publish_date: z.string().nullable().optional(),
+  })
+  .loose();
+
+// The answer's reasoning scaffolding (Answer Agent, AnswerAgentMetadata): term
+// definitions, stated assumptions, and methodology notes behind the prose.
+// Surfaced so chat hosts can show *why* the answer holds, not just the text.
+// Leaves stay `.loose()` so additive backend fields pass through.
+const definitionSchema = z
+  .object({ term: z.string(), definition: z.string(), source_ref: z.number().int().nullable().optional() })
+  .loose();
+const assumptionSchema = z
+  .object({
+    title: z.string(),
+    description: z.string(),
+    category: z.string().nullable().optional(),
+    source_ref: z.number().int().nullable().optional(),
+  })
+  .loose();
+const methodologyNoteSchema = z.object({ title: z.string(), description: z.string() }).loose();
+const metadataSchema = z
+  .object({
+    definitions: z.array(definitionSchema).nullable().optional(),
+    assumptions: z.array(assumptionSchema).nullable().optional(),
+    methodology: z.array(methodologyNoteSchema).nullable().optional(),
+  })
+  .loose();
+
+export const agentRunSchema = z.object({
+  run_id: z.string(),
+  // Metered cost of the run. Forwarded to the projected output as `usage` —
+  // the one field a caller acts on, and absent from both channels until this
+  // pass (agent runs over MCP are not yet metered for PAYG orgs, TAKO-3245,
+  // so the wire figure can be present while nothing is charged).
+  usage: usageSchema.nullable().optional(),
+  // Surfaced so the caller can pass it back as `thread_id` to ask a follow-up
+  // in the same conversation.
+  thread_id: z.string().nullable().optional(),
+  // Mirrors the backend AgentRunStatus StrEnum exactly (api/ga/v1/agent/types.py)
+  // — kept in lockstep on purpose. A new backend status must be added here too,
+  // or the poll will reject the run as an "unexpected shape".
+  status: z.enum(["queued", "running", "completed", "failed"]),
+  result: z
+    .object({
+      answer: z.string().nullable().optional(),
+      cards: z.array(takoCardSchema).default([]),
+      // The unified top-level citation registry (Answer Agent, S1 §5.2): the
+      // indexed sources the answer's [n] markers join to. This replaced the
+      // generic agent's `web_results` — dropping it loses all citations.
+      citations: z.array(citationSchema).default([]),
+      // Definitions / assumptions / methodology behind the answer
+      // (AnswerAgentMetadata); a plain z.object would otherwise strip it.
+      metadata: metadataSchema.nullable().optional(),
+      // Set when Tako rejected the query BEFORE the agent ran; null on normal
+      // runs. A strict `z.object` used to strip it, so a rejected run reached
+      // the model as a completed run with no answer and no reason. It is now
+      // the tool's one `guidance` branch (`refusalGuidance` in _agent_run.ts).
+      // New codes are additive, so never switch on the value.
+      refusal_code: z.string().nullable().optional(),
+      request_id: z.string().nullable().optional(),
+    })
+    .nullable()
+    .optional(),
+  error: z.object({ code: z.string(), message: z.string() }).nullable().optional(),
+});
+
+export type AgentRun = z.infer<typeof agentRunSchema>;
 
 /**
  * One chart card an agent run built.
@@ -74,7 +161,7 @@ import {
  *
  * `total_rows` is a plain `number()`, not `.int()`: draft-7 renders `.int()` as
  * a 55-char ±2^53 bound pair, and the projection already lifts the value from
- * a wire field the run-lifecycle guard validated. Same call `tako_contents`
+ * a wire field `parseRun` validated. Same call `tako_contents`
  * made in #275.
  */
 export const projectedAgentCardShape = z.looseObject({
@@ -85,7 +172,7 @@ export const projectedAgentCardShape = z.looseObject({
   image_url: z.string().optional(),
   embed_url: z.string().optional(),
   source: z.string().optional(),
-  last_updated: z.string().optional().describe("When Tako last refreshed the card."),
+  last_updated: z.string().optional(),
   total_rows: z.number().optional(),
 });
 export type ProjectedAgentCard = {
@@ -105,6 +192,7 @@ export const projectedCitationShape = z.looseObject({
   index: z.number().describe("The number an [n] marker joins to; sparse."),
   title: z.string(),
   url: z.string().optional(),
+  published: z.string().optional(),
   source_index: z
     .enum(["data", "web"])
     .optional()
@@ -114,6 +202,7 @@ export type ProjectedCitation = {
   index: number;
   title: string;
   url?: string;
+  published?: string;
   source_index?: "data" | "web";
 };
 
@@ -126,7 +215,10 @@ export type ProjectedCitation = {
  *  advertised shape and the projection that fills it drift the moment they
  *  live in different files. `_contents.ts` keeps the same pairing. */
 export const agentRunOutputShape = z.looseObject({
-  answer: z.string().optional().describe("Its [n] markers join to `citations`."),
+  status: z.enum(["completed", "failed", "running"]),
+  run_id: z.string(),
+  message: z.string().optional(),
+  answer: z.string().optional(),
   guidance: z.string().optional().describe("Rejected queries only."),
   cards: z
     .array(projectedAgentCardShape)
@@ -143,12 +235,15 @@ export const agentRunOutputShape = z.looseObject({
   thread_id: z.string().optional().describe("Send back as `thread_id` for a follow-up."),
   // Nullable, unlike tako_contents' always-present `usage`: agent runs over
   // MCP are not metered for every org yet (TAKO-3245), so null is a real state.
-  usage: usageAdvertisedSchema.nullable().describe("Null when not metered."),
+  usage: usageAdvertisedSchema.nullable(),
   error: z.looseObject({ code: z.string(), message: z.string() }).optional(),
 });
 
 /** The projected agent run: what both channels carry. */
 export type AgentRunOutput = {
+  status: "completed" | "failed" | "running";
+  run_id: string;
+  message?: string;
   answer?: string;
   /** Refusal only — see `refusalGuidance`. */
   guidance?: string;
@@ -169,10 +264,16 @@ export type AgentRunOutput = {
  * state was "Agent run completed with no answer text", and `refusal_code`
  * never reached either channel to say why.
  *
- * Two sentences, verdict then one action, per the spec's guidance rule.
+ * Two sentences, verdict then one action, per the spec's guidance rule. The
+ * action names `lookupTool` only when the caller passes one, so the text never
+ * points at a tool the connection doesn't register.
  */
-export function refusalGuidance(code: string): string {
-  return `Tako rejected this query before the agent ran (${code}), so nothing was researched. Rephrase it as a question about specific entities and metrics, or call \`tako_search\` for a direct lookup.`;
+export function refusalGuidance(code: string, lookupTool?: string): string {
+  const action =
+    lookupTool === undefined
+      ? "Rephrase it as a question about specific entities and metrics."
+      : `Rephrase it as a question about specific entities and metrics, or call \`${lookupTool}\` for a direct lookup.`;
+  return `Tako rejected this query before the agent ran (${code}), so nothing was researched. ${action}`;
 }
 
 /** The wire fields the projection reads. A superset arrives; nothing else is kept. */
@@ -197,9 +298,6 @@ export type AgentRunWireLike = {
     | null
     | undefined;
   error?: { code: string; message: string } | null | undefined;
-  // Read ONLY to tell a failed run from a legitimately prose-free one when the
-  // backend leaves `error` null. It is never projected — `status` had two
-  // reachable values and `error` carries the distinction the model acts on.
   status?: string | undefined;
 };
 
@@ -272,6 +370,8 @@ export function projectCitation(citation: unknown): ProjectedCitation | undefine
   const out: ProjectedCitation = { index: rec.index, title };
   const url = nonEmpty(rec.url);
   if (url !== undefined) out.url = url;
+  const published = dateOnly(rec.publish_date);
+  if (published !== undefined) out.published = published;
   if (rec.source_index === "data" || rec.source_index === "web") {
     out.source_index = rec.source_index;
   }
@@ -318,10 +418,19 @@ export function noteMap(
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
-/** Project a terminal agent run into the shape both channels carry. */
-export function projectAgentRun(run: AgentRunWireLike): AgentRunOutput {
+/**
+ * Project a terminal agent run into the shape both channels carry. A refused
+ * run's guidance names `lookupTool` when the caller passes one.
+ */
+export function projectAgentRun(
+  run: AgentRunWireLike,
+  publicRunId: string,
+  lookupTool?: string,
+): AgentRunOutput {
   const result = run.result;
   const out: AgentRunOutput = {
+    status: run.status === "failed" ? "failed" : "completed",
+    run_id: publicRunId,
     cards: [],
     citations: [],
     usage: run.usage ?? null,
@@ -329,7 +438,7 @@ export function projectAgentRun(run: AgentRunWireLike): AgentRunOutput {
   const answer = nonEmpty(result?.answer);
   if (answer !== undefined) out.answer = answer;
   const refusal = nonEmpty(result?.refusal_code);
-  if (refusal !== undefined) out.guidance = refusalGuidance(refusal);
+  if (refusal !== undefined) out.guidance = refusalGuidance(refusal, lookupTool);
   if (Array.isArray(result?.cards)) {
     out.cards = result.cards
       .map(projectAgentCard)
@@ -357,18 +466,33 @@ export function projectAgentRun(run: AgentRunWireLike): AgentRunOutput {
   else if (run.status === "failed") {
     out.error = { code: "agent_run_failed", message: "The agent run failed without a reason." };
   }
-  // NON-TERMINAL, and the renderer cannot tell it from a prose-free completed
-  // run: both project to no answer and no error, so the text channel states
-  // "The agent returned no answer." about a run that is still going.
-  // `pollAgentRun` cannot hand one over any more — it throws on the budget
-  // instead of returning `status: "running"` — but this projection is
-  // exported and the wire type takes any status string, so the guard is what
-  // keeps the statement true for a caller that builds one another way.
-  else if (run.status !== undefined && run.status !== "completed") {
-    out.error = {
-      code: "agent_run_incomplete",
-      message: `The agent run ended while still ${run.status}.`,
-    };
-  }
   return out;
+}
+
+/** The text that tells the model how to keep waiting for a run. */
+export function runningMessage(
+  toolName: string,
+  publicRunId: string,
+  elapsedS: number,
+  progress?: string,
+): string {
+  const state = progress === undefined ? `${elapsedS} s` : `${elapsedS} s; latest step: ${progress}`;
+  return `The run is still working (${state}). Call \`${toolName}\` again with run_id=\`${publicRunId}\` to keep waiting. Don't start a new run for the same question.`;
+}
+
+/** Project a run that is still working when the call's window ends. */
+export function projectRunningRun(args: {
+  toolName: string;
+  publicRunId: string;
+  elapsedS: number;
+  progress?: string;
+}): AgentRunOutput {
+  return {
+    status: "running",
+    run_id: args.publicRunId,
+    message: runningMessage(args.toolName, args.publicRunId, args.elapsedS, args.progress),
+    cards: [],
+    citations: [],
+    usage: null,
+  };
 }

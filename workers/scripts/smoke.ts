@@ -25,6 +25,8 @@
  *        a2. `tako_available_data "US GDP"` — text plus a match with an id (read-only)
  *        b. `tako_search_advanced "US GDP" include_answer` — answer text returned (read-only)
  *        c. `tako_contents {urls}` — a card's rows in BOTH channels, then a web url's page text (read-only)
+ *        c2. `tako_company_agent` at `effort: "low"` — starts one billable
+ *            company-agent run, which the smoke doesn't cancel
  *        d. `tako_visualize`              — creates a card (charges 1 credit)
  *   6. Native-card proxy on the card step 5d just created — all three of its
  *      routes, since the feature is only as live as its weakest one:
@@ -50,7 +52,8 @@
  *
  * Excluded by design:
  *   - `tako_agent` — long-running; presence is asserted in step 3 but the
- *     tool is not called
+ *     tool is not called. `tako_company_agent` gets one start call that
+ *     accepts `completed` or `running`.
  *   - removed tools (reporting, chart-authoring) — see Tasks 2–3 cleanup
  *   - `explore_knowledge_graph` — removed in PR #47
  *
@@ -378,7 +381,7 @@ try {
   ok(`tools/list → ${tools.length} tools (${toolNames.join(", ")})`);
 
   // `tako_agent` is named in the allowlist above. We do NOT call it — it
-  // runs long.
+  // runs long. The company agent gets one start call below.
   const hasAgent = toolNames.includes("tako_agent");
   assert(hasAgent, `expected an agent tool in tools/list (got: ${toolNames.join(", ")})`);
   ok("agent tool present");
@@ -562,6 +565,25 @@ try {
     "tako_contents returned no page text for a web url",
   );
   ok(`tako_contents {urls: [web]} → page text present (${tcWebFirst.text.length} chars)`);
+
+  const caResult = await callOk(client, "tako_company_agent", {
+    query: "Which companies were incorporated in Delaware in 2024?",
+    effort: "low",
+  });
+  const caStructured = caResult.structuredContent as
+    | { status?: string; run_id?: string }
+    | undefined;
+  assert(caStructured, "tako_company_agent missing structuredContent");
+  assert(
+    caStructured.status === "completed" || caStructured.status === "running",
+    `tako_company_agent status expected completed or running, got ${JSON.stringify(caStructured.status)}`,
+  );
+  assert(
+    typeof caStructured.run_id === "string" &&
+      caStructured.run_id.startsWith("company_run_"),
+    `tako_company_agent run_id expected a company_run_ prefix, got ${JSON.stringify(caStructured.run_id)}`,
+  );
+  ok(`tako_company_agent start → ${caStructured.status} (${caStructured.run_id})`);
 
   // ----- d) tako_visualize canary (creates a tiny card; CHARGES 1 CREDIT) ----
   const tvResult = await callOk(client, "tako_visualize", {

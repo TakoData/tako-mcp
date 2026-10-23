@@ -1,4 +1,5 @@
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { readRequestBody } from "@modelcontextprotocol/sdk/server/requestBody.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 // No `.js` suffix — the SDK's package.json `exports` map only exposes
 // `./validation/cfworker`, unlike the other server subpaths which do ship
@@ -37,6 +38,7 @@ import {
 } from "./freetier.js";
 import { serverInstructionsFor } from "./instructions.js";
 import { tryResolveOAuthAccessToken } from "./oauth/access.js";
+import { AgentInputError } from "./tools/_agent_product.js";
 import { logToolRequestId } from "./tools/_log.js";
 import { GENERIC_SIGN_IN_HINT } from "./tools/_shared_prose.js";
 import { parseToolsParam, readToolsParam } from "./tools/_tools_param.js";
@@ -734,25 +736,15 @@ function registerTool(
       // the protocol forbids sending progress without one, so
       // `sendProgress` no-ops when it is absent.
       //
-      // NOTHING BELOW REACHES A CLIENT, WITH OR WITHOUT A TOKEN. The
-      // transport runs `enableJsonResponse: true`, which skips the SSE
-      // write for every request-scoped notification, so a progress event
-      // is discarded either way and NO client's per-tool-call timeout
-      // ever resets — a `resetTimeoutOnProgress` client is in the same
-      // position as one that sent no token. No tool calls `sendProgress`
-      // today; `tako_agent`'s poll loop was the last caller and dropped
-      // it rather than keep implying a channel that discards the call.
-      // TAKO-4485 owns the fix. Until it lands, do not add a caller on
-      // the strength of the paragraph above. `tools/types.ts` carries
-      // the full finding.
+      // Progress reaches the client only on an agent tool call, which
+      // `handleMcpRequest` answers over SSE. Every other request gets a
+      // buffered JSON response, and the transport drops request-scoped
+      // notifications there.
       const progressToken = (extra._meta as { progressToken?: string | number } | undefined)
         ?.progressToken;
-      // Diagnostic, and it decides nothing while the transport discards
-      // notifications. It stays because it is the only measurement of
-      // which clients would benefit once TAKO-4485 lands — `wrangler
-      // tail` shows who asks (Claude.ai's TS SDK does by default;
-      // ChatGPT's Apps SDK historically does not). Do not read a
-      // present token as "progress works for this client".
+      // Diagnostic only: `wrangler tail` shows which clients ask for
+      // progress (Claude.ai's TS SDK does by default; ChatGPT's Apps SDK
+      // historically does not).
       console.log(
         `[mcp] tool=${tool.name} surface=${options.surface} progressToken=${progressToken ?? "(none)"}`,
       );
@@ -918,6 +910,12 @@ function registerTool(
             };
           }
           return mapped;
+        }
+        if (err instanceof AgentInputError) {
+          console.log(
+            `[mcp] tool input rejected tool=${tool.name} surface=${options.surface} tier=${callCtx.tier}: ${err.message}`,
+          );
+          return { content: [{ type: "text" as const, text: err.message }], isError: true };
         }
         // Non-Django throws (wire-guard drift, handler bugs) re-throw to the
         // SDK, which converts them into client-visible tool text WITHOUT
@@ -1483,13 +1481,11 @@ export function freeTierHiddenToolResponse(
  * everywhere else the missing-header case 401s exactly as it always did,
  * and `initialize` requires auth.
  *
- * `enableJsonResponse: true` makes the transport return a single JSON-RPC
- * response body instead of an SSE stream, which keeps the wire format simple
- * for the common request/response case. It also DISCARDS every
- * request-scoped notification — `webStandardStreamableHttp.js` skips the SSE
- * write in this mode — so `notifications/progress` reaches no host and no
- * client's per-call timeout resets. TAKO-4485 owns that; see `sendProgress`
- * in `registerTool` and in `tools/types.ts`.
+ * A call to a tool that declares `streamsProgress` (`streamingToolCallName`),
+ * on a connection that registers that tool, gets an SSE response, so its
+ * `notifications/progress` reach the client. Every other request runs with `enableJsonResponse: true`: one
+ * buffered JSON-RPC body, in which the transport drops every request-scoped
+ * notification.
  */
 export async function handleMcpRequest(
   request: Request,
@@ -1610,12 +1606,14 @@ export async function handleMcpRequest(
   // tool call inside `registerTool`'s SDK callback (where the
   // request's `progressToken` and the SDK's `sendNotification` are
   // available). Outside of a tool-call scope, no client is listening.
+  const responseCancelled = new AbortController();
   const ctx: ToolContext = {
     token,
     env,
     sendProgress: async () => {
       /* no-op outside tool-call scope */
     },
+    signal: AbortSignal.any([request.signal, responseCancelled.signal]),
     surface,
     tier,
     caller,
@@ -1671,12 +1669,17 @@ export async function handleMcpRequest(
       requestedToolNames,
       tier,
     });
+    const peekedBody = await peekJsonBody(request);
+    const registeredTools = resolveToolSet(surface, requestedToolNames);
+    logToolInputRejections(peekedBody, registeredTools, surface);
+    const streamingTool = streamingToolCallName(peekedBody);
+    const streamsProgress = streamingTool !== undefined && registeredTools.has(streamingTool);
     // Omitting `sessionIdGenerator` puts the transport in stateless mode — no
     // `Mcp-Session-Id` header is issued or validated. This matches the Worker
     // model (no persistent per-session state) and keeps each request
     // self-contained.
     const transport = new WebStandardStreamableHTTPServerTransport({
-      enableJsonResponse: true,
+      enableJsonResponse: !streamsProgress,
     });
     // The SDK's default error sink is a no-op (`this.onerror?.(error)`), so
     // protocol- and transport-level failures — failed response sends, unknown
@@ -1692,8 +1695,23 @@ export async function handleMcpRequest(
     // Cloned before the transport consumes the body so the observability tap
     // below can re-read the call when the SDK rejects it.
     const requestForLogging = request.clone();
+    const closeServer = async (): Promise<void> => {
+      await transport.close();
+      await server.close();
+    };
+    let closesWhenStreamEnds = false;
     try {
-      const response = await transport.handleRequest(request);
+      const response = await transport.handleRequest(
+        request,
+        peekedBody === undefined ? undefined : { parsedBody: peekedBody },
+      );
+      if (streamsProgress && isEventStream(response)) {
+        const streamed = closeWhenStreamEnds(response, closeServer, (reason) =>
+          responseCancelled.abort(reason),
+        );
+        closesWhenStreamEnds = true;
+        return streamed;
+      }
       await logSdkValidationRejections(requestForLogging, response);
       // ChatGPT compatibility adapter: rewrite the buffered `tools/list`
       // response to carry the top-level `securitySchemes` field the Apps
@@ -1704,18 +1722,7 @@ export async function handleMcpRequest(
         ? await withChatGptToolSecuritySchemes(response, tier)
         : response;
     } finally {
-      // TODO(Phase 2): revisit this unconditional close.
-      //
-      // Safe today ONLY because `enableJsonResponse: true` buffers the full
-      // response before `handleRequest` resolves — there is no in-flight SSE
-      // stream for `transport.close()` to truncate.
-      //
-      // When Phase 2 introduces tools that stream results over SSE, this
-      // `finally` will clear `_streamMapping` and abort the stream before
-      // the client has read it. Likely fix: move to on-error close only and
-      // rely on Workers GC at request completion to release resources.
-      await transport.close();
-      await server.close();
+      if (!closesWhenStreamEnds) await closeServer();
     }
   } catch (err) {
     // The SDK handles JSON-RPC validation errors internally. This outer
@@ -1739,6 +1746,133 @@ export async function handleMcpRequest(
   }
 }
 
+const TOOLS_BY_NAME: ReadonlyMap<string, AnyToolModule> = new Map(
+  TOOL_REGISTRY.map((tool) => [tool.name, tool]),
+);
+
+const MAX_LOGGED_ISSUES_CHARS = 500;
+
+/**
+ * Log each `tools/call` in `body` whose arguments the tool's input schema
+ * rejects. The SDK turns that rejection into an `isError` result before any
+ * handler runs, so the call never reaches `logSdkValidationRejections` or a
+ * handler's own logging. Checks only tools in `registered`, and logs issue
+ * paths and messages, never the arguments.
+ */
+export function logToolInputRejections(
+  body: unknown,
+  registered: ReadonlySet<string>,
+  surface: Surface,
+): void {
+  for (const message of Array.isArray(body) ? body : [body]) {
+    if (typeof message !== "object" || message === null) continue;
+    const { method, params } = message as { method?: unknown; params?: unknown };
+    if (method !== "tools/call" || typeof params !== "object" || params === null) continue;
+    const { name, arguments: args } = params as { name?: unknown; arguments?: unknown };
+    if (typeof name !== "string" || !registered.has(name)) continue;
+    const tool = TOOLS_BY_NAME.get(name);
+    if (tool === undefined) continue;
+    const parsed = tool.inputSchema.safeParse(args ?? {});
+    if (parsed.success) continue;
+    const issues = parsed.error.issues
+      .map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`)
+      .join("; ")
+      .slice(0, MAX_LOGGED_ISSUES_CHARS);
+    console.log(`[mcp] tool input rejected by schema tool=${name} surface=${surface}: ${issues}`);
+  }
+}
+
+const STREAMING_TOOL_NAMES: ReadonlySet<string> = new Set(
+  TOOL_REGISTRY.filter((tool) => tool.streamsProgress === true).map((tool) => tool.name),
+);
+
+/**
+ * The tool name of a single JSON-RPC `tools/call` whose tool declares
+ * `streamsProgress`. `undefined` for a batch, for every other method, and for
+ * every other tool.
+ */
+export function streamingToolCallName(body: unknown): string | undefined {
+  if (typeof body !== "object" || body === null || Array.isArray(body)) {
+    return undefined;
+  }
+  const { method, params } = body as { method?: unknown; params?: unknown };
+  if (method !== "tools/call" || typeof params !== "object" || params === null) {
+    return undefined;
+  }
+  const { name } = params as { name?: unknown };
+  return typeof name === "string" && STREAMING_TOOL_NAMES.has(name) ? name : undefined;
+}
+
+async function peekJsonBody(request: Request): Promise<unknown> {
+  if (request.method !== "POST") return undefined;
+  try {
+    const body = await readRequestBody(request.clone());
+    return body.tooLarge ? undefined : (JSON.parse(body.text) as unknown);
+  } catch {
+    return undefined;
+  }
+}
+
+export type StreamingResponse = Response & { body: ReadableStream<Uint8Array> };
+
+function isEventStream(response: Response): response is StreamingResponse {
+  return (
+    response.body !== null &&
+    (response.headers.get("content-type") ?? "").includes("text/event-stream")
+  );
+}
+
+/**
+ * Pass an SSE response through and close the MCP server once it ends.
+ *
+ * Calls `close` once when the upstream stream finishes, fails, or the client
+ * cancels the response. Calls `onClientGone` when the client cancels or the
+ * upstream read fails, so a running tool call stops waiting.
+ */
+export function closeWhenStreamEnds(
+  response: StreamingResponse,
+  close: () => Promise<void>,
+  onClientGone: (reason: unknown) => void,
+): Response {
+  const reader = response.body.getReader();
+  let closed = false;
+  const closeOnce = async (): Promise<void> => {
+    if (closed) return;
+    closed = true;
+    try {
+      await close();
+    } catch (err) {
+      console.error("[mcp] closing after an SSE response failed:", err);
+    }
+  };
+  const body = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const { done, value } = await reader.read();
+        if (done) {
+          controller.close();
+          await closeOnce();
+          return;
+        }
+        controller.enqueue(value);
+      } catch (err) {
+        onClientGone(err);
+        controller.error(err);
+        await closeOnce();
+      }
+    },
+    async cancel(reason) {
+      onClientGone(reason);
+      try {
+        await reader.cancel(reason);
+      } finally {
+        await closeOnce();
+      }
+    },
+  });
+  return new Response(body, { status: response.status, headers: response.headers });
+}
+
 /**
  * ChatGPT compatibility adapter: add the top-level `securitySchemes` field
  * to every tool descriptor in a buffered `tools/list` JSON response.
@@ -1748,9 +1882,9 @@ export async function handleMcpRequest(
  * anonymously vs. need a linked account — but the MCP SDK's `tools/list`
  * serializer rebuilds each descriptor from a fixed field list and drops
  * unknown fields (verified on 1.29.0 and 1.30.0), so the field cannot be
- * threaded through `registerTool`. `enableJsonResponse: true` guarantees
- * the response is fully buffered, so rewriting it here cannot truncate a
- * stream — the same invariant `logSdkValidationRejections` relies on.
+ * threaded through `registerTool`. It reads only a buffered JSON response
+ * and passes an SSE response through untouched, so it can't truncate a
+ * stream — the same rule `logSdkValidationRejections` follows.
  *
  * Best-effort: any parse failure returns the original response unchanged.
  * Non-`tools/list` bodies pass through untouched (the transform only
@@ -1798,17 +1932,12 @@ export async function withChatGptToolSecuritySchemes(
 }
 
 /**
- * Observability tap for SDK-internal tool-argument rejections. The SDK
- * validates `tools/call` arguments against the registered input schema
- * BEFORE the tool callback runs, so an input the schema rejects becomes a
- * JSON-RPC `-32602` to the client with no Worker-side signal — the outer
- * catch in `handleMcpRequest` never sees it, and neither does any tool
- * handler. That blind spot matters whenever a schema is tightened (e.g.
- * `tako_visualize`'s typed configs): traffic the new schema rejects would
- * otherwise surface only as user complaints. Peeking at the buffered
- * response (`enableJsonResponse: true` guarantees it is fully buffered, so
- * no stream can be truncated) logs each rejection with its tool name to
- * Workers Logs.
+ * Observability tap for JSON-RPC `-32602` errors the SDK sends with no
+ * Worker-side signal, such as a call to an unknown tool. The SDK reports a
+ * tool-argument rejection as an `isError` result instead, so
+ * `logToolInputRejections` logs those. Peeking at a buffered JSON response
+ * (an SSE response passes through unread, so no stream can be truncated) logs
+ * each `-32602` with its tool name to Workers Logs.
  *
  * `request` must be a clone whose body has not been consumed. Never throws:
  * a malformed body here must not break serving the already-built response.

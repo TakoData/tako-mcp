@@ -23,7 +23,7 @@ import {
   renderVisualizeMarkdown,
   type VisualizeOutput,
 } from "./_render_markdown.js";
-import { projectAgentRun, refusalGuidance } from "./_agent_run.js";
+import { projectAgentRun, projectRunningRun, refusalGuidance } from "./_agent_run.js";
 import { projectRelated } from "./_graph.js";
 import { buildSearchOutput } from "./_search_results.js";
 import { buildVisualizeOutput } from "./tako_visualize.js";
@@ -509,6 +509,8 @@ describe("renderAvailableDataMarkdown", () => {
 
 describe("renderAgentRunMarkdown", () => {
   const completed = {
+    status: "completed" as const,
+    run_id: "answer_run_1",
     answer: "The cohort is A, B, and C. [1]",
     cards: [
       {
@@ -525,6 +527,7 @@ describe("renderAgentRunMarkdown", () => {
     ],
     citations: [
       { index: 1, title: "Source doc", url: "https://example.com/doc", source_index: "web" as const },
+      { index: 2, title: "Filing", url: "https://example.com/10k", published: "2026-02-14", source_index: "web" as const },
     ],
     definitions: { cohort: "companies matching the criteria" },
     thread_id: "th-1",
@@ -541,6 +544,7 @@ describe("renderAgentRunMarkdown", () => {
     // "refreshed", the same word renderProjectedCard uses for last_updated.
     expect(md).toContain("- source: S&P Global · refreshed 2026-08-26");
     expect(md).toContain("[1] Source doc — https://example.com/doc (web)");
+    expect(md).toContain("[2] Filing, 2026-02-14 — https://example.com/10k (web)");
     expect(md).toContain("- cohort: companies matching the criteria");
     expect(md).toContain("thread_id: th-1");
     expect(md).toContain("usage: $0.09");
@@ -575,6 +579,8 @@ describe("renderAgentRunMarkdown", () => {
 
   it("omits the card and citation sections entirely when a run is prose-only", () => {
     const md = renderAgentRunMarkdown({
+      status: "completed",
+      run_id: "answer_run_1",
       answer: "No chart was needed.",
       cards: [],
       citations: [],
@@ -585,6 +591,8 @@ describe("renderAgentRunMarkdown", () => {
 
   it("renders a rejected query as its guidance, so the refusal is not an empty success", () => {
     const md = renderAgentRunMarkdown({
+      status: "completed",
+      run_id: "answer_run_1",
       guidance: refusalGuidance("rejected_input_classifier"),
       cards: [],
       citations: [],
@@ -593,8 +601,37 @@ describe("renderAgentRunMarkdown", () => {
     expect(md).toContain("> Tako rejected this query before the agent ran (rejected_input_classifier)");
   });
 
+  it("renders a running run as the message, progress, and run_id, never 'no answer'", () => {
+    const text = renderAgentRunMarkdown(
+      projectRunningRun({
+        toolName: "tako_agent",
+        publicRunId: "answer_run_1",
+        elapsedS: 47,
+        progress: "Querying the data graph",
+      }),
+    );
+    expect(text).toContain("run_id=`answer_run_1`");
+    expect(text).toContain("Querying the data graph");
+    expect(text).not.toContain("The agent returned no answer.");
+  });
+
+  it("renders every field of a running run, so the channels carry the same facts", () => {
+    const output = projectRunningRun({
+      toolName: "tako_agent",
+      publicRunId: "answer_run_1",
+      elapsedS: 47,
+      progress: "Querying the data graph",
+    });
+    const text = renderAgentRunMarkdown(output);
+    for (const leaf of [output.message, output.run_id]) {
+      expect(text, `text channel is missing: ${leaf}`).toContain(leaf as string);
+    }
+  });
+
   it("renders the error for a failed run", () => {
     const md = renderAgentRunMarkdown({
+      status: "completed",
+      run_id: "answer_run_1",
       cards: [],
       citations: [],
       usage: null,
@@ -604,7 +641,13 @@ describe("renderAgentRunMarkdown", () => {
   });
 
   it("says so when a terminal run carries no prose and no reason", () => {
-    const md = renderAgentRunMarkdown({ cards: [], citations: [], usage: null });
+    const md = renderAgentRunMarkdown({
+      status: "completed",
+      run_id: "answer_run_1",
+      cards: [],
+      citations: [],
+      usage: null,
+    });
     expect(md).toBe("The agent returned no answer.");
   });
 });
@@ -622,6 +665,7 @@ describe("channel parity (tako_agent)", () => {
     // Projected from a wire literal rather than the docs fixture: `src/**`
     // tests run in workerd and cannot read files.
     const output = projectAgentRun({
+      status: "completed",
       thread_id: "th-9",
       usage: { total_cost_usd: 0.07 },
       result: {
@@ -649,7 +693,7 @@ describe("channel parity (tako_agent)", () => {
           methodology: [{ title: "Change", description: "Last observation minus first." }],
         },
       },
-    });
+    }, "answer_run_9");
     const md = renderAgentRunMarkdown(output);
     const leaves: string[] = [];
     const walk = (v: unknown): void => {
@@ -660,7 +704,9 @@ describe("channel parity (tako_agent)", () => {
       else if (typeof v === "object") Object.values(v).forEach(walk);
     };
     // `usage` renders as its formatted dollar line, like the search block.
-    const { usage, ...modelFacing } = output;
+    const { usage, status, run_id, ...modelFacing } = output;
+    void status;
+    void run_id;
     walk(modelFacing);
     if (usage?.total_cost_usd !== undefined) leaves.push(`$${usage.total_cost_usd}`);
     expect(leaves.length).toBeGreaterThan(10);

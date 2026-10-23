@@ -1,164 +1,261 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { CfWorkerJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/cfworker";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("../django.js", () => ({ djangoPost: vi.fn(), djangoGet: vi.fn() }));
+vi.mock("../django.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../django.js")>();
+  return { ...actual, djangoPost: vi.fn(), djangoGet: vi.fn() };
+});
 import { djangoPost, djangoGet } from "../django.js";
-import tool, { AGENT_POLL_BUDGET_MS, buildAgentBody, pollAgentRun } from "./tako_agent.js";
+import type { Env } from "../env.js";
+import { createMcpServer } from "../mcp.js";
+import tool, { buildAgentBody } from "./tako_agent.js";
 import { refusalGuidance } from "./_agent_run.js";
 import { AnswerAgentRunRequest } from "../generated/schemas.js";
+import { AGENT_CALL_WINDOW_MS } from "./_agent_wait.js";
+import type { ToolContext } from "./types.js";
 
-const ctx = { token: "t", env: {} as never, surface: "generic" as const, sendProgress: vi.fn() };
+const encoder = new TextEncoder();
+const RUN = "run_1";
+
+const ctx: ToolContext = {
+  token: "t",
+  env: { DJANGO_BASE_URL: "https://trytako.com" } as Env,
+  surface: "generic",
+  caller: undefined,
+  sendProgress: vi.fn(async () => {}),
+};
+
+function frame(block: Record<string, unknown>): string {
+  return `data: ${JSON.stringify({ seq: 1, run_id: RUN, thread_id: "t1", category: "x", block })}\n\n`;
+}
+
+function stubStream(frames: string[], keepOpen = false): ReturnType<typeof vi.fn<typeof fetch>> {
+  const fetchMock = vi.fn<typeof fetch>(
+    async () =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            for (const text of frames) controller.enqueue(encoder.encode(text));
+            if (!keepOpen) controller.close();
+          },
+        }),
+        { status: 200, headers: { "content-type": "text/event-stream" } },
+      ),
+  );
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
+}
+
+function completedFrames(result: Record<string, unknown>): string[] {
+  return [
+    frame({ kind: "agent_result", id: "a1", data: result }),
+    frame({ kind: "run_summary", status: "completed", created_at: "2026-10-22T00:00:00Z", error: null, usage: null }),
+  ];
+}
+
+async function runToCompletion(
+  result: Record<string, unknown>,
+  input: { query: string; sources: Array<"data" | "web"> } = { query: "q", sources: ["data"] },
+) {
+  vi.mocked(djangoPost).mockResolvedValue({ run_id: RUN, thread_id: "t1" });
+  stubStream(completedFrames(result));
+  return tool.handler(input, ctx);
+}
+
+beforeEach(() => {
+  vi.useFakeTimers();
+});
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.unstubAllGlobals();
   vi.clearAllMocks();
 });
 
 describe("tako_agent", () => {
-  it("dispatches a deep run, polls to completion, returns the projected result", async () => {
-    vi.useFakeTimers();
-    vi.mocked(djangoPost).mockResolvedValue({ run_id: "run_1", status: "queued" });
-    vi.mocked(djangoGet)
-      .mockResolvedValueOnce({ run_id: "run_1", status: "running" })
-      .mockResolvedValueOnce({
-        run_id: "run_1",
-        status: "completed",
-        result: {
-          answer: "42",
-          cards: [
-            {
-              card_id: "agentcard",
-              title: "Agent card",
-              embed_url: "https://trytako.com/embed/agentcard/",
-            },
-          ],
-          citations: [{ index: 1, title: "Source", url: "https://example.com" }],
-        },
-      });
+  it("starts a run and returns the finished answer with a prefixed run_id", async () => {
+    vi.mocked(djangoPost).mockResolvedValue({ run_id: RUN, thread_id: "t1" });
+    stubStream(
+      completedFrames({
+        answer: "42",
+        cards: [
+          {
+            card_id: "agentcard",
+            title: "Agent card",
+            embed_url: "https://trytako.com/embed/agentcard/",
+          },
+        ],
+        citations: [{ index: 1, title: "Source", url: "https://example.com" }],
+      }),
+    );
 
-    const handlerPromise = tool.handler({ query: "analyze X", sources: ["data", "web"] }, ctx);
-    await vi.runAllTimersAsync();
-    const out = await handlerPromise;
+    const out = await tool.handler({ query: "analyze X", sources: ["data", "web"] }, ctx);
 
     expect(tool.name).toBe("tako_agent");
     expect(vi.mocked(djangoPost).mock.calls[0]![2]).toBe("/api/v1/agent/answer/runs");
-    expect(vi.mocked(djangoPost).mock.calls[0]![3]).toMatchObject({
+    expect(vi.mocked(djangoPost).mock.calls[0]![3]).toEqual({
       query: "analyze X",
-      effort: "medium",
       source_indexes: ["data", "web"],
     });
-    // No progress notification: the transport discards request-scoped
-    // notifications under `enableJsonResponse: true` (TAKO-4485), so the loop
-    // must not claim a channel that drops it.
-    expect(ctx.sendProgress).not.toHaveBeenCalled();
+    expect(out.status).toBe("completed");
+    expect(out.run_id).toBe("answer_run_run_1");
     expect(out.answer).toBe("42");
-    // Passthrough cards pick up the share opt-in — see withShareOptIn.
     expect(out.cards[0]?.embed_url).toBe("https://trytako.com/embed/agentcard/?showShare=true");
-    // The Answer Agent's unified citation registry flows through (replacing the
-    // generic agent's web_results).
     expect(out.citations).toHaveLength(1);
     expect(out.citations[0]?.index).toBe(1);
-    // The lifecycle fields the old advertised shape was made of are GONE from
-    // the model-facing result: `run_id` and `status` have no model reader and
-    // no poll tool (see _agent_run.ts).
-    expect(out).not.toHaveProperty("run_id");
-    expect(out).not.toHaveProperty("status");
+  });
+
+  it("returns running with the resume message when the run outlives the window", async () => {
+    vi.mocked(djangoPost).mockResolvedValue({ run_id: RUN, thread_id: "t1" });
+    vi.mocked(djangoGet).mockResolvedValue({ run_id: RUN, status: "running" });
+    stubStream([frame({ kind: "status", message: "Searching the web" })], true);
+
+    const pending = tool.handler({ query: "slow", sources: ["data"] }, ctx);
+    await vi.advanceTimersByTimeAsync(AGENT_CALL_WINDOW_MS + 1_000);
+    const out = await pending;
+
+    expect(out.status).toBe("running");
+    expect(out.run_id).toBe("answer_run_run_1");
+    expect(out.thread_id).toBeUndefined();
+    expect(out.message).toContain("answer_run_run_1");
+    expect(out.answer).toBeUndefined();
+  });
+
+  it("resumes a run by run_id without starting a new one", async () => {
+    vi.mocked(djangoGet).mockResolvedValue({
+      run_id: "x",
+      status: "completed",
+      result: { answer: "done", cards: [], citations: [] },
+    });
+
+    const out = await tool.handler({ run_id: "answer_run_x", sources: ["data", "web"] }, ctx);
+
+    expect(djangoPost).not.toHaveBeenCalled();
+    expect(vi.mocked(djangoGet).mock.calls[0]![2]).toBe("/api/v1/agent/answer/runs/x");
+    expect(out.status).toBe("completed");
+    expect(out.run_id).toBe("answer_run_x");
+    expect(out.answer).toBe("done");
+  });
+
+  it("rejects a company run_id at input validation and names tako_company_agent", () => {
+    const parsed = tool.inputSchema.safeParse({ run_id: "company_run_x" });
+
+    expect(parsed.success).toBe(false);
+    expect(parsed.error?.issues.map((i) => i.message).join(" ")).toContain("tako_company_agent");
   });
 
   it("surfaces the Answer Agent metadata (definitions/assumptions/methodology) instead of dropping it", async () => {
-    vi.useFakeTimers();
-    vi.mocked(djangoPost).mockResolvedValue({ run_id: "run_meta", status: "queued" });
-    vi.mocked(djangoGet).mockResolvedValue({
-      run_id: "run_meta",
-      status: "completed",
-      result: {
-        answer: "a",
-        cards: [],
-        citations: [],
-        metadata: {
-          definitions: [{ term: "GDP", definition: "gross domestic product" }],
-          assumptions: [{ title: "nominal", description: "not inflation-adjusted" }],
-          methodology: [{ title: "sources", description: "world bank" }],
-        },
+    const out = await runToCompletion({
+      answer: "a",
+      cards: [],
+      citations: [],
+      metadata: {
+        definitions: [{ term: "GDP", definition: "gross domestic product" }],
+        assumptions: [{ title: "nominal", description: "not inflation-adjusted" }],
+        methodology: [{ title: "sources", description: "world bank" }],
       },
     });
 
-    const handlerPromise = tool.handler({ query: "q", sources: ["data"] }, ctx);
-    await vi.runAllTimersAsync();
-    const out = await handlerPromise;
-
-    // Flattened to the `{name: text}` maps both channels render.
     expect(out.definitions).toEqual({ GDP: "gross domestic product" });
     expect(out.assumptions).toEqual({ nominal: "not inflation-adjusted" });
     expect(out.methodology).toEqual({ sources: "world bank" });
   });
 
   it("carries refusal_code through the wire parse into the one guidance branch", async () => {
-    vi.useFakeTimers();
-    vi.mocked(djangoPost).mockResolvedValue({ run_id: "run_refusal", status: "queued" });
-    vi.mocked(djangoGet).mockResolvedValue({
-      run_id: "run_refusal",
-      status: "completed",
-      result: { answer: null, cards: [], citations: [], refusal_code: "rejected_input_classifier" },
+    const out = await runToCompletion({
+      answer: null,
+      cards: [],
+      citations: [],
+      refusal_code: "rejected_input_classifier",
     });
 
-    const handlerPromise = tool.handler({ query: "q", sources: ["data"] }, ctx);
-    await vi.runAllTimersAsync();
-    const out = await handlerPromise;
-
-    // The regression this pins: `result` is a strict z.object, so dropping
-    // `refusal_code` from it strips the field before projectAgentRun sees it,
-    // and a query Tako rejected reaches the model as a completed run with no
-    // answer and no reason. The other refusal tests call projectAgentRun or
-    // refusalGuidance directly, so neither crosses the parse where it broke.
     expect(out.guidance).toBe(refusalGuidance("rejected_input_classifier"));
     expect(out.answer).toBeUndefined();
   });
 
   it("surfaces a failed run with its error", async () => {
-    vi.useFakeTimers();
-    vi.mocked(djangoPost).mockResolvedValue({ run_id: "run_2", status: "queued" });
-    vi.mocked(djangoGet).mockResolvedValue({ run_id: "run_2", status: "failed", error: { code: "x", message: "boom" } });
+    vi.mocked(djangoPost).mockResolvedValue({ run_id: RUN, thread_id: "t1" });
+    stubStream([
+      frame({
+        kind: "run_summary",
+        status: "failed",
+        created_at: "2026-10-22T00:00:00Z",
+        error: { code: "x", message: "boom" },
+        usage: null,
+      }),
+    ]);
 
-    const handlerPromise = tool.handler({ query: "q", sources: ["data"] }, ctx);
-    await vi.runAllTimersAsync();
-    const out = await handlerPromise;
+    const out = await tool.handler({ query: "q", sources: ["data"] }, ctx);
 
-    // A failed run is signalled by `error` alone now — `status` was a field
-    // whose only two reachable values `error` already distinguished.
+    expect(out.status).toBe("failed");
     expect(out.error).toEqual({ code: "x", message: "boom" });
     expect(out.answer).toBeUndefined();
   });
 
-  it("throws when the run never completes before AGENT_POLL_BUDGET_MS (Claude path)", async () => {
-    vi.useFakeTimers();
-    // Always return "running" — never completes
-    vi.mocked(djangoGet).mockResolvedValue({ run_id: "run_3", status: "running" });
+  it("keeps a completed run when the usage payload is malformed", async () => {
+    vi.mocked(djangoPost).mockResolvedValue({ run_id: RUN, thread_id: "t1" });
+    stubStream([
+      frame({ kind: "agent_result", id: "a1", data: { answer: "kept", cards: [], citations: [] } }),
+      frame({ kind: "run_summary", status: "completed", created_at: "2026-10-22T00:00:00Z", error: null, usage: { total_cost_usd: "nope" } }),
+    ]);
 
-    const pollPromise = pollAgentRun(ctx, "run_3", { budgetMs: AGENT_POLL_BUDGET_MS });
-    // Advance past the budget
-    await vi.advanceTimersByTimeAsync(AGENT_POLL_BUDGET_MS + 10_000);
-    await expect(pollPromise).rejects.toThrow(/did not complete within/);
+    const out = await tool.handler({ query: "q", sources: ["data"] }, ctx);
+
+    expect(out.answer).toBe("kept");
+    expect(out.status).toBe("completed");
+  });
+});
+
+describe("tako_agent over MCP", () => {
+  async function callAgent(args: Record<string, unknown>) {
+    const server = createMcpServer(ctx, {
+      surface: "generic",
+      requestedToolNames: new Set(["tako_agent"]),
+    });
+    const client = new Client(
+      { name: "agent-test", version: "0.0.0" },
+      { jsonSchemaValidator: new CfWorkerJsonSchemaValidator() },
+    );
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    try {
+      return (await client.callTool({ name: "tako_agent", arguments: args })) as {
+        isError?: boolean;
+        content: Array<{ type: string; text?: string }>;
+      };
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  }
+
+  beforeEach(() => {
+    vi.useRealTimers();
+    vi.spyOn(console, "error").mockImplementation(() => {});
   });
 
-  it("never hands back a non-terminal run: the budget throws, it does not return", async () => {
-    vi.useFakeTimers();
-    vi.mocked(djangoGet).mockResolvedValue({ run_id: "run_4", status: "running" });
+  it.each([
+    ["both query and run_id", { query: "q", run_id: "answer_run_x" }],
+    ["neither query nor run_id", {}],
+  ])("returns a tool error that says to send exactly one when a call has %s", async (_label, args) => {
+    const result = await callAgent(args);
 
-    // The `onTimeout: "return"` arm is gone with `tako_agent_wait`. A returned
-    // `status: "running"` projected to no answer and no error, so the text
-    // channel said "The agent returned no answer." about a live run.
-    const budgetMs = 40_000;
-    const pollPromise = pollAgentRun(ctx, "run_4", { budgetMs });
-    await vi.advanceTimersByTimeAsync(budgetMs + 10_000);
-
-    await expect(pollPromise).rejects.toThrow(/did not complete within 40s/);
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toContain(
+      "Send exactly one of `query` (start a run) or `run_id` (keep waiting for a run).",
+    );
+    expect(djangoPost).not.toHaveBeenCalled();
+    expect(djangoGet).not.toHaveBeenCalled();
   });
 });
 
 describe("tako_agent input schema", () => {
-  it("defaults sources to both data and web (matches the backend default)", () => {
+  it("leaves sources unset when the caller omits them", () => {
     const parsed = tool.inputSchema.parse({ query: "hello" });
-    expect(parsed.sources).toEqual(["data", "web"]);
+    expect(parsed.sources).toBeUndefined();
   });
 
   it("accepts web and data", () => {
@@ -183,9 +280,13 @@ describe("tako_agent input schema", () => {
 });
 
 describe("tako_agent contract guards", () => {
-  it("agent default sources mirror the backend (data+web)", () => {
-    const parsed = tool.inputSchema.parse({ query: "compare cohorts" });
-    expect(parsed.sources).toEqual(["data", "web"]);
+  it("omits source_indexes and effort on a follow-up, so it keeps the thread's pins", () => {
+    const body = buildAgentBody(
+      tool.inputSchema.parse({ query: "and in 2024?", thread_id: "6f1c1d2e-3a4b-4c5d-8e9f-0a1b2c3d4e5f" }),
+    );
+    expect(body).not.toHaveProperty("source_indexes");
+    expect(body).not.toHaveProperty("effort");
+    expect(body.thread_id).toBe("6f1c1d2e-3a4b-4c5d-8e9f-0a1b2c3d4e5f");
   });
 
   it("passes the sources array straight through to source_indexes", () => {
@@ -199,80 +300,3 @@ describe("tako_agent contract guards", () => {
   });
 });
 
-describe("tako_agent wire-drift guard", () => {
-  it("throws a contract-drift error when a completed run has no `result` field (e.g. backend renamed result→output)", async () => {
-    vi.useFakeTimers();
-    vi.mocked(djangoPost).mockResolvedValue({ run_id: "run_drift", status: "queued" });
-    // Simulate backend renaming `result` → `output`: `result` is absent on wire
-    vi.mocked(djangoGet).mockResolvedValue({
-      run_id: "run_drift",
-      status: "completed",
-      output: { answer: "42", cards: [] }, // wrong key — backend drift
-    } as never);
-
-    const handlerPromise = tool.handler({ query: "drift test", sources: ["data"] }, ctx);
-    await vi.runAllTimersAsync();
-    await expect(handlerPromise).rejects.toThrow(/drifted from the backend contract.*result/);
-  });
-
-  it("throws a contract-drift error when run_id is missing from the wire", async () => {
-    vi.useFakeTimers();
-    vi.mocked(djangoPost).mockResolvedValue({ run_id: "run_norun_id", status: "queued" });
-    vi.mocked(djangoGet).mockResolvedValue({
-      status: "running",
-      // run_id absent
-    } as never);
-
-    const handlerPromise = tool.handler({ query: "no run_id", sources: ["data"] }, ctx);
-    await vi.runAllTimersAsync();
-    await expect(handlerPromise).rejects.toThrow(/drifted from the backend contract/);
-  });
-
-  it("tolerates in-flight (running) runs that lack a result field — no false-positive", async () => {
-    vi.useFakeTimers();
-    vi.mocked(djangoPost).mockResolvedValue({ run_id: "run_inflight", status: "queued" });
-    vi.mocked(djangoGet)
-      .mockResolvedValueOnce({ run_id: "run_inflight", status: "running" }) // no result — in-flight
-      .mockResolvedValueOnce({ run_id: "run_inflight", status: "running" }) // still no result
-      .mockResolvedValueOnce({ run_id: "run_inflight", status: "completed", result: { answer: "done", cards: [] } });
-
-    const handlerPromise = tool.handler({ query: "in-flight test", sources: ["data"] }, ctx);
-    await vi.runAllTimersAsync();
-    const out = await handlerPromise;
-    expect(out.answer).toBe("done");
-  });
-
-  it("tolerates queued runs that lack a result field — no false-positive", async () => {
-    vi.useFakeTimers();
-    vi.mocked(djangoPost).mockResolvedValue({ run_id: "run_queued_inf", status: "queued" });
-    vi.mocked(djangoGet)
-      .mockResolvedValueOnce({ run_id: "run_queued_inf", status: "queued" }) // no result, no created_at — bare queued response
-      .mockResolvedValueOnce({ run_id: "run_queued_inf", status: "completed", result: null }); // completed with null result is fine
-
-    const handlerPromise = tool.handler({ query: "queued test", sources: ["data"] }, ctx);
-    await vi.runAllTimersAsync();
-    const out = await handlerPromise;
-    // A completed run with a null result projects to an empty-but-valid
-    // result rather than a null the renderer would have to special-case.
-    expect(out.answer).toBeUndefined();
-    expect(out.cards).toEqual([]);
-    expect(out.citations).toEqual([]);
-  });
-
-  it("throws a contract-drift error when a completed run's citation is missing the required `title`", async () => {
-    vi.useFakeTimers();
-    vi.mocked(djangoPost).mockResolvedValue({ run_id: "run_cite_drift", status: "queued" });
-    // `title` is required non-null on the generated AgentAnswerCitation, so a
-    // title-less citation is backend drift. The result-shape guard must reject
-    // the run rather than silently drop the field (citationSchema mirrors this).
-    vi.mocked(djangoGet).mockResolvedValue({
-      run_id: "run_cite_drift",
-      status: "completed",
-      result: { answer: "x", cards: [], citations: [{ index: 1 }] }, // title missing
-    } as never);
-
-    const handlerPromise = tool.handler({ query: "citation drift", sources: ["data"] }, ctx);
-    await vi.runAllTimersAsync();
-    await expect(handlerPromise).rejects.toThrow(/drifted from the backend contract.*result shape mismatch/);
-  });
-});

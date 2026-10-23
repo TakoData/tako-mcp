@@ -27,8 +27,8 @@ import type { AnyToolModule, ToolAnnotations } from "./types.js";
 /**
  * Default listing on `/mcp` (spec D3). Search + fetch + the free coverage
  * tool, plus graph exploration. Everything else
- * (`tako_search_advanced`, `tako_agent`, `tako_visualize`) is reachable only
- * by naming it in `?tools=`.
+ * (`tako_search_advanced`, `tako_agent`, `tako_company_agent`,
+ * `tako_visualize`) is reachable only by naming it in `?tools=`.
  */
 export const GENERIC_DEFAULT_TOOL_NAMES: ReadonlySet<string> = new Set([
   "tako_search",

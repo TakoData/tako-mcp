@@ -199,12 +199,13 @@ describe("registry guard: top-level array inputs", () => {
    * Bump this deliberately: a new array input means wrapping it in
    * `looseArray` and raising the count in the same commit.
    */
-  it("finds all 4 known array-typed input fields", () => {
+  it("finds all 5 known array-typed input fields", () => {
     // tako_answer's two dropped with the tool. tako_search_advanced adds none:
     // its array fields (data.node_ids, web.include_domains, …) sit INSIDE the
     // source blocks, and this guard walks top-level inputs only.
     expect(found.map((f) => `${f.tool.name}.${f.field}`).sort()).toEqual([
       "tako_agent.sources",
+      "tako_company_agent.sources",
       "tako_contents.urls",
       "tako_search.sources",
       "tako_visualize.components",

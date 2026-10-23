@@ -171,7 +171,15 @@ const SHARED_INSTRUCTION_PARAGRAPHS = [
  * DESCRIPTIONS, which a caller opts into per tool; the instructions string is
  * served to every connection and had no such carve-out.
  */
-type ToolSentence = { readonly tools: readonly string[]; readonly text: string };
+type ToolSentence = {
+  readonly tools: readonly string[];
+  readonly text: string;
+  /**
+   * The sentence names opt-in tools, so the unfiltered string, which every
+   * default connection receives, leaves it out.
+   */
+  readonly optIn?: true;
+};
 
 const TOOL_SENTENCES: readonly ToolSentence[] = [
   {
@@ -199,14 +207,19 @@ const TOOL_SENTENCES: readonly ToolSentence[] = [
     tools: ["tako_graph_related"],
     text: "`tako_graph_related` lists a node's related metrics, entities, competitors, and sources.",
   },
+  {
+    tools: ["tako_agent", "tako_company_agent"],
+    text: "Use `tako_company_agent` when the answer is a list of companies or people, such as a screen by industry, location, status, or revenue. Use `tako_agent` when the answer is an analysis of metrics, such as a ranking, a trend, or an aggregate.",
+    optIn: true,
+  },
 ];
 
 /**
  * Assemble the instructions from the sentences whose tools survive.
  *
- * `registered === null` means "serve everything" — the value the exported
- * constant below is built from, and what a caller that cannot resolve a
- * toolset gets. When no sentence survives, the shared paragraph stands alone:
+ * `registered === null` means "serve every sentence that isn't `optIn`" — the
+ * value the exported constant below is built from, and what a caller that
+ * cannot resolve a toolset gets. When no sentence survives, the shared paragraph stands alone:
  * it names no tool, so it is true on every surface.
  */
 function assembleInstructions(
@@ -215,7 +228,7 @@ function assembleInstructions(
 ): string {
   const kept =
     registered === null
-      ? sentences
+      ? sentences.filter((s) => s.optIn !== true)
       : sentences.filter((s) => s.tools.every((name) => registered.has(name)));
   const paragraph = kept.map((s) => s.text).join(" ");
   return paragraph === ""

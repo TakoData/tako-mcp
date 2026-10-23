@@ -11,6 +11,7 @@ import {
   DjangoTimeoutError,
   DjangoUnauthorizedError,
   djangoGet,
+  djangoOpenStream,
   djangoPost,
 } from "./django.js";
 
@@ -327,5 +328,96 @@ describe("caller attribution headers", () => {
     await djangoGet(ENV, TOKEN, "/api/v1/graph/related", { caller: undefined });
     const req = fetchMock.mock.calls[0]![0] as Request;
     expect(req.headers.get("x-tako-caller")).toBeNull();
+  });
+});
+
+describe("djangoOpenStream", () => {
+  const STAMP: CallerStamp = {
+    surface: "generic",
+    authMode: "oauth",
+    serverVersion: "9.9.9",
+    tool: "tako_agent",
+    clientUserAgent: "claude-code/1.2.3",
+  };
+
+  function sseResponse(text: string): Response {
+    return new Response(text, { status: 200, headers: { "content-type": "text/event-stream" } });
+  }
+
+  it("sends Accept: text/event-stream, X-API-Key, and the caller headers, and returns the body", async () => {
+    const fetchMock = mockFetchOnce(sseResponse("data: {}\n\n"));
+    const stream = await djangoOpenStream(ENV, TOKEN, "/api/v1/agent/answer/runs/r1", {
+      caller: STAMP,
+      signal: new AbortController().signal,
+    });
+    const req = fetchMock.mock.calls[0]![0] as Request;
+    expect(req.url).toBe(`${BASE_URL}/api/v1/agent/answer/runs/r1`);
+    expect(req.method).toBe("GET");
+    expect(req.headers.get("accept")).toBe("text/event-stream");
+    expect(req.headers.get("x-api-key")).toBe(TOKEN);
+    expect(req.headers.get("x-tako-caller")).toContain("tool=tako_agent");
+    expect(await new Response(stream).text()).toBe("data: {}\n\n");
+  });
+
+  it("maps a 404 to DjangoNotFoundError with the body", async () => {
+    mockFetchOnce(jsonResponse(404, { detail: "Not found." }));
+    const err = await djangoOpenStream(ENV, TOKEN, "/api/v1/agent/answer/runs/missing", {
+      caller: undefined,
+      signal: new AbortController().signal,
+    }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(DjangoNotFoundError);
+    expect((err as DjangoNotFoundError).body).toContain("Not found.");
+  });
+
+  it("maps a 401 to DjangoUnauthorizedError", async () => {
+    mockFetchOnce(jsonResponse(401, { detail: "Invalid token." }));
+    const err = await djangoOpenStream(ENV, TOKEN, "/api/v1/agent/answer/runs/r1", {
+      caller: undefined,
+      signal: new AbortController().signal,
+    }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(DjangoUnauthorizedError);
+  });
+
+  it("throws DjangoTimeoutError when the headers don't arrive within timeoutMs", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(
+        (_input, init) =>
+          new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener("abort", () =>
+              reject(new DOMException("aborted", "AbortError")),
+            );
+          }),
+      ),
+    );
+    const err = await djangoOpenStream(ENV, TOKEN, "/api/v1/agent/answer/runs/r1", {
+      caller: undefined,
+      timeoutMs: 20,
+      signal: new AbortController().signal,
+    }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(DjangoTimeoutError);
+  });
+
+  it("stops waiting when the caller's signal aborts, without a timeout error", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(
+        (_input, init) =>
+          new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener("abort", () =>
+              reject(new DOMException("aborted", "AbortError")),
+            );
+          }),
+      ),
+    );
+    const controller = new AbortController();
+    const pending = djangoOpenStream(ENV, TOKEN, "/api/v1/agent/answer/runs/r1", {
+      caller: undefined,
+      signal: controller.signal,
+    }).catch((e: unknown) => e);
+    controller.abort();
+    const err = await pending;
+    expect(err).not.toBeInstanceOf(DjangoTimeoutError);
+    expect((err as Error).name).toBe("AbortError");
   });
 });
