@@ -13,7 +13,7 @@ Tako MCP gives your agent industry-leading live web search plus licensed data th
 
 Tako MCP lets an agent:
 
-- **Search** Tako's knowledge graph and the live web — top result renders inline as a chart, and `tako_contents` reads the rows behind it
+- **Search** Tako's knowledge graph and the live web — every card renders as a chart on the ChatGPT app (the first card's chart elsewhere), and `tako_contents` reads the rows behind it
 - **Discover** exactly what proprietary data exists for an entity or metric
 - **Fetch** the underlying rows (JSON) or a page's text behind any result URL
 - **Visualize** your own structured data as an embeddable card — public and permanent, readable by anyone with the link _(opt-in; on by default on the ChatGPT app)_
@@ -289,7 +289,7 @@ The full reference — every description and parameter exactly as the model sees
 
 | Tool | What it's for |
 | ---- | ------------- |
-| `tako_search` | **Find the data.** Fast search over Tako's curated graph and the live web. Four parameters — `query`, `sources`, `country_code`, `locale` — and no defaults of its own, so an omitted field takes the API's. Cards carry headline values, node ids and chart links; `tako_contents` reads the rows. The top result renders inline as a chart with an **Open in Tako** link. Parallelize broad questions into narrow single entity+metric searches. |
+| `tako_search` | **Find the data.** Fast search over Tako's curated graph and the live web. Four parameters — `query`, `sources`, `country_code`, `locale` — and no defaults of its own, so an omitted field takes the API's. Cards carry headline values, node ids and chart links; `tako_contents` reads the rows. Every card renders as a chart on the ChatGPT app, and the first card's chart renders elsewhere, each with an **Open in Tako** link. Parallelize broad questions into narrow single entity+metric searches. |
 | `tako_available_data` | **Find what structured data exists** on an entity or metric in one call — the exact metric name to search on, an `id` for graph traversal, and a ready-to-run `next_call`. Ambiguous names come back as candidates with a `kind`; `metric` doubles as the substring browse filter; `limit` widens the candidate list. |
 | `tako_contents` | Fetch what's behind result URLs (1-10 per call): a card's rows or a web page's text — set `query` to a question to get only the passages that answer it. Requires a signed-in connection. |
 | `tako_graph_related` | Explore a graph node: a map (each relation's key, total, first three names) or one paged relation — metrics, the entities a metric covers, competitors (`rel:competes_with`), memberships, sources. `q` is a substring filter. |
@@ -344,7 +344,7 @@ Two tools, one step apart — `tako_search` finds, `tako_contents` fetches:
 **Data to work with → parallel `tako_search` (synthesize yourself):**
 1. User asks: *"Compare US CPI, core CPI, PCE, and core PCE inflation."*
 2. Agent fires **four** narrow `tako_search` calls concurrently — one per entity+metric
-3. Each returns a card with headline values (top result renders inline as a chart)
+3. Each returns a card with headline values (every card renders as a chart on the ChatGPT app; the first card's chart renders elsewhere)
 4. Agent synthesizes the four results, calling `tako_contents` on a card's `url` if it needs full rows (when the card is `exportable: true`)
 </details>
 

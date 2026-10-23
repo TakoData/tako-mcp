@@ -1781,7 +1781,7 @@ NVIDIA Corporation operates as a data center scale AI infrastructure company. Th
 
 Description:
 
-Search Tako's data graph and the live web in one call: many results at once, as structured cards plus web results, with the top card rendered inline as a chart.
+Search Tako's data graph and the live web in one call: many results at once, as structured cards plus web results. Hosts that show widgets render every card as a chart, in search's order; other hosts show the first card's chart.
 
 It finds results; `tako_contents` fetches what's behind them. Each card carries a headline value, node ids, and a url — pass the url to `tako_contents` for rows (`exportable: true` cards) or a web result's full page text. When `exportable` is false the rows are locked — read the headline value from the card's `description`.
 
