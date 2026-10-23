@@ -1907,10 +1907,10 @@ async function main(): Promise<void> {
   );
   // The prose-budget gate runs in BOTH modes: an over-budget string fails
   // registry:check in CI the same way it fails a local registry:gen.
-  const longestServedInstructions = SURFACE_PATHS.map(({ surface }) =>
-    serverInstructionsFor(resolveToolSet(surface, null)),
-  ).reduce((a, b) => (b.length > a.length ? b : a));
-  assertProseBudget(modules.map((m) => m.tool), registryTools, longestServedInstructions);
+  const longestServableInstructions = serverInstructionsFor(
+    new Set(modules.map((m) => m.tool.name)),
+  );
+  assertProseBudget(modules.map((m) => m.tool), registryTools, longestServableInstructions);
   const toolsDoc = buildToolsDoc({
     modules: modules.map((m) => m.tool),
     registryTools,

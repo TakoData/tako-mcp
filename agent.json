@@ -113,7 +113,7 @@
     {
       "id": "deep-research",
       "name": "Answer Agent",
-      "description": "Run Tako's Answer Agent for questions that require figuring something out — cohort resolution, ranking or filtering a set by criteria, aggregation, and multi-hop reasoning across many entities — beyond a single lookup. Slower and more thorough than a one-shot Answer. Opt-in on /mcp via ?tools=search,available_data,agent (an allowlist that replaces the default listing, so name the defaults you rely on too).",
+      "description": "Run Tako's Answer Agent for questions that require figuring something out — cohort resolution, ranking or filtering a set by criteria, aggregation, and multi-hop reasoning across many entities — beyond a single lookup. Slower and more thorough than a one-shot Answer. Opt-in on /mcp via ?tools=search,available_data,agent (an allowlist that replaces the default listing, so name the defaults you rely on too); listed by default at https://mcp.tako.com/mcp/chatgpt.",
       "tags": [
         "agent",
         "research",

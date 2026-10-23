@@ -17,8 +17,7 @@ import { z } from "zod";
 import { CompanyAgentEffort, type CompanyAgentRunRequest } from "../generated/schemas.js";
 import {
   AGENT_CALL_WINDOW_FIXED_INPUT,
-  AGENT_CALL_WINDOW_SENTENCE,
-  AGENT_CARD_LINK_SENTENCE,
+  AGENT_DESCRIPTION_LAST_LINE,
   agentQueryInput,
   agentThreadIdInput,
   runAgentCall,
@@ -35,7 +34,7 @@ const DESCRIPTION = [
   "",
   "Best for: screening companies by status, incorporation date, registered location, or industry; resolving named companies; finding a company's officers and directors. At `medium` and `high` effort it can also filter by financial metrics such as revenue or headcount.",
   "",
-  `${AGENT_CALL_WINDOW_SENTENCE} ${AGENT_CARD_LINK_SENTENCE}`,
+  AGENT_DESCRIPTION_LAST_LINE,
 ].join("\n");
 
 const COMPANY_SOURCES_DESCRIBE = `Which sources to research: \`data\` for Tako's curated data, \`web\` for the open web. A new thread uses both. ${AGENT_SOURCES_THREAD_RULE}`;

@@ -736,8 +736,9 @@ function registerTool(
       // the protocol forbids sending progress without one, so
       // `sendProgress` no-ops when it is absent.
       //
-      // Progress reaches the client only on an agent tool call, which
-      // `handleMcpRequest` answers over SSE. Every other request gets a
+      // Progress reaches the client only on an agent tool call on the
+      // generic surface, which `handleMcpRequest` answers over SSE. Every
+      // other request gets a
       // buffered JSON response, and the transport drops request-scoped
       // notifications there.
       const progressToken = (extra._meta as { progressToken?: string | number } | undefined)

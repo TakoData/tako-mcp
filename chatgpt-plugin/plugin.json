@@ -44,8 +44,7 @@
         "defaultPrompt": [
           "Show me Nvidia's quarterly revenue. Use Tako.",
           "Give me the current Premier League standings. Use Tako.",
-          "Show me monthly visits for netflix.com. Use Tako.",
-          "Find active UK software companies incorporated in 2024. Use Tako."
+          "Show me monthly visits for netflix.com. Use Tako."
         ],
         "developerName": "Tako",
         "displayName": "Tako",
