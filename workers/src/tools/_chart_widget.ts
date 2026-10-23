@@ -1905,6 +1905,10 @@ const WIDGET_HTML = `<!doctype html>
   // document's measurable height there. And no height is notified after the
   // zero: the label dresses a box the host chose to keep, and must never be a
   // reason to reserve one that was already given up.
+  //
+  // A labelled collapse also asks ChatGPT to close the card
+  // (\`requestHostClose\`). The label is what's left when the host ignores the
+  // request or doesn't support it.
   function collapse(labelled) {
     placeholder.classList.add("hidden");
     // \`labelled\` is only true where the emptiness is a FACT: structured content
@@ -2246,6 +2250,12 @@ const WIDGET_HTML = `<!doctype html>
     // returns zero cards (a clean empty result) or when the top card has
     // no \`card_id\` — either way there is no top card to render, so
     // \`buildSearchOutput\` omits the widget URLs.
+    //
+    // ChatGPT's stripped reload payload (\`{width, height}\`) also lands here.
+    // It always comes from a result that had a chart, because
+    // \`topCardChartFields\` emits those fields only with the chart URLs. So
+    // only a payload that \`looksComplete\` gets the label and the close; a
+    // stripped one collapses blank.
     //
     // Without this guard, the placeholder sits at "Loading chart…"
     // forever and stacks a 240-px-tall empty widget box in the chat.
