@@ -614,6 +614,13 @@ export function diffRegistryParameters(
 // char of description+params is paid on every request on every host.
 // ---------------------------------------------------------------------------
 
+function declaresExtraTopLevelFields(schema: z.ZodType, baseline: z.ZodType): boolean {
+  const keysOf = (candidate: z.ZodType) =>
+    Object.keys((publishedOutputJsonSchema(candidate) as { properties?: Record<string, unknown> }).properties ?? {});
+  const baselineKeys = new Set(keysOf(baseline));
+  return keysOf(schema).some((key) => !baselineKeys.has(key));
+}
+
 export const DESCRIPTION_MAX_CHARS = 1_000;
 export const DESCRIPTION_MAX_LINES = 6;
 // 320, raised from 200 on the pilot's review round. The per-param cap is a
@@ -1216,7 +1223,9 @@ export function buildToolsDoc(input: ToolsDocInput): string {
         out.push(
           "<details><summary>wire — Published output schema on `/mcp/chatgpt` (JSON Schema)</summary>",
           "",
-          "The chart-widget fields are declared only here; the widget reads them from `window.openai.toolOutput`, and `pickDeclared` strips them from `/mcp` responses by construction.",
+          declaresExtraTopLevelFields(chatgptSchema, genericSchema)
+            ? "The chart-widget fields are declared only here; the widget reads them from `window.openai.toolOutput`, and `pickDeclared` strips them from `/mcp` responses by construction."
+            : "`/mcp/chatgpt` publishes a different output schema from `/mcp`.",
           "",
           "```json",
           JSON.stringify(publishedOutputJsonSchema(chatgptSchema), null, 2),

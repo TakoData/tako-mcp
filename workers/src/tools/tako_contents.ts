@@ -354,8 +354,9 @@ export class ContentsFetchError extends Error {}
  *
  * `query` never goes on the wire as itself; a web url carries it as
  * `highlights.query`, and a Tako url carries no `highlights`, because the
- * backend rejects them on a card. `mode` and `content_format` always go,
- * because the backend defaults to "url" and "csv" and this tool serves neither.
+ * backend rejects them on a card. `mode` and `content_format` always go.
+ * Without `delivery` and `format`, which is every `/mcp/chatgpt` call, they are
+ * "inline" and "json_compact", not the backend's "url" and "csv" defaults.
  *
  * The effective character cap: a plain fetch with no caller cap defaults to
  * 100k, split across the batch. An EXPLICIT `max_chars` is left untouched at
@@ -372,8 +373,7 @@ export function buildContentsBody(
   // satisfies T` type-checks a key the target no longer declares — which is
   // the drift that matters here: a backend that renames `mode` or
   // `content_format` would keep receiving the dead key and silently serve its
-  // own "url" / "csv" defaults, and the whole one-delivery-one-serialization
-  // design rides on those two.
+  // own "url" / "csv" defaults.
   const body = {
     url,
     ...wireFormatFor(url, input),

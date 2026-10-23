@@ -1434,7 +1434,7 @@ Annotations:
 
 <details><summary>wire — Published output schema on `/mcp/chatgpt` (JSON Schema)</summary>
 
-The chart-widget fields are declared only here; the widget reads them from `window.openai.toolOutput`, and `pickDeclared` strips them from `/mcp` responses by construction.
+`/mcp/chatgpt` publishes a different output schema from `/mcp`.
 
 ```json
 {
