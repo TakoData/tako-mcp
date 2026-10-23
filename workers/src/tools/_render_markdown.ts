@@ -914,8 +914,8 @@ export function renderAgentRunMarkdown(o: AgentRunOutput): string {
 // ---------------------------------------------------------------------------
 
 function downloadLine(download: NonNullable<ProjectedContentsItem["download"]>): string {
-  const rowCount = download.total_rows !== undefined ? `, ${download.total_rows} rows` : "";
-  return `Download (${download.file_format.toUpperCase()}${rowCount}, expires ${oneLine(download.expires_at)}): ${oneLine(download.url)}`;
+  const cardSize = download.total_rows !== undefined ? `; the card has ${download.total_rows} rows` : "";
+  return `Download (${download.file_format.toUpperCase()}, expires ${oneLine(download.expires_at)}${cardSize}): ${oneLine(download.url)}`;
 }
 
 /** One requested url: anchor, the note that explains the payload, the payload,

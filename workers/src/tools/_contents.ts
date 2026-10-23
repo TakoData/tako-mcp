@@ -12,8 +12,8 @@
  * result of a call the caller had already been billed for. Both channels now
  * carry the payload; `renderContentsText` is the other half.
  *
- * One payload shape, not three. The tool always requests `json_compact` and
- * projects it, so `content_format` is gone from the input and `data` /
+ * One payload shape, not three. Unless the caller asks for a link or a card,
+ * the tool requests `json_compact` and projects it, so `content_format` is gone from the input and `data` /
  * `records` / `dataset` / `format` are gone from the output. CSV lost the
  * decision on nulls: a sparse comparison card — every "X vs Y" card is one —
  * serializes as `2026-01-25 00:00:00+00:00,74.9967,` with a trailing bare
@@ -38,8 +38,8 @@ import {
 
 /**
  * One requested url's result. Exactly one payload field rides per item:
- * `rows` for a Tako card, `text` for a web page, `error` for a url that
- * failed on its own.
+ * `rows` or `card` for a Tako card (`download` in place of `rows` in link
+ * mode), `text` for a web page, `error` for a url that failed on its own.
  *
  * `truncated` sits HERE rather than inside `rows` (where the spec's shape puts
  * it for search) because an item has exactly one payload: a row cap and a
@@ -50,15 +50,26 @@ const downloadShape = z.object({
   url: z.string(),
   expires_at: z.string(),
   file_format: z.enum(["csv", "json"]),
-  total_rows: z.number().optional(),
+  total_rows: z.number().optional().describe("Rows behind the card, before `max_rows`."),
 });
 
 const linkAndCardFields = {
-  download: downloadShape.optional().describe("Link delivery: the file."),
-  card: z.record(z.string(), z.unknown()).optional().describe("Card format: its structure."),
+  download: downloadShape.optional().describe("The file, in link mode."),
+  card: z.record(z.string(), z.unknown()).optional().describe("The card's structure."),
 };
 
-function itemShapeWith<Extra extends z.ZodRawShape>(extra: Extra) {
+const PAGE_PROSE = {
+  note: "Whether `text` holds the passages for `query` or the whole page.",
+  text: "Web pages only: the page text, or its passages when `query` is set.",
+  error: "Why this url alone failed; the others are unaffected.",
+};
+const LINK_AND_CARD_PROSE = {
+  note: "Whether `text` is passages or the whole page, or a card fell back to rows.",
+  text: "Web pages only: the page text or its passages.",
+  error: "Why this url failed.",
+};
+
+function itemShapeWith<Extra extends z.ZodRawShape>(extra: Extra, prose: typeof PAGE_PROSE) {
   return z.looseObject({
     // Declaration order IS the shipped order. `contentsOutputShape.safeParse` in
     // the handler rebuilds every object in SHAPE order, not in the order the
@@ -66,19 +77,19 @@ function itemShapeWith<Extra extends z.ZodRawShape>(extra: Extra) {
     // Anchor, then the note that explains the payload, then the payload, then
     // the chrome; `cost` stays last so a cut tail loses it and never the rows.
     url: z.string().describe("The url this entry is for."),
-    note: z.string().optional().describe("Whether `text` holds the passages for `query` or the whole page."),
+    note: z.string().optional().describe(prose.note),
     rows: projectedRowsShape.optional().describe("Tako cards only: the card's data."),
-    text: z.string().optional().describe("Web pages only: the page text, or its passages when `query` is set."),
+    text: z.string().optional().describe(prose.text),
     ...extra,
-    error: z.string().optional().describe("Why this url alone failed; the others are unaffected."),
+    error: z.string().optional().describe(prose.error),
     truncated: z.boolean().optional().describe("Part of this payload was cut."),
     source_url: z.string().optional().describe("Where a redirect landed."),
     cost: z.number().describe("USD billed for this url."),
   });
 }
 
-const chatgptProjectedContentsItemShape = itemShapeWith({});
-const projectedContentsItemShape = itemShapeWith(linkAndCardFields);
+const chatgptProjectedContentsItemShape = itemShapeWith({}, PAGE_PROSE);
+const projectedContentsItemShape = itemShapeWith(linkAndCardFields, LINK_AND_CARD_PROSE);
 
 export type ProjectedContentsItem = z.infer<typeof projectedContentsItemShape>;
 
@@ -122,12 +133,12 @@ export interface ContentsWireItem {
   card_data?: Record<string, unknown> | null | undefined;
 }
 
-/** What an item says when the backend delivered neither rows nor text. One
- *  message for both shapes: the cause is the same — the payload channel this
- *  item declared arrived empty — and a card-specific and a page-specific
- *  wording would be two names for one state. */
 export const CARD_FALLBACK_NOTE = "This card type has no structure of its own, so this is its data as rows.";
 
+/** What an item says when the backend delivered no payload: no rows, text,
+ *  download or card. One message for every shape: the cause is the same — the
+ *  payload channel this item declared arrived empty — and a card-specific and
+ *  a page-specific wording would be two names for one state. */
 export const EMPTY_PAYLOAD_ERROR =
   "Tako returned no data for this url. Retry once; if it persists, flag it to the Tako team.";
 

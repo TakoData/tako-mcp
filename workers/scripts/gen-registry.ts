@@ -1204,6 +1204,20 @@ export function buildToolsDoc(input: ToolsDocInput): string {
     }
     out.push("", "<details><summary>wire — Published input schema (JSON Schema)</summary>", "", "```json",
       JSON.stringify(z.toJSONSchema(m.inputSchema, { io: "input" }), null, 2), "```", "</details>", "");
+    const chatgptInputSchema = inputSchemaForSurface(m, "chatgpt");
+    if (chatgptInputSchema !== m.inputSchema) {
+      out.push(
+        "<details><summary>wire — Published input schema on `/mcp/chatgpt` (JSON Schema)</summary>",
+        "",
+        "`/mcp/chatgpt` publishes a different input schema from `/mcp`.",
+        "",
+        "```json",
+        JSON.stringify(z.toJSONSchema(chatgptInputSchema, { io: "input" }), null, 2),
+        "```",
+        "</details>",
+        "",
+      );
+    }
 
     // Result channels — the other half of what the model reads. The schema is
     // rendered exactly as tools/list advertises it (per surface when the two

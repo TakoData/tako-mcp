@@ -61,7 +61,8 @@ import type { ToolContext, ToolModule } from "./types.js";
 
 /** Max urls per call. The backend takes one url per request, so a batch fans
  *  out to N subrequests; this bounds both the Workers subrequest budget and
- *  the bill a single call can run up. */
+ *  the bill a single call can run up: at most 10 urls of up to 100,000 rows
+ *  each in link mode. */
 export const MAX_CONTENTS_URLS = 10;
 
 export const MAX_CONTENTS_ROWS = 2000;
@@ -400,7 +401,7 @@ async function fetchOne(
   batchSize: number,
 ): Promise<ProjectedContentsItem> {
   const body = buildContentsBody(url, input, batchSize);
-  if (body.content_format === "card_json") return fetchCard(url, body, ctx);
+  if (body.content_format === "card_json") return fetchCard(url, input, body, ctx);
   if (body.highlights === undefined) {
     const queryDropped = input.query !== undefined && isTakoHostUrl(url);
     return fetchPage(url, body, input, ctx, batchSize, queryDropped ? TAKO_URL_QUERY_NOTE : undefined);
@@ -419,6 +420,7 @@ async function fetchOne(
 
 async function fetchCard(
   url: string,
+  input: Input,
   body: z.input<typeof ContentsRequest> & { max_chars: number },
   ctx: ToolContext,
 ): Promise<ProjectedContentsItem> {
@@ -427,7 +429,7 @@ async function fetchCard(
   } catch (err) {
     if (!(err instanceof DjangoHttpError) || err.status !== 422) throw err;
   }
-  const rowsBody = { ...body, content_format: "json_compact" as const };
+  const rowsBody = { ...body, ...wireFormatFor(url, { ...input, format: "rows" }) };
   return projectContentsItem(await postContents(rowsBody, ctx), url, { cardNote: CARD_FALLBACK_NOTE });
 }
 

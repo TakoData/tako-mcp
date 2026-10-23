@@ -1294,6 +1294,50 @@ Annotations:
 ```
 </details>
 
+<details><summary>wire — Published input schema on `/mcp/chatgpt` (JSON Schema)</summary>
+
+`/mcp/chatgpt` publishes a different input schema from `/mcp`.
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "urls": {
+      "minItems": 1,
+      "maxItems": 10,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "description": "The urls to fetch: a Tako card url or a web result url. One call for 8 urls costs the same as 8 separate calls and saves 7 round trips."
+    },
+    "max_rows": {
+      "description": "Tako cards only: how many rows to return. Omit it for the whole card, up to 2,000 rows. Every row delivered is billed, so lower it when the recent rows are enough.",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2000
+    },
+    "max_chars": {
+      "description": "Web pages only: character cap on the extracted text. Inline fetches default to 100,000 per url, less across a batch. Raise it for a long document; `truncated` reports a cut. With `query`, it caps the passages instead: 100 to 20,000, and 4,000 by default.",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1000000
+    },
+    "query": {
+      "description": "Web pages only: a question the passages should answer. The result holds those passages instead of the page. Omit it to get the whole page.",
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "required": [
+    "urls"
+  ]
+}
+```
+</details>
+
 <details><summary>wire — Published output schema (JSON Schema)</summary>
 
 ```json
@@ -1311,7 +1355,7 @@ Annotations:
             "description": "The url this entry is for."
           },
           "note": {
-            "description": "Whether `text` holds the passages for `query` or the whole page.",
+            "description": "Whether `text` is passages or the whole page, or a card fell back to rows.",
             "type": "string"
           },
           "rows": {
@@ -1345,11 +1389,11 @@ Annotations:
             "additionalProperties": false
           },
           "text": {
-            "description": "Web pages only: the page text, or its passages when `query` is set.",
+            "description": "Web pages only: the page text or its passages.",
             "type": "string"
           },
           "download": {
-            "description": "Link delivery: the file.",
+            "description": "The file, in link mode.",
             "type": "object",
             "properties": {
               "url": {
@@ -1366,6 +1410,7 @@ Annotations:
                 ]
               },
               "total_rows": {
+                "description": "Rows behind the card, before `max_rows`.",
                 "type": "number"
               }
             },
@@ -1377,7 +1422,7 @@ Annotations:
             "additionalProperties": false
           },
           "card": {
-            "description": "Card format: its structure.",
+            "description": "The card's structure.",
             "type": "object",
             "propertyNames": {
               "type": "string"
@@ -1385,7 +1430,7 @@ Annotations:
             "additionalProperties": {}
           },
           "error": {
-            "description": "Why this url alone failed; the others are unaffected.",
+            "description": "Why this url failed.",
             "type": "string"
           },
           "truncated": {

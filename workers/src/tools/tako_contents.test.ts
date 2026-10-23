@@ -888,10 +888,31 @@ describe("tako_contents links and card structure", () => {
     const first = calls[0]![3] as { mode: string; content_format: string };
     const second = calls[1]![3] as { mode: string; content_format: string };
     expect(first.content_format).toBe("card_json");
-    expect(second.content_format).toBe("json_compact");
+    expect(second.content_format).toBe("csv");
     expect(second.mode).toBe(first.mode);
     expect(out.results[0]!.note).toBe(CARD_FALLBACK_NOTE);
     expect(out.results[0]!.rows).toBeDefined();
+  });
+
+  it("card with link delivery falls back to a CSV download on 422", async () => {
+    vi.mocked(djangoPost)
+      .mockRejectedValueOnce(http422())
+      .mockResolvedValueOnce(
+        wire({
+          content_format: "csv",
+          url: "https://s3/x.csv",
+          expires_at: "2026-10-23T20:00:00+00:00",
+          total_rows: 40,
+        }),
+      );
+    const out = await tool.handler(
+      tool.inputSchema.parse({ urls: [cardUrl], format: "card", delivery: "link" }),
+      ctx,
+    );
+    const second = vi.mocked(djangoPost).mock.calls[1]![3] as { mode: string; content_format: string };
+    expect(second).toMatchObject({ mode: "url", content_format: "csv" });
+    expect(out.results[0]!.download?.file_format).toBe("csv");
+    expect(out.results[0]!.note).toBe(CARD_FALLBACK_NOTE);
   });
 
   it("a 422 without format card is not retried", async () => {
