@@ -1484,8 +1484,8 @@ export function buildChatgptSnapshot(
     // The OUTPUT schema is surface-specific now (`outputSchemaBySurface`), so
     // without this digest the one part of the ChatGPT contract that only
     // ChatGPT reads — the six widget fields its bundle takes from
-    // `window.openai.toolOutput` — could change with no snapshot diff and no
-    // resubmission prompt. Hashed in its WIRE form and key-sorted, for the
+    // `window.openai.toolOutput` — could change with no snapshot diff.
+    // Hashed in its WIRE form and key-sorted, for the
     // same two reasons the input digest documents.
     const outputSchema = outputSchemaForSurface(tool, "chatgpt");
     snapshot.tools[tool.name] = {
@@ -1493,8 +1493,8 @@ export function buildChatgptSnapshot(
       // Key-SORTED before hashing: `z.toJSONSchema` emits keys in whatever
       // order the zod version happens to build them, so hashing the raw
       // stringify makes a zod upgrade flip all five digests at once and
-      // report "input_schema changed since the accepted snapshot" — a
-      // resubmission order for text nobody edited. Sorting makes the digest
+      // report "input_schema changed since the accepted snapshot" for text
+      // nobody edited. Sorting makes the digest
       // depend on the schema's content, which is what OpenAI reviewed.
       input_schema_sha256: sha256(stableStringify(z.toJSONSchema(tool.inputSchema, { io: "input" }))),
       ...(outputSchema !== undefined
@@ -1545,7 +1545,7 @@ export function assertChatgptSnapshot(
     throw new Error(
       `chatgpt-app-snapshot.json drift — a reviewed ChatGPT tool changed:\n  ${problems.join(
         "\n  ",
-      )}\nOpenAI rescans /mcp/chatgpt daily and updates each tool after its automated checks pass, so this change reaches ChatGPT users with the next production deploy. If the change is intended, accept it: npm run registry:gen -- --accept-chatgpt-snapshot`,
+      )}\nOpenAI rescans /mcp/chatgpt daily and updates each tool after its automated checks pass, so this change reaches ChatGPT users with the next production deploy. If the change is intended, accept it: npm run registry:gen -- --accept-chatgpt-snapshot. Keep a changed input schema compatible with the old one: ChatGPT keeps the earlier definition until the new one passes its checks.`,
     );
   }
 }
@@ -1881,10 +1881,10 @@ async function main(): Promise<void> {
     readFileSync(SUBMISSION_PATH, "utf8"),
   );
 
-  // 4b. ChatGPT description/schema snapshot: OpenAI serves the text it
-  //     reviewed, so editing a listed tool's description or input schema
-  //     silently desynchronizes the app from this server until a
-  //     resubmission. The parity check above cannot see either field.
+  // 4b. ChatGPT description/schema snapshot: OpenAI picks up an edited
+  //     description or schema from its daily scan of /mcp/chatgpt, so an
+  //     unaccepted edit would reach ChatGPT users unnoticed. The parity
+  //     check above cannot see either field.
   const liveSnapshot = buildChatgptSnapshot(modules.map((m) => m.tool));
   if (acceptSnapshot && !checkMode) {
     writeFileSync(SNAPSHOT_PATH, liveSnapshot);

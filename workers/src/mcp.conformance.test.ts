@@ -646,7 +646,7 @@ describe("the sweep sees into union branches, not just objects and arrays", () =
  * `publishedOutputJsonSchema` is now the doc's single source, so this asserts
  * it against a REAL server on BOTH surfaces. Without this the helper is just a
  * second guess at what the SDK does, and the chatgpt surface — the one whose
- * widget reads `structuredContent`, and where a mistake costs a resubmission —
+ * widget reads `structuredContent`, and where a fix waits for OpenAI's scan —
  * had no published-schema coverage of any kind.
  */
 describe("docs/TOOLS.md renders the schema the wire actually carries", () => {

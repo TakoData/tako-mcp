@@ -1943,7 +1943,7 @@ describe("object-level schema checks reach the wire", () => {
  * `tool.outputSchema` left all 1267 tests green while stripping the six
  * widget fields out of the `structuredContent` ChatGPT's bundle reads via
  * `window.openai.toolOutput` — a silently broken chart on the one surface
- * that costs an app resubmission to fix.
+ * where a fix waits for a production release and OpenAI's next scan.
  *
  * `tools/list` over a real server, not the module constant, because the SDK
  * republishes the schema and the surface is chosen inside `registerTool`.
