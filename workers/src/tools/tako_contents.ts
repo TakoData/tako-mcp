@@ -169,8 +169,7 @@ function wholePageNoteAfter(err: unknown): string | undefined {
 // NO routing sentence for "search returned web results but no card". It reads
 // as a condition ON fetching a web result, and the condition is false — you
 // fetch a page whenever you need its text, card or no card. `instructions.ts`
-// owns tool routing, and `_search_results.ts`'s zero-card guidance already
-// names this tool only when the connection can actually call it.
+// owns tool routing.
 const DESCRIPTION = [
   `Fetch the full content behind a url: a web page's text, or an exportable Tako card's data rows. Batch up to ${MAX_CONTENTS_URLS} urls in one call — each fails on its own.`,
   "",

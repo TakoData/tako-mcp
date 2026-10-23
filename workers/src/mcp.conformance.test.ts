@@ -31,6 +31,7 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 
 import { structuredContentFor } from "./mcp.js";
 import { TOOL_REGISTRY } from "./tools/_registry.js";
+import { STRICT_PIN_GUIDANCE } from "./tools/_search_results.js";
 import { outputSchemaForSurface, publishedOutputJsonSchema } from "./tools/_surface.js";
 import type { AnyToolModule } from "./tools/types.js";
 
@@ -466,7 +467,35 @@ describe("realistic payloads validate against the published schema", () => {
       }
       // Not vacuous: the core fields it CAN produce are still there.
       expect(simple.properties, `tako_search/${surface}`).toHaveProperty("cards");
-      expect(simple.properties, `tako_search/${surface}`).toHaveProperty("guidance");
+    }
+  });
+
+  it("declares tako_search's keyless guidance on /mcp only", () => {
+    const declared = (surface: "generic" | "chatgpt") =>
+      (
+        publishedOutputJsonSchema(
+          outputSchemaForSurface(moduleFor("tako_search"), surface) as NonNullable<
+            ReturnType<typeof outputSchemaForSurface>
+          >,
+        ) as { properties: Record<string, unknown> }
+      ).properties;
+    expect(declared("generic")).toHaveProperty("guidance");
+    expect(declared("chatgpt")).not.toHaveProperty("guidance");
+  });
+
+  it("keeps guidance in structuredContent on both search tools", () => {
+    for (const [name, guidance] of [
+      ["tako_search", "Sign in to unlock this card."],
+      ["tako_search_advanced", STRICT_PIN_GUIDANCE],
+    ] as const) {
+      const structured = structuredContentFor(moduleFor(name), {
+        cards: [],
+        web_results: [],
+        usage: null,
+        request_id: "req-guidance",
+        guidance,
+      });
+      expect(structured.guidance, name).toBe(guidance);
     }
   });
 

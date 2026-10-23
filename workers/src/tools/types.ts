@@ -117,10 +117,8 @@ export interface ToolContext {
    *
    * A tool RESULT that names another tool is an instruction the model acts on,
    * and `?tools=` REPLACES the defaults (spec D1): `?tools=search` registers
-   * `tako_search` alone. The zero-result guidance branched on tier only, so a
-   * signed-in caller on that connection was told to "call tako_available_data
-   * (free)" — a tool the connection never registered, whose call resolves to
-   * the SDK's bare "tool not found". Tier is not the predicate; capability is.
+   * `tako_search` alone, so tier is not the predicate for naming a tool;
+   * capability is.
    *
    * `instructions.ts` filters the `initialize` string the same way. The two
    * differ only in timing: instructions are assembled once per connection,

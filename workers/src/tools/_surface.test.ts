@@ -123,8 +123,7 @@ describe("tool descriptions are tier-invariant", () => {
   // sit outside the free set, so the sentence distinguishes nothing; it reads
   // as a property of the one tool that carries it. `tako_contents` did carry
   // it and no longer does — the dispatch gate (`GENERIC_SIGN_IN_HINT`) states
-  // it where it applies, and search's zero-card guidance branches on
-  // reachability before naming the tool. #274 removed the mirror claim
+  // it where it applies. #274 removed the mirror claim
   // ("`tako_available_data` is free") from the instructions for the same
   // reason. This block audits the free set only; it does not require any
   // description to advertise the boundary.

@@ -1311,273 +1311,23 @@ export type SearchOutput = {
   charts?: CardChart[];
 };
 
-// Which sources a search actually hit, for tailoring zero-result guidance.
-// searchedData is exported for the answer path's data-gap guidance gate — one
-// definition of "did this request search the data source" across both tools.
-export type SearchedSources = ReadonlyArray<"data" | "web">;
-export const searchedData = (s: SearchedSources): boolean => s.includes("data");
-const searchedWeb = (s: SearchedSources): boolean => s.includes("web");
-
-/** Which tool a guidance string is being written for. Guidance names an
- *  ARGUMENT the model then sends, and the two tools spell the same request
- *  differently, so one shared string cannot be right for both. */
+/** The search tool an output belongs to, named in its projection log. */
 export type SearchToolName = "tako_search" | "tako_search_advanced";
 
 /**
- * How each tool spells "search data and web".
- *
- * `tako_search` publishes a `sources` ARRAY. `tako_search_advanced` publishes
- * no `sources` key at all — it takes the two blocks at the TOP level, and
- * every level is `.strict()`, so a `sources` key there is a -32602 before the
- * request leaves the Worker. Both guidance builders named `tako_search`'s form
- * unconditionally, which put an unsendable argument on the two paths that
- * exist to stop a priced retry loop: the model's one recovery step failed
- * schema validation.
- *
- * The OBJECT is the source of truth and the prose is derived from it, so the
- * advertised argument cannot drift from the sendable one.
- * `_search_results.test.ts` parses each entry against that tool's own
- * published input schema, which is the assertion a hand-written string could
- * never carry.
- */
-export const BOTH_SOURCES_ARG: Record<SearchToolName, Record<string, unknown>> = {
-  tako_search: { sources: ["data", "web"] },
-  tako_search_advanced: { data: {}, web: {} },
-};
-
-/** {@link BOTH_SOURCES_ARG} as the fragment a caller pastes into its arguments
- *  object — the braces stripped, so it reads as "add these keys". */
-const bothSourcesArg = (tool: SearchToolName): string =>
-  `\`${JSON.stringify(BOTH_SOURCES_ARG[tool]).slice(1, -1)}\``;
-
-// REFINE_WEB_FREELY was deleted with the two-sentence guidance rewrite: its
-// carve-out ("refining a WEB query converges; hunting for a CARD does not")
-// is now scoped into each branch's verdict sentence, and the fan-out-narrow-
-// queries lesson lives in the tool description. The measured incident that
-// created it (a blanket no-re-search ban losing docs questions to a
-// competing web-search MCP by 5-6 targeted calls) stays the reason the
-// verdicts blame the DATA GRAPH, never re-searching as such.
-
-/**
  * The verdict when a `strict: true` pin returned nothing: about the FILTER, not
- * about coverage. Shared by BOTH endpoints' zero-card paths — the answer path
- * reaches it through `tako_search_advanced`, which is the only pin-capable tool.
+ * about coverage. Reachable only from `tako_search_advanced`, the only
+ * pin-capable tool, on both of its endpoints.
  *
- * IT WINS OVER EVERY OTHER ZERO-CARD VERDICT, and the caller in
- * `buildSearchOutput` is the one place that ordering lives. Every other verdict
- * reports something about COVERAGE, and under a hard filter that report is
- * unsupported: a `strict: true` pin returns only cards matching a pinned node,
- * and the graph holds near-duplicate metric nodes where only one twin carries
- * cards. KE-812 measured pinned handles returning FEWER cards than the same
- * query unpinned on 11 of 20 pairs. Reporting a coverage gap there is
- * mid-failure copy that contradicts the tool's own description, which tells the
- * caller to drop `node_ids` and retry.
+ * A `strict: true` pin returns only cards matching a pinned node, and the graph
+ * holds near-duplicate metric nodes where only one twin carries cards. KE-812
+ * measured pinned handles returning FEWER cards than the same query unpinned on
+ * 11 of 20 pairs, so an empty pinned result says nothing about coverage.
  */
-export function strictPinGuidance(tier: Tier): string {
-  // Two sentences (spec, "guidance" decision): the verdict and the one next
-  // action. Under a `strict: true` pin, zero cards is evidence about the
-  // FILTER, not coverage — KE-812 measured pinned handles returning FEWER
-  // cards than the same query unpinned on 11 of 20 pairs. Reachable only from
-  // `tako_search_advanced`, which never executes anonymously — `tier` stays a
-  // parameter so this signature cannot silently diverge from the other
-  // branches if that invariant (held in `_surface.ts`) ever moves.
-  void tier;
-  return [
-    "No data cards, but this request pinned `node_ids` with `strict: true` — a hard filter — so zero cards is evidence about the filter, not about coverage.",
-    "Re-run the same query text without `node_ids` before concluding anything.",
-  ].join(" ");
-}
-
-/**
- * The zero-data-card verdict for the ANSWER endpoint, worded by whether web
- * results ground the answer. With web grounding the prose may be a complete,
- * correct answer (e.g. "who won the game?") — the verdict must scope itself to
- * the data index, not read as "this answer failed". Without web grounding it
- * is the hard anti-retry stop. Both are deterministic (cards.length === 0),
- * never inferred from the prose.
- *
- * TWO SENTENCES PER BRANCH, like every other guidance branch: the verdict
- * (which corpora this response is evidence about) and the one next action
- * (spec, "guidance" decision). These three were the last branches left at the
- * old length — five to six sentences, up to 740 chars, three of them spent on
- * anti-instructions ("do NOT rephrase-and-retry", "Do NOT reach for
- * tako_contents") that restate what the one action already implies.
- *
- * `searchedWebToo` is what keeps the no-web-results branch honest. It used to
- * read "ZERO curated data cards (and no web results)" off `hasWebResults`
- * alone, so a deliberate `sources: ["data"]` ask — where the web was never
- * queried — was told the web had come back empty as well, and then told to
- * treat the metric as absent. Two sources' worth of verdict from one source's
- * evidence. When web was not searched, the honest recovery is to search it.
- */
-export function buildDataGapGuidance(
-  hasWebResults: boolean,
-  searchedWebToo: boolean,
-  toolName: SearchToolName,
-  registered?: ReadonlySet<string>,
-): string {
-  // A tool RESULT that names a tool is an instruction the model acts on, and
-  // `?tools=` REPLACES the defaults — `?tools=search_advanced` registers this
-  // tool ALONE, so on the connection that reaches this function most often
-  // `tako_available_data` is unregistered and naming it resolved to the SDK's
-  // bare "tool not found".
-  const coverage = registered === undefined || registered.has("tako_available_data");
-  if (!hasWebResults && !searchedWebToo) {
-    return [
-      "No data cards ground this answer, and this request searched the data source only, so it says nothing about web coverage.",
-      `Re-ask with both sources — add ${bothSourcesArg(toolName)} — at the same price before treating the figure as unavailable.`,
-    ].join(" ");
-  }
-  if (hasWebResults) {
-    return [
-      "No data cards ground this answer — it is web-grounded only, so use the prose if it answers the question.",
-      coverage
-        ? "For Tako's own series instead, get the metric's canonical name from tako_available_data and re-ask once on that name."
-        : "For Tako's own series instead, re-ask once naming the metric and the period you need.",
-    ].join(" ");
-  }
-  // The web carve-out rides in this branch's second sentence as a clause, not
-  // as its own sentence, and it is not optional: the SEARCH path's both-empty
-  // branch permits one narrower web question, and these two surfaces once gave
-  // opposite verdicts on the most common Tako-has-nothing path. A model that
-  // reads both learns one of them is wrong. `_search_results.test.ts` holds the
-  // invariant across both branches, not the wording.
-  return [
-    "Neither data cards nor web results ground this answer, so treat the metric as absent for this phrasing — rewording alone will not change that, and every retry is priced.",
-    coverage
-      ? "Confirm coverage once with tako_available_data and re-ask on the canonical name it returns, or try one genuinely narrower web question — one entity, provider or site — then answer from another source."
-      : "Try one genuinely narrower web question — one entity, provider or site — then answer from another source.",
-  ].join(" ");
-}
-
-/**
- * Recovery protocol for a zero-CARD search. Rewording the same query almost
- * never flips a miss into a hit — misses come from query SHAPE (compound
- * query, brand instead of domain, unresolved entity) or from the data simply
- * not being covered, and every retry is a priced call the model burns on a
- * loop that never converges.
- *
- * The bundled skill doesn't repeat this protocol: on a miss it tells the
- * model to answer from the web results, so this guidance is the only place
- * the RECIPE lives — free tako_available_data check → ONE retry on the exact
- * metric NAME → stop and answer from the web results.
- *
- * NOTHING HERE PINS ANY MORE, and the skills never did. This guidance used to
- * interpolate {@link PINNED_RETRY}; after the D4 split `tako_search` takes no
- * `node_ids` / `strict`, so a pin recipe here would prescribe parameters the
- * tool rejects. The two arms now agree on the canonical NAME, which is also the
- * arm the measurement favours: 11 of 20 handles retrieved FEWER cards pinned
- * than unpinned, while the canonical name helped 9 of 15. `PINNED_RETRY` has no
- * production reader at all now — the answer path's last interpolation went when
- * every guidance branch was cut to two sentences, and
- * `tako_search_advanced`'s `data.node_ids` describe carries the short form.
- * Do not route it back here.
- */
-/**
- * The recovery protocol a zero-card search ships in its own result.
- *
- * TIER-BRANCHED, unlike every description and the `initialize` string. Those
- * ride the host's cached prefix and are read once; this is a tool RESULT,
- * appended after that prefix and true at the moment the model reads it — the
- * same slot `authRequiredToolResult` occupies. Branching it costs no prompt
- * cache: the prefix is byte-identical either way.
- *
- * It has to branch, because the authenticated protocol routes through
- * `tako_available_data` and `tako_contents`, and an anonymous caller has
- * NEITHER — `tako_search` is the whole anonymous surface. Unbranched, a
- * zero-result anonymous caller got numbered steps in which every step
- * answers a sign-in refusal.
- *
- * NO `strictPin` PARAMETER. The pin verdict outranks every branch here, so the
- * decision lives in `buildSearchOutput`'s ternary, which reaches
- * `strictPinGuidance` directly and never calls this function under a pin. It
- * was a parameter once; the sole caller passed a literal `false`, which left
- * the rule written in two places and a dead branch documented as live.
- */
-function buildZeroResultGuidance(
-  hasWebResults: boolean,
-  sources: SearchedSources,
-  tier: Tier,
-  toolName: SearchToolName,
-  registered?: ReadonlySet<string>,
-): string {
-  // Every branch is exactly TWO sentences: the verdict (which corpora this
-  // response is evidence about) and the one next action (spec:
-  // 2026-08-26-model-facing-surface-redesign-design.md, "guidance" decision).
-  // Static lessons — query shape, domains-not-brands — live in the tool
-  // description and are NOT repeated here.
-  //
-  // THREE STATES PER TOOL, not two, and tier is only one of them. This
-  // branched on `tier === "free"` alone, which is the wrong predicate: a
-  // SIGNED-IN `?tools=search` caller registers `tako_search` and nothing else
-  // (`?tools=` replaces the defaults, spec D1), took the authenticated arm,
-  // and was told to "call tako_available_data (free)" — a tool that
-  // connection never registered, whose call resolves to the SDK's bare "tool
-  // not found".
-  //
-  //   "callable" — registered and executable now: name it as the next step.
-  //   "gated"    — registered but auth-required on the free tier: the refusal
-  //                itself is the conversion prompt, so name it AND say so.
-  //   "absent"   — not on this connection at all: never name it.
-  //
-  // `registered === undefined` means a caller with no registration
-  // information (tests, direct handler calls); it degrades to tier-only,
-  // which is the behavior before the registered set existed.
-  const reach = (name: string): "callable" | "gated" | "absent" => {
-    if (registered !== undefined && !registered.has(name)) return "absent";
-    return tier === "free" ? "gated" : "callable";
-  };
-  const coverage = reach("tako_available_data");
-  const contents = reach("tako_contents");
-  // The strict-pin case never reaches this function: `buildSearchOutput`
-  // dispatches it to `strictPinGuidance` first, because under a hard filter
-  // every verdict below is unsupported.
-  if (hasWebResults) {
-    if (!searchedData(sources)) {
-      // Web-only search: zero cards BY CONSTRUCTION — no data verdict exists.
-      return [
-        "This search ran on the web source only, so it says nothing about whether Tako's data graph covers this.",
-        coverage === "callable"
-          ? `Answer from the web_results; if you want a chart or dataset, re-run with ${bothSourcesArg(toolName)} (same price) or check tako_available_data (free).`
-          : `Answer from the web_results; if you want a chart or dataset, re-run with ${bothSourcesArg(toolName)} (same price).`,
-      ].join(" ");
-    }
-    const readPage =
-      contents === "callable"
-        ? "tako_contents on the most relevant url fetches its full page text"
-        : contents === "gated"
-          ? "their snippets are in the result; reading a page in full needs a signed-in connection"
-          : "their snippets are in the result";
-    const thenCoverage =
-      coverage === "callable"
-        ? "; if you specifically need a chart or dataset, run tako_available_data (free) once and re-search only on the canonical name it returns."
-        : ".";
-    return [
-      "No data cards: the data graph does not cover this query, and rewording alone will not change that.",
-      `Answer from the web_results (${readPage})${thenCoverage}`,
-    ].join(" ");
-  }
-  if (!searchedData(sources)) {
-    // Web-only search, nothing back: the query is the only lever there is.
-    return [
-      "The web returned nothing for this query, and the data source was not searched, so this says nothing about Tako's coverage.",
-      coverage === "callable"
-        ? "Refine to one entity, provider, or site per query and re-search; for a data metric, check tako_available_data (free) first."
-        : "Refine to one entity, provider, or site per query and re-search.",
-    ].join(" ");
-  }
-  const narrowerWeb = searchedWeb(sources) ? ", or try one genuinely narrower web question" : "";
-  const action =
-    coverage === "callable"
-      ? `Call tako_available_data (free) to learn the canonical metric name and spend one retry on that name${narrowerWeb}; if it shows no coverage, answer from other sources.`
-      : coverage === "gated"
-        ? "Make at most one reshaped retry (one metric per query; bare domains for website traffic), then answer from other sources — the coverage check, tako_available_data, needs a signed-in connection."
-        : `Make at most one reshaped retry (one metric per query; bare domains for website traffic)${narrowerWeb}, then answer from other sources.`;
-  return [
-    "No results: either the query shape is off or Tako does not cover this — rewording alone will not change that, and every retry is priced.",
-    action,
-  ].join(" ");
-}
+export const STRICT_PIN_GUIDANCE = [
+  "No data cards, but this request pinned `node_ids` with `strict: true` — a hard filter — so zero cards is evidence about the filter, not about coverage.",
+  "Re-run the same query text without `node_ids` before concluding anything.",
+].join(" ");
 
 /**
  * Guidance for a keyless search that returned a placeholder card. A keyless
@@ -1597,9 +1347,8 @@ export function withheldDataGuidance(cards: ReadonlyArray<TakoCard>): string | u
 /** Wire fields that ride into the output when the request asked for them. */
 export type SearchOutputExtras = {
   related?: z.infer<typeof RelatedSuggestion>[];
-  // The three /v1/answer fields. `answer` also SWITCHES behavior below: it
-  // picks the data-gap verdict over the search verdict, and it gates the
-  // citation-order check.
+  // The three /v1/answer fields. `answer` also gates the citation-order
+  // check below.
   answer?: string;
   structured_output?: Record<string, unknown>;
   structured_output_error?: z.infer<typeof AnswerStructuredOutputError>;
@@ -1617,7 +1366,6 @@ export function buildSearchOutput(
   requestId: string,
   usage: Usage | null,
   env: Env,
-  searchedSources: SearchedSources,
   strictPin: boolean,
   tier: Tier,
   opts: {
@@ -1628,17 +1376,7 @@ export function buildSearchOutput(
     /** Keep web page text — true only when the request set
      *  `sources.web.include_contents` (tako_search_advanced). */
     keepWebText: boolean;
-    /** The tool names THIS connection registered (`ctx.registeredTools`).
-     *  The zero-result guidance names a recovery tool only when the
-     *  connection can actually call it — `?tools=` replaces the defaults, so
-     *  tier alone is not the predicate. Omitted by non-HTTP callers, which
-     *  degrades to tier-only. */
-    registeredTools?: ReadonlySet<string> | undefined;
-    /** The tool this output belongs to. Guidance names an ARGUMENT, and the
-     *  two tools spell the same request differently — see
-     *  {@link BOTH_SOURCES_ARG}. Required, because a default would silently
-     *  hand one tool's syntax to the other, which is the bug this field
-     *  exists to make impossible. */
+    /** The tool this output belongs to, named in the projection log. */
     toolName: SearchToolName;
   },
   extras: SearchOutputExtras = {},
@@ -1662,39 +1400,8 @@ export function buildSearchOutput(
     ...(extras.structured_output_error !== undefined
       ? { structured_output_error: extras.structured_output_error }
       : {}),
-    // A miss is billed the same as a hit, and models default to
-    // rephrase-and-retry loops that never converge — so any zero-CARD
-    // response carries its own recovery verdict. Keyed on cards (not cards
-    // AND web) because the default ["data","web"] search almost always
-    // returns some web links: gating on both would skip the guidance in
-    // exactly the chart-less case the retry loop feeds on.
-    ...(cards.length === 0
-      ? {
-          // Three verdicts, and the order matters. A strict pin makes any
-          // coverage claim unsupported, so it wins on both endpoints. Otherwise
-          // the ANSWER endpoint gets the data-gap wording, which scopes itself
-          // to the data index rather than reading as "this answer failed" —
-          // the prose above it may be a complete, correct web-grounded answer.
-          guidance:
-            strictPin && searchedData(searchedSources)
-              ? strictPinGuidance(tier)
-              : extras.answer !== undefined
-                ? buildDataGapGuidance(
-                    webResults.length > 0,
-                    searchedSources.includes("web"),
-                    opts.toolName,
-                    opts.registeredTools,
-                  )
-                : buildZeroResultGuidance(
-                    webResults.length > 0,
-                    searchedSources,
-                    tier,
-                    opts.toolName,
-                    opts.registeredTools,
-                  ),
-        }
-      : {}),
-    // A placeholder is a card, so this never competes with a zero-card verdict.
+    ...(cards.length === 0 && strictPin ? { guidance: STRICT_PIN_GUIDANCE } : {}),
+    // A placeholder is a card, so this never competes with the strict-pin verdict.
     ...(tier === "free" && withheld !== undefined ? { guidance: withheld } : {}),
     // Reference maps LAST so tail-truncating hosts lose prose before data.
     ...(maps.metric_definitions !== undefined

@@ -16,7 +16,6 @@ import {
   type SearchOutputExtras,
   takoCardSchema,
   webResultSchema,
-  type SearchedSources,
   type SearchOutput,
   type SearchToolName,
 } from "./_search_results.js";
@@ -44,8 +43,8 @@ export type SearchCall =
  *
  * Split out of the handler so `tako_search_advanced` reuses it: the two tools
  * hit different endpoints and the response shapes differ by three fields, so
- * the wire guard branches — but the slimming, the widget lift and the
- * zero-card guidance are one copy, and a fix there lands on both at once.
+ * the wire guard branches — but the slimming and the widget lift are one
+ * copy, and a fix there lands on both at once.
  *
  * `rowCap` is the per-card inline row budget: `null` drops every row (what the
  * simple tool passes — it never inlines), "all" keeps what the backend sent
@@ -54,7 +53,6 @@ export type SearchCall =
  */
 export async function runSearch(
   call: SearchCall,
-  sources: SearchedSources,
   rowCap: number | "all" | null,
   ctx: ToolContext,
   // The CALLER's own name. Required, and not derived from `endpoint`:
@@ -63,11 +61,6 @@ export async function runSearch(
   // tool that sends fields the simple one cannot (`mode`,
   // `content_format: "card_json"`, `node_ids`) — pointing an on-call at the
   // wrong surface with the one signal they get.
-  //
-  // It reaches the MODEL as well as the log: zero-result guidance names a
-  // `sources` argument, and the two tools spell it differently
-  // (`BOTH_SOURCES_ARG`), so a wrong name here publishes a recovery step the
-  // receiving tool's schema rejects.
   toolName: SearchToolName,
 ): Promise<SearchOutput> {
   const { endpoint, body } = call;
@@ -160,16 +153,9 @@ export async function runSearch(
     wire.request_id,
     wire.usage ?? null,
     ctx.env,
-    sources,
     strictPin,
-    // The zero-result protocol routes through tools an anonymous caller does
-    // not have; `buildZeroResultGuidance` branches on this (#272).
     ctx.tier ?? "authenticated",
-    // `registeredTools`: the zero-result guidance names a recovery tool only
-    // when THIS connection registered it. `?tools=` replaces the defaults, so
-    // a signed-in `?tools=search` caller has neither tako_available_data nor
-    // tako_contents and tier alone cannot tell.
-    { rowCap, keepWebText, registeredTools: ctx.registeredTools, toolName },
+    { rowCap, keepWebText, toolName },
     extras,
   );
 }

@@ -645,13 +645,7 @@ describe("chart render gates per surface", () => {
     const result = await callSearch("generic");
 
     expect(result.content.filter((b) => b.type === "image")).toHaveLength(0);
-    // The zero-result guidance must survive the SDK round trip: it is
-    // declared in the tool's published outputSchema, so `structuredContent` keeps it
-    // (an undeclared key would be silently stripped by the SDK's
-    // outputSchema parse — this pins schema and builder together).
-    expect(
-      (result.structuredContent as { guidance?: string }).guidance,
-    ).toMatch(/tako_available_data/);
+    expect(result.structuredContent).not.toHaveProperty("guidance");
   });
 
   it("a chart-less result references no ui resource at all", async () => {

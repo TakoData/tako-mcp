@@ -2000,7 +2000,7 @@ Annotations:
       "description": "Cost-plus usage for this request (null when not metered)."
     },
     "guidance": {
-      "description": "Zero-card verdict and next action, or how a keyless caller unlocks a placeholder card.",
+      "description": "How a keyless caller unlocks a placeholder card.",
       "type": "string"
     },
     "metric_definitions": {
@@ -2184,10 +2184,6 @@ The chart-widget fields are declared only here; the widget reads them from `wind
         }
       ],
       "description": "Cost-plus usage for this request (null when not metered)."
-    },
-    "guidance": {
-      "description": "Zero-card verdict and next action, or how a keyless caller unlocks a placeholder card.",
-      "type": "string"
     },
     "metric_definitions": {
       "description": "What each metric means (unit, basis, caveats), keyed by metric name, deduped across cards.",
@@ -2926,7 +2922,7 @@ Annotations:
       "description": "Cost-plus usage for this request (null when not metered)."
     },
     "guidance": {
-      "description": "Zero-card verdict and next action, or how a keyless caller unlocks a placeholder card.",
+      "description": "Why a `strict: true` pin returned no cards.",
       "type": "string"
     },
     "metric_definitions": {
