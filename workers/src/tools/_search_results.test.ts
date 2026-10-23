@@ -193,9 +193,8 @@ describe("buildSearchOutput — zero-card guidance", () => {
 
   it("attaches the full anti-retry protocol when cards AND web_results are both empty", () => {
     const out = buildSearchOutput([], [], "req-1", null, ENV, ["data", "web"], false, "authenticated", OPTS);
-    // The load-bearing instruction: rewording does not converge and costs money.
+    // The load-bearing instruction: rewording does not converge.
     expect(out.guidance).toMatch(/rewording alone will not change that/i);
-    expect(out.guidance).toMatch(/every retry is priced/i);
     expect(out.guidance).toMatch(/tako_available_data/);
   });
 
@@ -306,7 +305,7 @@ describe("buildSearchOutput — zero-card guidance", () => {
     // by the verdict it is the only one to state.
     const out = buildSearchOutput([], [], "req-6", null, ENV, ["data"], false, "authenticated", OPTS);
     expect(out.guidance).toMatch(/tako_available_data/);
-    expect(out.guidance).toMatch(/every retry is priced/i);
+    expect(out.guidance).toMatch(/query shape is off/i);
   });
 
   it("omits guidance when any card is present", () => {

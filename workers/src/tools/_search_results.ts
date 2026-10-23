@@ -1443,7 +1443,7 @@ export function buildDataGapGuidance(
   // reads both learns one of them is wrong. `_search_results.test.ts` holds the
   // invariant across both branches, not the wording.
   return [
-    "Neither data cards nor web results ground this answer, so treat the metric as absent for this phrasing — rewording alone will not change that, and every retry is priced.",
+    "Neither data cards nor web results ground this answer, so treat the metric as absent for this phrasing — rewording alone will not change that.",
     coverage
       ? "Confirm coverage once with tako_available_data and re-ask on the canonical name it returns, or try one genuinely narrower web question — one entity, provider or site — then answer from another source."
       : "Try one genuinely narrower web question — one entity, provider or site — then answer from another source.",
@@ -1574,7 +1574,7 @@ function buildZeroResultGuidance(
         ? "Make at most one reshaped retry (one metric per query; bare domains for website traffic), then answer from other sources — the coverage check, tako_available_data, needs a signed-in connection."
         : `Make at most one reshaped retry (one metric per query; bare domains for website traffic)${narrowerWeb}, then answer from other sources.`;
   return [
-    "No results: either the query shape is off or Tako does not cover this — rewording alone will not change that, and every retry is priced.",
+    "No results: either the query shape is off or Tako does not cover this — rewording alone will not change that.",
     action,
   ].join(" ");
 }
