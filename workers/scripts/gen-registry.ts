@@ -29,7 +29,7 @@ import {
   PLURAL_UNQUALIFIED,
 } from "../src/tools/_pin_form_rules.js";
 import {
-  SERVER_INSTRUCTIONS,
+  serverInstructionsFor,
 } from "../src/instructions.js";
 import {
   FREE_TIER_TOOL_NAMES,
@@ -1039,7 +1039,8 @@ export function buildToolSamples(modules: ReadonlyArray<ToolModule>): Map<string
 export interface ToolsDocInput {
   modules: ReadonlyArray<ToolModule>;
   registryTools: ReadonlyArray<RegistryTool>;
-  instructions: string;
+  /** The `initialize` instructions a connection gets for the tools it registers. */
+  instructionsFor: (registered: ReadonlySet<string>) => string;
   freeTierToolNames: ReadonlySet<string>;
   /** Generated sample results (see `buildToolSamples`); tools without an
    *  entry render schemas only. */
@@ -1139,7 +1140,7 @@ export function buildToolsDoc(input: ToolsDocInput): string {
     // One string for every tier: the host loads it once at `initialize`,
     // so a per-tier variant would outlive a mid-conversation sign-in (see
     // `instructions.ts`). Anonymous connections differ only at dispatch.
-    out.push("", "Server instructions:", "", "```text", input.instructions, "```", "");
+    out.push("", "Server instructions:", "", "```text", input.instructionsFor(listed), "```", "");
   }
 
   out.push("## Tools", "");
@@ -1469,7 +1470,7 @@ interface ChatgptSnapshot {
 }
 
 const SNAPSHOT_NOTE =
-  "The description, input schema and chatgpt-surface output schema of every tool on the fixed /mcp/chatgpt surface, as last ACCEPTED here. OpenAI snapshots that text at submission and does not update it live, so this file equals OpenAI's copy only after a resubmission — between submissions it is what we intend to submit next. registry:check fails on any drift. Accept a deliberate change with: npm run registry:gen -- --accept-chatgpt-snapshot";
+  "The description, input schema and chatgpt-surface output schema of every tool on the fixed /mcp/chatgpt surface, as last ACCEPTED here. OpenAI rescans /mcp/chatgpt daily and updates each tool after its automated checks pass, so an accepted change reaches ChatGPT users with the next production deploy. registry:check fails on any drift. Accept a deliberate change with: npm run registry:gen -- --accept-chatgpt-snapshot";
 
 /** The snapshot for the tools on the fixed chatgpt surface, serialized. */
 export function buildChatgptSnapshot(
@@ -1544,7 +1545,7 @@ export function assertChatgptSnapshot(
     throw new Error(
       `chatgpt-app-snapshot.json drift — a reviewed ChatGPT tool changed:\n  ${problems.join(
         "\n  ",
-      )}\nOpenAI's copy is fixed at whatever was last SUBMITTED, so a change here reaches ChatGPT users only at the next resubmission. If the change is intended, accept it: npm run registry:gen -- --accept-chatgpt-snapshot — and make sure the app is resubmitted before this text is relied on. Do NOT resubmit just to clear this check: an intermediate PR may deliberately change a reviewed tool ahead of one later submission.`,
+      )}\nOpenAI rescans /mcp/chatgpt daily and updates each tool after its automated checks pass, so this change reaches ChatGPT users with the next production deploy. If the change is intended, accept it: npm run registry:gen -- --accept-chatgpt-snapshot`,
     );
   }
 }
@@ -1906,11 +1907,14 @@ async function main(): Promise<void> {
   );
   // The prose-budget gate runs in BOTH modes: an over-budget string fails
   // registry:check in CI the same way it fails a local registry:gen.
-  assertProseBudget(modules.map((m) => m.tool), registryTools, SERVER_INSTRUCTIONS);
+  const longestServableInstructions = serverInstructionsFor(
+    new Set(modules.map((m) => m.tool.name)),
+  );
+  assertProseBudget(modules.map((m) => m.tool), registryTools, longestServableInstructions);
   const toolsDoc = buildToolsDoc({
     modules: modules.map((m) => m.tool),
     registryTools,
-    instructions: SERVER_INSTRUCTIONS,
+    instructionsFor: serverInstructionsFor,
     freeTierToolNames: FREE_TIER_TOOL_NAMES,
     samples: buildToolSamples(modules.map((m) => m.tool)),
   });

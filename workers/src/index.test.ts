@@ -473,7 +473,9 @@ describe("worker routing", () => {
     // The ChatGPT surface = exactly the tools chatgpt-app-submission.json
     // declares. It is fixed (spec D2): `?tools=` cannot change it.
     expect(body.result.tools.map((t) => t.name).sort()).toEqual([
+      "tako_agent",
       "tako_available_data",
+      "tako_company_agent",
       "tako_contents",
       "tako_graph_related",
       "tako_search",
@@ -636,7 +638,7 @@ describe("worker routing", () => {
     expect(visualize?.annotations.openWorldHint).toBe(false);
   });
 
-  it("POST /mcp/chatgpt lists the fixed five-tool snapshot", async () => {
+  it("POST /mcp/chatgpt lists the fixed seven-tool snapshot", async () => {
     const res = await SELF.fetch("https://example.com/mcp/chatgpt", {
       method: "POST",
       headers: {
@@ -666,10 +668,11 @@ describe("worker routing", () => {
       };
     };
     const names = new Set(body.result.tools.map((t) => t.name));
-    // The chatgpt listing is FIXED (spec D2): the five submitted tools, and
+    // The chatgpt listing is FIXED (spec D2): the seven submitted tools, and
     // no tool a caller could otherwise name in `?tools=`.
-    expect(names.has("tako_agent")).toBe(false);
     expect(names.has("tako_search_advanced")).toBe(false);
+    expect(names.has("tako_agent")).toBe(true);
+    expect(names.has("tako_company_agent")).toBe(true);
     expect(names.has("tako_search")).toBe(true);
     expect(names.has("tako_available_data")).toBe(true);
     expect(names.has("tako_contents")).toBe(true);
@@ -677,12 +680,14 @@ describe("worker routing", () => {
     // `tako_visualize` is listed here and nowhere else by default — the
     // chatgpt host is the one that renders its widget inline.
     expect(names.has("tako_visualize")).toBe(true);
-    expect(body.result.tools).toHaveLength(5);
+    expect(body.result.tools).toHaveLength(7);
 
     // Apps review readings: `tako_visualize` publishes a permanent public
-    // card nothing can delete (a write, destructive, open-world); every
-    // other tool is open-world unless `_surface.ts` lists it as reading
-    // Tako's own graph only.
+    // card nothing can delete (a write, destructive, open-world); the agent
+    // tools queue a run (a write, not destructive); every other tool is
+    // open-world unless `_surface.ts` lists it as reading Tako's own graph
+    // only.
+    const writes = new Set(["tako_visualize", "tako_agent", "tako_company_agent"]);
     for (const tool of body.result.tools) {
       expect(tool.annotations.destructiveHint, tool.name).toBe(
         tool.name === "tako_visualize",
@@ -690,9 +695,7 @@ describe("worker routing", () => {
       expect(tool.annotations.openWorldHint, tool.name).toBe(
         !CHATGPT_CLOSED_WORLD_TOOLS.has(tool.name),
       );
-      expect(tool.annotations.readOnlyHint, tool.name).toBe(
-        tool.name !== "tako_visualize",
-      );
+      expect(tool.annotations.readOnlyHint, tool.name).toBe(!writes.has(tool.name));
     }
 
     // The widget ships on ChatGPT (and Claude — see the claude tools/list
@@ -730,7 +733,9 @@ describe("worker routing", () => {
     // Spec D2: OpenAI snapshots the listing at submission, so the surface is
     // constant per request. Naming other tools changes nothing.
     const expected = [
+      "tako_agent",
       "tako_available_data",
+      "tako_company_agent",
       "tako_contents",
       "tako_graph_related",
       "tako_search",
@@ -738,7 +743,7 @@ describe("worker routing", () => {
     ];
     expect(await listToolNames("https://example.com/mcp/chatgpt")).toEqual(expected);
     expect(
-      await listToolNames("https://example.com/mcp/chatgpt?tools=agent,search_advanced"),
+      await listToolNames("https://example.com/mcp/chatgpt?tools=search_advanced"),
     ).toEqual(expected);
   });
 

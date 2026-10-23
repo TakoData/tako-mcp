@@ -18,6 +18,7 @@ import type { Env } from "./env.js";
 import { FREE_TIER_TOOL_NAMES, resolveToolSet } from "./tools/_surface.js";
 import {
   SERVER_INSTRUCTIONS,
+  serverInstructionsFor,
 } from "./instructions.js";
 import { GENERIC_SIGN_IN_HINT } from "./tools/_shared_prose.js";
 import {
@@ -41,6 +42,7 @@ import { TOOL_REGISTRY } from "./tools/_registry.js";
 import { projectRunningRun } from "./tools/_agent_run.js";
 import { PROGRESS_MIN_INTERVAL_MS } from "./tools/_agent_wait.js";
 import takoAgent from "./tools/tako_agent.js";
+import takoCompanyAgent from "./tools/tako_company_agent.js";
 import {
   CHATGPT_CLOSED_WORLD_TOOLS,
   toolAnnotationsForSurface,
@@ -108,7 +110,7 @@ describe("toolAnnotationsForSurface", () => {
         name,
       ).toBe(true);
     }
-    for (const name of ["tako_visualize", "tako_agent"]) {
+    for (const name of ["tako_visualize", "tako_agent", "tako_company_agent"]) {
       expect(
         toolAnnotationsForSurface(
           TOOL_REGISTRY.find((tool) => tool.name === name)!,
@@ -901,9 +903,11 @@ describe("free-tier tool surface", () => {
     ).resolves.toEqual(expected);
   });
 
-  it("the chatgpt surface serves the fixed five-tool set", async () => {
+  it("the chatgpt surface serves the fixed seven-tool set", async () => {
     await expect(listToolNames({ surface: "chatgpt" })).resolves.toEqual([
+      "tako_agent",
       "tako_available_data",
+      "tako_company_agent",
       "tako_contents",
       "tako_graph_related",
       "tako_search",
@@ -1578,10 +1582,25 @@ describe("paymentRequiredToolResult", () => {
   });
 });
 
-describe("SERVER_INSTRUCTIONS", () => {
+const SHARED_DEFAULT_ROUTING_TOOLS = ["tako_search", "tako_available_data", "tako_contents"];
+
+const DEFAULT_ROUTING_TOOLS_BY_SURFACE: ReadonlyArray<{
+  surface: Surface;
+  routingTools: readonly string[];
+}> = [
+  { surface: "generic", routingTools: SHARED_DEFAULT_ROUTING_TOOLS },
+  {
+    surface: "chatgpt",
+    routingTools: [...SHARED_DEFAULT_ROUTING_TOOLS, "tako_agent", "tako_company_agent"],
+  },
+];
+
+describe.each(DEFAULT_ROUTING_TOOLS_BY_SURFACE)("$surface default instructions", ({ surface, routingTools }) => {
+  const instructions = serverInstructionsFor(resolveToolSet(surface, null));
+
   it("names every DEFAULT-surface tool an agent must choose between — and no opt-in tool", () => {
-    for (const tool of ["tako_search", "tako_available_data", "tako_contents"]) {
-      expect(SERVER_INSTRUCTIONS).toContain(tool);
+    for (const tool of routingTools) {
+      expect(instructions).toContain(tool);
     }
     // The "and no opt-in tool" half is NOT asserted here. Naming one name by
     // hand is the defect `tools/phantom_tool.test.ts` exists to remove; it
@@ -1596,7 +1615,7 @@ describe("SERVER_INSTRUCTIONS", () => {
     // them, so the anonymous text outlived the state it described and
     // suppressed the tool sign-in had just unlocked. The dispatch gate's
     // `authRequiredToolResult` is the one place this claim is allowed.
-    expect(SERVER_INSTRUCTIONS).not.toMatch(TIER_CLAIM);
+    expect(instructions).not.toMatch(TIER_CLAIM);
   });
 
   // The instructions sit ABOVE the tool descriptions in the host's system
@@ -1635,7 +1654,7 @@ describe("SERVER_INSTRUCTIONS", () => {
   //                     reads an obligation and then reads the tool denying it.
   //                     That is what this test exists to catch.
   it("does not oblige a free-tool call the tool's own description denies", () => {
-    const freeToolLine = SERVER_INSTRUCTIONS.split("\n").find((l) =>
+    const freeToolLine = instructions.split("\n").find((l) =>
       l.includes("`tako_available_data`"),
     );
     expect(freeToolLine).toBeDefined();
@@ -1678,9 +1697,9 @@ describe("SERVER_INSTRUCTIONS", () => {
   // them. `_pin_form.test.ts` still guarantees the form is stated correctly
   // everywhere it does belong.
   it("keeps per-tool call mechanics OUT — no pin recipe at server level", () => {
-    expect(SERVER_INSTRUCTIONS).not.toMatch(/strict/i);
-    expect(SERVER_INSTRUCTIONS).not.toMatch(/node[_ ]?ids?/i);
-    expect(SERVER_INSTRUCTIONS).not.toMatch(/METRIC node/i);
+    expect(instructions).not.toMatch(/strict/i);
+    expect(instructions).not.toMatch(/node[_ ]?ids?/i);
+    expect(instructions).not.toMatch(/METRIC node/i);
   });
 
   // The discovery trigger. On a host with several servers connected this is
@@ -1690,7 +1709,7 @@ describe("SERVER_INSTRUCTIONS", () => {
   // here to lose.
   it("keeps the domain list that makes the server discoverable", () => {
     for (const domain of ["finance", "economics", "website/app traffic", "elections"]) {
-      expect(SERVER_INSTRUCTIONS).toContain(domain);
+      expect(instructions).toContain(domain);
     }
   });
 
@@ -1704,8 +1723,8 @@ describe("SERVER_INSTRUCTIONS", () => {
   // trailing clause. Assert both jobs by MEANING, not by example strings —
   // the argument examples live in the tool's own description now.
   it("names both of tako_available_data's jobs — coverage AND name resolution", () => {
-    expect(SERVER_INSTRUCTIONS).toMatch(/what data Tako has/i);
-    expect(SERVER_INSTRUCTIONS).toMatch(/canonical name/i);
+    expect(instructions).toMatch(/what data Tako has/i);
+    expect(instructions).toMatch(/canonical name/i);
   });
 
   // Parameter-shaped guidance (argument examples, the q+metric split, response
@@ -1713,8 +1732,8 @@ describe("SERVER_INSTRUCTIONS", () => {
   // takes it, read at the moment it applies. Duplicating it here bought a
   // second copy the model pays for on every request, Tako-bound or not.
   it("carries no argument-level examples — those live in the descriptions", () => {
-    expect(SERVER_INSTRUCTIONS).not.toMatch(/`q="/);
-    expect(SERVER_INSTRUCTIONS).not.toMatch(/`metric="/);
+    expect(instructions).not.toMatch(/`q="/);
+    expect(instructions).not.toMatch(/`metric="/);
   });
 
   // Register check. "is free and does two jobs" spends the highest-value
@@ -1722,7 +1741,7 @@ describe("SERVER_INSTRUCTIONS", () => {
   // hosted MCP (836 chars across 2 tools, no instructions at all) never does
   // this: one imperative per line, no meta-commentary.
   it("states what to do, not what the tools 'do'", () => {
-    expect(SERVER_INSTRUCTIONS).not.toMatch(/does two jobs/i);
+    expect(instructions).not.toMatch(/does two jobs/i);
   });
 
   it("stays short enough to sit in a system prompt", () => {
@@ -1733,7 +1752,7 @@ describe("SERVER_INSTRUCTIONS", () => {
     // across 2 tools and no instructions at all (mcp.exa.ai, 2026-07-31).
     // Tako needs more than Exa (4+ tools, non-obvious routing, coverage a
     // model cannot guess) but the gap should be justified per sentence.
-    expect(SERVER_INSTRUCTIONS.length).toBeLessThan(1600);
+    expect(instructions.length).toBeLessThan(1600);
   });
 });
 
@@ -2294,6 +2313,44 @@ describe("agent tool calls over SSE", () => {
     await vi.waitFor(() => expect(closeSpy).toHaveBeenCalledTimes(1));
   });
 
+  it("answers an agent tools/call on /mcp/chatgpt as buffered JSON", async () => {
+    const COMPANY_RUNNING = projectRunningRun({
+      toolName: "tako_company_agent",
+      publicRunId: "company_run_abc",
+      elapsedS: 45,
+    });
+    vi.spyOn(takoCompanyAgent, "handler").mockResolvedValue(COMPANY_RUNNING);
+
+    const res = await worker.fetch(
+      mcpPost("/mcp/chatgpt", toolsCall("tako_company_agent", { progressToken: "p1" })),
+      env,
+    );
+
+    expect(res.headers.get("content-type")).toContain("application/json");
+    const body = (await res.json()) as SseMessage;
+    expect(body.id).toBe(1);
+    expect(body.result?.structuredContent).toEqual(COMPANY_RUNNING);
+  });
+
+  it("aborts ctx.signal on /mcp/chatgpt when the request's own signal aborts", async () => {
+    const { contexts } = stubAgentHandler(async (ctx) => {
+      await untilAborted(ctx.signal);
+    });
+    const clientGone = new AbortController();
+
+    const pending = worker.fetch(
+      mcpPost("/mcp/chatgpt", toolsCall("tako_agent"), { signal: clientGone.signal }),
+      env,
+    );
+    await vi.waitFor(() => expect(contexts).toHaveLength(1));
+    clientGone.abort();
+
+    const res = await pending;
+    expect(contexts[0]?.signal?.aborted).toBe(true);
+    expect(res.headers.get("content-type")).toContain("application/json");
+    expect(((await res.json()) as SseMessage).result?.structuredContent).toEqual(RUNNING);
+  });
+
   it("relays a backend status event from a real agent run as a progress notification", async () => {
     vi.useFakeTimers();
     try {
@@ -2432,8 +2489,8 @@ describe("agent tool calls over SSE", () => {
   });
 
   it("keeps JSON for an agent tool the connection didn't register", async () => {
-    const chatgpt = await worker.fetch(
-      mcpPost("/mcp/chatgpt", toolsCall("tako_agent", { progressToken: "p1" })),
+    const agentNotOptedIn = await worker.fetch(
+      mcpPost("/mcp?tools=search", toolsCall("tako_agent", { progressToken: "p1" })),
       env,
     );
     const companyNotOptedIn = await worker.fetch(
@@ -2441,7 +2498,7 @@ describe("agent tool calls over SSE", () => {
       env,
     );
 
-    for (const res of [chatgpt, companyNotOptedIn]) {
+    for (const res of [agentNotOptedIn, companyNotOptedIn]) {
       expect(res.headers.get("content-type")).toContain("application/json");
       const body = (await res.json()) as { result?: { isError?: unknown } };
       expect(body.result?.isError).toBe(true);

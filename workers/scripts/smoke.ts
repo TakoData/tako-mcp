@@ -214,7 +214,9 @@ const rpc = (id: number, method: string, params: Record<string, unknown>) =>
   const tools = body.result?.tools ?? [];
   const names = tools.map((t) => t.name).sort();
   const CHATGPT_EXPECTED = [
+    "tako_agent",
     "tako_available_data",
+    "tako_company_agent",
     "tako_contents",
     "tako_graph_related",
     "tako_search",
@@ -222,7 +224,7 @@ const rpc = (id: number, method: string, params: Record<string, unknown>) =>
   ];
   assert(
     names.join(",") === CHATGPT_EXPECTED.join(","),
-    `/mcp/chatgpt listing is not the submitted five tools (got: ${names.join(", ")})`,
+    `/mcp/chatgpt listing is not the submitted seven tools (got: ${names.join(", ")})`,
   );
   for (const t of tools) {
     assert(

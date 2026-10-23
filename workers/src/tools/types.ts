@@ -46,9 +46,9 @@ export interface ToolContext {
    * timeout indefinitely as long as it keeps emitting progress.
    *
    * Only a tool that declares `streamsProgress` delivers progress: `mcp.ts`
-   * answers its calls over SSE. Every other request gets a buffered JSON
-   * response, where the transport drops request-scoped notifications, so
-   * progress from any other tool reaches no client.
+   * answers its calls over SSE on the generic surface. Every other request
+   * gets a buffered JSON response, where the transport drops request-scoped
+   * notifications, so progress from any other tool reaches no client.
    *
    * No-op when the request did not carry a progressToken (the client
    * isn't asking for progress, so we don't send any). No-op when the
@@ -72,7 +72,7 @@ export interface ToolContext {
    * `embed_url` directly and never reads the baked-in image), and
    * `mcp.ts` uses it to gate which tools each surface lists — the
    * chatgpt surface serves a fixed set (`CHATGPT_TOOL_NAMES` in
-   * `_surface.ts`) that leaves out `tako_agent` and `tako_search_advanced`.
+   * `_surface.ts`) that leaves out `tako_search_advanced`.
    *
    * NB: this is a server-instance-level value (set from the request
    * path at server creation), NOT a per-request flag.
@@ -425,8 +425,9 @@ export interface ToolModule<
   /** Request fields sent with a constant value — see {@link FixedInput}. */
   fixedInputs?: ReadonlyArray<FixedInput>;
   /**
-   * Answer this tool's calls over SSE so `ctx.sendProgress` reaches the
-   * client. Every other tool's calls get a buffered JSON response.
+   * Answer this tool's calls over SSE on the generic surface so
+   * `ctx.sendProgress` reaches the client. The chatgpt surface, and every
+   * other tool's calls, get a buffered JSON response.
    */
   streamsProgress?: true;
   /**

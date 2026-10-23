@@ -9,8 +9,8 @@
  * `run_id`. Send that `run_id` instead of `query` to keep waiting. The Worker
  * never cancels a run.
  *
- * This is opt-in on the generic surface only: name `agent` in `?tools=`. It is
- * off the chatgpt surface (`CHATGPT_TOOL_NAMES` in `_surface.ts`).
+ * On the generic surface this is opt-in: name `agent` in `?tools=`. The
+ * chatgpt surface always lists it (`CHATGPT_TOOL_NAMES` in `_surface.ts`).
  *
  * PRODUCT: this tool wraps the Answer Agent (cited prose + cards), and
  * `tako_company_agent` wraps the Company Agent. MCP doesn't expose the
@@ -24,7 +24,7 @@ import { z } from "zod";
 import { AnswerAgentRunRequest } from "../generated/schemas.js";
 import {
   AGENT_CALL_WINDOW_FIXED_INPUT,
-  AGENT_CALL_WINDOW_SENTENCE,
+  AGENT_DESCRIPTION_LAST_LINE,
   agentQueryInput,
   agentThreadIdInput,
   runAgentCall,
@@ -41,7 +41,7 @@ const DESCRIPTION = [
   "",
   "Best for metric-driven research: ranking or screening by financial or economic metrics, multi-step aggregation, multi-hop reasoning. Also the fallback when `tako_search` finds nothing. Not for a known value or a two-entity comparison — `tako_search` answers those in one round trip.",
   "",
-  AGENT_CALL_WINDOW_SENTENCE,
+  AGENT_DESCRIPTION_LAST_LINE,
 ].join("\n");
 
 export const inputSchema = z.object({
@@ -121,9 +121,8 @@ const takoAgent = {
     idempotentHint: false,
     // Open-world on EVERY surface: the run searches the live public web, a
     // system outside Tako's first-party context, under MCP's reading and
-    // under OpenAI's Apps review guideline alike. Off the chatgpt surface
-    // today (`CHATGPT_TOOL_NAMES`); the annotation is per-tool regardless.
-    // See `annotationsBySurface` in types.ts.
+    // under OpenAI's Apps review guideline alike, so it needs no chatgpt
+    // override. See `annotationsBySurface` in types.ts.
     openWorldHint: true,
   },
   fixedInputs: [AGENT_CALL_WINDOW_FIXED_INPUT],

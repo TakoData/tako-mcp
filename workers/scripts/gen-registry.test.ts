@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { z } from "zod";
 
 import { TOOL_REGISTRY } from "../src/tools/_registry.js";
+import { CHATGPT_TOOL_NAMES, GENERIC_DEFAULT_TOOL_NAMES } from "../src/tools/_surface.js";
 import type { ToolModule } from "../src/tools/types.js";
 import {
   diffRegistryParameters,
@@ -363,7 +364,7 @@ describe("assertChatgptSnapshot", () => {
     const snapshot = buildChatgptSnapshot([search, ...others]);
     const edited = { ...search, description: "Search, now with more words." };
     expect(() => assertChatgptSnapshot([edited, ...others], snapshot)).toThrow(
-      /tako_search.*description.*resubmit/is,
+      /tako_search.*description.*production deploy/is,
     );
   });
 
@@ -375,8 +376,8 @@ describe("assertChatgptSnapshot", () => {
 
   it("ignores tools that are not on the chatgpt surface", () => {
     const snapshot = buildChatgptSnapshot([search, ...others]);
-    const agent = { name: "tako_agent", description: "x", inputSchema: z.object({}) };
-    expect(() => assertChatgptSnapshot([search, ...others, agent], snapshot)).not.toThrow();
+    const advanced = { name: "tako_search_advanced", description: "x", inputSchema: z.object({}) };
+    expect(() => assertChatgptSnapshot([search, ...others, advanced], snapshot)).not.toThrow();
   });
 });
 
@@ -412,7 +413,7 @@ describe("buildToolsDoc", () => {
         : { query: { type: "string", required: true } },
       annotations: m.annotations,
     })),
-    instructions: "INSTRUCTIONS TEXT",
+    instructionsFor: (registered) => `INSTRUCTIONS FOR ${[...registered].sort().join(",")}`,
     freeTierToolNames: new Set(["tako_search"]),
   });
 
@@ -451,10 +452,13 @@ describe("buildToolsDoc", () => {
     expect(doc).toContain("Runs anonymously (on `/mcp`): yes"); // tako_search is free-tier
   });
 
-  it("includes the instructions verbatim", () => {
+  it("renders each surface's instructions from that surface's default listing", () => {
     // One string for every tier — see `instructions.ts` for why there is
     // no anonymous variant to render.
-    expect(doc).toContain("INSTRUCTIONS TEXT");
+    const generic = doc.slice(doc.indexOf("## `/mcp` "), doc.indexOf("## `/mcp/chatgpt`"));
+    const chatgpt = doc.slice(doc.indexOf("## `/mcp/chatgpt`"), doc.indexOf("## Tools"));
+    expect(generic).toContain(`INSTRUCTIONS FOR ${[...GENERIC_DEFAULT_TOOL_NAMES].sort().join(",")}`);
+    expect(chatgpt).toContain(`INSTRUCTIONS FOR ${[...CHATGPT_TOOL_NAMES].sort().join(",")}`);
   });
 });
 

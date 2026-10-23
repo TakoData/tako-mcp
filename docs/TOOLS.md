@@ -38,7 +38,9 @@ Tako searches the web and a proprietary knowledge graph of live structured data 
 
 Default listing:
 
+- `tako_agent`
 - `tako_available_data`
+- `tako_company_agent`
 - `tako_contents`
 - `tako_graph_related`
 - `tako_search`
@@ -49,7 +51,7 @@ Server instructions:
 ```text
 Tako searches the web and a proprietary knowledge graph of live structured data in the same call. Default sources are data + web, so one call answers a question that mixes a figure with context. Coverage includes finance, markets, company KPIs, economics, website/app traffic, sports, weather, elections, prediction markets, demographics, energy, real estate, health, and more.
 
-`tako_search` finds cards and web links. `tako_contents` fetches a url in full: a web page returns its text, and an exportable Tako card returns its data rows. `tako_available_data` answers what data Tako has on an entity or metric, including a metric's canonical name. `tako_graph_related` lists a node's related metrics, entities, competitors, and sources.
+`tako_search` finds cards and web links. `tako_contents` fetches a url in full: a web page returns its text, and an exportable Tako card returns its data rows. `tako_available_data` answers what data Tako has on an entity or metric, including a metric's canonical name. `tako_graph_related` lists a node's related metrics, entities, competitors, and sources. Use `tako_company_agent` for a list of companies or people, such as a registry screen, and `tako_agent` for a ranking, trend, or aggregate of metrics.
 ```
 
 ## Tools
@@ -58,7 +60,7 @@ Tako searches the web and a proprietary knowledge graph of live structured data 
 
 **Tako: Answer Agent**
 
-- Listed by default on: none (opt-in on `/mcp`)
+- Listed by default on: `/mcp/chatgpt`
 - Runs anonymously (on `/mcp`): no (answers with sign-in instructions)
 
 Description:
@@ -67,7 +69,7 @@ Run Tako's Answer Agent on a question that needs research rather than a lookup. 
 
 Best for metric-driven research: ranking or screening by financial or economic metrics, multi-step aggregation, multi-hop reasoning. Also the fallback when `tako_search` finds nothing. Not for a known value or a two-entity comparison — `tako_search` answers those in one round trip.
 
-A call returns within 45 s. If `status` is `running`, call again with `run_id`; don't start a new run.
+A call returns within 45 s. If `status` is `running`, call again with `run_id`; don't start a new run. In your reply, link each card's `url`; the full list or chart lives on that page.
 
 Parameters:
 
@@ -869,7 +871,7 @@ tako_search: Carnival, Inc. Revenues
 
 **Tako: Company Agent**
 
-- Listed by default on: none (opt-in on `/mcp`)
+- Listed by default on: `/mcp/chatgpt`
 - Runs anonymously (on `/mcp`): no (answers with sign-in instructions)
 
 Description:
@@ -878,7 +880,7 @@ Run Tako's Company Agent on a question about which companies or people match reg
 
 Best for: screening companies by status, incorporation date, registered location, or industry; resolving named companies; finding a company's officers and directors. At `medium` and `high` effort it can also filter by financial metrics such as revenue or headcount.
 
-A call returns within 45 s. If `status` is `running`, call again with `run_id`; don't start a new run.
+A call returns within 45 s. If `status` is `running`, call again with `run_id`; don't start a new run. In your reply, link each card's `url`; the full list or chart lives on that page.
 
 Parameters:
 

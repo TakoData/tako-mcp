@@ -4,7 +4,7 @@
   "app_info": {
     "display_name": "Tako",
     "subtitle": "Search live data and charts",
-    "description": "Tako helps users find current data and metrics from proprietary datasets and the live web as citation-backed charts, retrieve the underlying result content, check available data coverage, and create shareable public chart links from user-provided structured data.",
+    "description": "Tako helps users find current data and metrics from proprietary datasets and the live web as citation-backed charts, retrieve the underlying result content, check available data coverage, answer multi-step research, company, and registry-officer questions with Tako's agents, and create shareable public chart links from user-provided structured data.",
     "category": "PRODUCTIVITY"
   },
   "tools": {
@@ -77,6 +77,34 @@
         "destructive_justification": "Read-only: deletes, overwrites, sends, and publishes nothing, so there is no outcome to undo.",
         "idempotent_justification": "Repeating the same lookup returns the same related nodes and changes nothing; no additional effect on any state."
       }
+    },
+    "tako_agent": {
+      "annotations": {
+        "readOnlyHint": false,
+        "openWorldHint": true,
+        "destructiveHint": false,
+        "idempotentHint": false
+      },
+      "justifications": {
+        "read_only_justification": "A call with a query starts a queued agent run that the user can return to later by its run ID and thread ID. The run saves the charts and lists it builds as new Tako cards, each with its own URL.",
+        "open_world_justification": "The run searches the live public web, a system outside Tako's first-party context. Anyone with the link can open the cards it saves, without signing in.",
+        "destructive_justification": "A call adds a run and new cards. It deletes, overwrites, and sends nothing, and changes no existing record. The cards hold Tako and public web data, not data the user supplied, the same as the cards tako_search returns.",
+        "idempotent_justification": "A call with a query starts and bills a new run, so repeating it repeats the work. A call with a run ID only waits on an existing run and repeats nothing; the tool description tells the model to resume with the run ID instead of sending the query again."
+      }
+    },
+    "tako_company_agent": {
+      "annotations": {
+        "readOnlyHint": false,
+        "openWorldHint": true,
+        "destructiveHint": false,
+        "idempotentHint": false
+      },
+      "justifications": {
+        "read_only_justification": "A call with a query starts a queued agent run that the user can return to later by its run ID and thread ID. The run saves the charts and lists it builds as new Tako cards, each with its own URL.",
+        "open_world_justification": "The run searches the live public web, a system outside Tako's first-party context. Anyone with the link can open the cards it saves, without signing in.",
+        "destructive_justification": "A call adds a run and new cards. It deletes, overwrites, and sends nothing, and changes no existing record. The cards hold Tako and public web data, not data the user supplied, the same as the cards tako_search returns.",
+        "idempotent_justification": "A call with a query starts and bills a new run, so repeating it repeats the work. A call with a run ID only waits on an existing run and repeats nothing; the tool description tells the model to resume with the run ID instead of sending the query again."
+      }
     }
   },
   "test_cases": [
@@ -118,6 +146,38 @@
       "file_attachment_urls": null,
       "tools_triggered": "tako_graph_related",
       "expected_output": "Lists companies NVIDIA competes with and metrics Tako tracks for it, each with a count, from Tako's data graph. The model may resolve NVIDIA with tako_available_data first.",
+      "expected_output_url": null
+    },
+    {
+      "description": "Answer a multi-step research question with the Answer Agent.",
+      "user_prompt": "Using Tako, rank the five largest US semiconductor companies by revenue growth over the last three fiscal years, and explain what drove the leader.",
+      "file_attachment_urls": null,
+      "tools_triggered": "tako_agent",
+      "expected_output": "tako_agent returns a written answer with numbered citations and the chart cards it built. The reply ranks the companies, explains the leader's growth, and links each card's Tako page. If the first call returns status running, the model calls tako_agent again with the same run_id until the run finishes.",
+      "expected_output_url": null
+    },
+    {
+      "description": "Screen companies by registry facts with the Company Agent.",
+      "user_prompt": "Using Tako, find active UK software companies incorporated in 2024 and registered in Manchester.",
+      "file_attachment_urls": null,
+      "tools_triggered": "tako_company_agent",
+      "expected_output": "tako_company_agent returns a written answer with citations and a list card of matching companies. The reply summarizes the matches and links the card's Tako page, where the full list lives.",
+      "expected_output_url": null
+    },
+    {
+      "description": "Find a company's directors, with a run that outlasts one call.",
+      "user_prompt": "Using Tako's company agent at high effort, who are the current directors of Dyson Technology Limited?",
+      "file_attachment_urls": null,
+      "tools_triggered": "tako_company_agent",
+      "expected_output": "tako_company_agent starts a high-effort run and returns status running with a run_id; the model calls again with that run_id until the run finishes. If the model ends its turn first, it tells the user the run is still going, and when the user asks it to check again, it resumes the same run_id without starting a new run. The answer lists the company's current directors from the public company registry, with citations, and links the card's Tako page.",
+      "expected_output_url": null
+    },
+    {
+      "description": "Answer a single figure with search, not an agent.",
+      "user_prompt": "Using Tako, what's Apple's market cap?",
+      "file_attachment_urls": null,
+      "tools_triggered": "tako_search",
+      "expected_output": "tako_search returns Apple's current market capitalization with source attribution and a chart card. Neither tako_agent nor tako_company_agent is called.",
       "expected_output_url": null
     }
   ],

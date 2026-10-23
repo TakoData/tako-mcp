@@ -736,10 +736,10 @@ function registerTool(
       // the protocol forbids sending progress without one, so
       // `sendProgress` no-ops when it is absent.
       //
-      // Progress reaches the client only on an agent tool call, which
-      // `handleMcpRequest` answers over SSE. Every other request gets a
-      // buffered JSON response, and the transport drops request-scoped
-      // notifications there.
+      // Progress reaches the client only on an agent tool call on the
+      // generic surface, which `handleMcpRequest` answers over SSE. Every
+      // other request gets a buffered JSON response, and the transport
+      // drops request-scoped notifications there.
       const progressToken = (extra._meta as { progressToken?: string | number } | undefined)
         ?.progressToken;
       // Diagnostic only: `wrangler tail` shows which clients ask for
@@ -1482,10 +1482,11 @@ export function freeTierHiddenToolResponse(
  * and `initialize` requires auth.
  *
  * A call to a tool that declares `streamsProgress` (`streamingToolCallName`),
- * on a connection that registers that tool, gets an SSE response, so its
- * `notifications/progress` reach the client. Every other request runs with `enableJsonResponse: true`: one
- * buffered JSON-RPC body, in which the transport drops every request-scoped
- * notification.
+ * on a generic connection that registers that tool, gets an SSE response, so
+ * its `notifications/progress` reach the client. The chatgpt surface stays
+ * buffered: ChatGPT sends no `progressToken` and renders no progress. Every
+ * other request runs with `enableJsonResponse: true`: one buffered JSON-RPC
+ * body, in which the transport drops every request-scoped notification.
  */
 export async function handleMcpRequest(
   request: Request,
@@ -1673,7 +1674,9 @@ export async function handleMcpRequest(
     const registeredTools = resolveToolSet(surface, requestedToolNames);
     logToolInputRejections(peekedBody, registeredTools, surface);
     const streamingTool = streamingToolCallName(peekedBody);
-    const streamsProgress = streamingTool !== undefined && registeredTools.has(streamingTool);
+    const surfaceRendersProgress = surface !== "chatgpt";
+    const streamsProgress =
+      surfaceRendersProgress && streamingTool !== undefined && registeredTools.has(streamingTool);
     // Omitting `sessionIdGenerator` puts the transport in stateless mode — no
     // `Mcp-Session-Id` header is issued or validated. This matches the Worker
     // model (no persistent per-session state) and keeps each request

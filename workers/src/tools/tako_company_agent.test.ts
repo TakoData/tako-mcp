@@ -11,6 +11,7 @@ import { CHATGPT_TOOL_NAMES, GENERIC_DEFAULT_TOOL_NAMES, resolveToolSet } from "
 import { TOOL_REGISTRY } from "./_registry.js";
 import tool, { buildCompanyAgentBody } from "./tako_company_agent.js";
 import type { ToolContext } from "./types.js";
+import { AGENT_CARD_LINK_SENTENCE } from "./_agent_call.js";
 
 const encoder = new TextEncoder();
 const RUN = "run_1";
@@ -58,6 +59,10 @@ afterEach(() => {
 });
 
 describe("tako_company_agent", () => {
+  it("the description tells the model to link each card's url", () => {
+    expect(tool.description).toContain(AGENT_CARD_LINK_SENTENCE);
+  });
+
   it("posts to the company runs path with cards true and no effort when omitted", async () => {
     vi.mocked(djangoPost).mockResolvedValue({ run_id: RUN, thread_id: "t1" });
     completedStream();
@@ -126,7 +131,7 @@ describe("tako_company_agent", () => {
     expect(parsed.error?.issues.map((i) => i.message).join(" ")).toContain("tako_agent");
   });
 
-  it("is opt-in: listed only when ?tools= names company_agent, never on chatgpt", () => {
+  it("is opt-in on generic, where ?tools= must name company_agent, and always listed on chatgpt", () => {
     const known = new Set(TOOL_REGISTRY.map((t) => t.name));
     const requested = parseToolsParam("company_agent", known);
 
@@ -135,6 +140,6 @@ describe("tako_company_agent", () => {
     expect(resolveToolSet("generic", null).has("tako_company_agent")).toBe(false);
     expect(GENERIC_DEFAULT_TOOL_NAMES.has("tako_company_agent")).toBe(false);
     expect(resolveToolSet("chatgpt", requested)).toBe(CHATGPT_TOOL_NAMES);
-    expect(CHATGPT_TOOL_NAMES.has("tako_company_agent")).toBe(false);
+    expect(CHATGPT_TOOL_NAMES.has("tako_company_agent")).toBe(true);
   });
 });
