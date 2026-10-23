@@ -350,7 +350,7 @@ Two tools, one step apart — `tako_search` finds, `tako_contents` fetches:
 
 ## Agent Skills
 
-Two ready-to-use skills for Claude Code. `tako-search` teaches Claude when to look something up with Tako and how to report what it finds. `tako-agent` teaches Claude when a question needs one of Tako's research agents, which agent to call, and how to wait for its answer. Copy the block inside each dropdown and paste it into Claude Code — it sets up the connection and the skill for you. Both blocks set up the same connection, so you can install either one or both.
+Two ready-to-use skills for Claude Code. `tako-search` teaches Claude when to look something up with Tako and how to report what it finds. `tako-agent` teaches Claude to start one of Tako's research agents when you ask for one, which agent to call, and how to wait for its answer. Copy the block inside each dropdown and paste it into Claude Code — it sets up the connection and the skill for you. Both blocks set up the same connection, so you can install either one or both.
 
 The `tako-search` skill replaces the `tako-financial-research`, `tako-macroeconomics`, and `tako-web-traffic` skills. If you called one of them by name, such as `/tako:tako-financial-research`, call `/tako:tako-search` instead.
 
@@ -423,16 +423,16 @@ Step 2: Add this Claude skill
 ---
 name: tako-agent
 description: >-
-  Use when the user asks for research that a lookup can't answer: a ranking, screen, or total across a set of entities the question describes rather than names, a calculation across several metrics or periods, or a list of companies or people that match criteria. Tako's agents plan the steps, search the web, compute rankings, totals, and growth rates from licensed data, and return a cited answer with charts or lists. For a single figure or a comparison of named entities, use tako-search.
+  Use when the user explicitly asks for Tako's research agent or for deep, multi-step research with Tako, such as "use the Tako agent to…", "have Tako research…", or "use Tako to build a list of companies that…". Tako's agents plan the steps, search the web and licensed data, and return a cited answer with charts or lists. For any other question, use tako-search, even one that needs a ranking or a calculation.
 ---
 
 # Tako agents
 
-Tako's agents answer research questions that one search can't. An agent plans its own steps, searches the web and Tako's licensed data, computes what the question asks for, and returns a cited answer with charts or lists. All tools below live on the Tako MCP server installed in Step 1.
+Tako's agents run multi-step research. An agent plans its own steps, searches the web and Tako's licensed data, computes what the question asks for, and returns a cited answer with charts or lists. All tools below live on the Tako MCP server installed in Step 1.
 
-## When not to use an agent
+## When to use an agent
 
-If one `tako_search` call can answer the question, use `tako-search` instead. That covers a single figure, a series for one entity, and a comparison of entities the question names, such as "Nvidia vs AMD revenue since 2020". Don't start an agent for a task that needs no data, such as writing, editing, or explaining a concept.
+Start an agent only when the user asks for one: they name Tako's agent, ask for deep or multi-step research with Tako, or ask Tako to build a list of companies or people. Otherwise, use `tako-search`, even when the question needs a ranking, a trend, or a calculation. Don't start an agent for a task that needs no data, such as writing, editing, or explaining a concept.
 
 ## Choose the agent
 

@@ -27,10 +27,10 @@ because the same call already searched the web for it.
 | The values themselves | `tako_contents` on an `exportable: true` card's url | The card's rows, up to 2,000 |
 | To know whether *curated* data exists | `tako_available_data` | Coverage names and a `node_id` for `tako_graph_related` traversal. Graph only |
 | Full rows, or a web page's text | `tako_contents` | A card's data rows, or any url's extracted text (set `query` to a question to get only the passages that answer it). Needs a signed-in connection |
-| A list of companies or people that match criteria, even one ranked by a financial metric | `tako_company_agent` | A cited answer, plus list cards |
-| A ranking, trend, total, or calculation that isn't a list of companies or people | `tako_agent` | A cited answer, plus chart cards |
+| Tako's agent to build a list of companies or people, even one ranked by a financial metric | `tako_company_agent` | A cited answer, plus list cards |
+| Tako's agent to research a ranking, trend, total, or calculation that isn't a list of companies or people | `tako_agent` | A cited answer, plus chart cards |
 
-Both agents plan their own steps. While a run's `status` is `running`, call the same tool again with its `run_id` and no `query`.
+Start an agent only when the user asks for Tako's agent or for deep, multi-step research with Tako. Otherwise, use `tako_search`. Both agents plan their own steps. While a run's `status` is `running`, call the same tool again with its `run_id` and no `query`.
 
 `tako_search` hands you the evidence; you write the conclusion. (`include_answer: true` on the
 opt-in `tako_search_advanced` returns a prose answer instead — name `search_advanced` in the
