@@ -687,7 +687,7 @@ describe("tako_search never inlines rows", () => {
   });
 });
 
-describe("tako_search extraMeta chart_dims", () => {
+describe("tako_search extraMeta charts", () => {
   const pngBytes = (width: number, height: number): Uint8Array => {
     const bytes = new Uint8Array(64);
     const view = new DataView(bytes.buffer);
@@ -716,26 +716,31 @@ describe("tako_search extraMeta chart_dims", () => {
     }) as typeof fetch);
   };
 
-  it("extraMeta sends one dimension pair per chart on chatgpt", async () => {
+  it("extraMeta sends one entry per chart on chatgpt", async () => {
     stubPngFetch("card_b");
     const charts = [chartFor("card_a"), chartFor("card_b"), chartFor("card_c")];
     const meta = await tako_search.extraMeta!(
       { ...charts[0], charts } as never,
       { ...CTX, surface: "chatgpt" } as never,
     );
-    const dims = (meta as { chart_dims?: unknown[] }).chart_dims;
-    expect(dims).toHaveLength(3);
-    expect(dims?.[1]).toBeNull();
-    expect(dims?.[0]).toEqual({ image_natural_width: 2400, image_natural_height: 1100 });
+    const entries = (meta as { charts?: Record<string, unknown>[] }).charts;
+    expect(entries).toHaveLength(3);
+    expect(entries?.[1]).not.toHaveProperty("image_natural_width");
+    expect(entries?.[1]?.pub_id).toBe("card_b");
+    expect(entries?.[0]).toMatchObject({
+      pub_id: "card_a",
+      image_natural_width: 2400,
+      image_natural_height: 1100,
+    });
   });
 
-  it("extraMeta sends no chart_dims for a single chart", async () => {
+  it("extraMeta sends no charts for a single chart", async () => {
     stubPngFetch();
     const charts = [chartFor("card_a")];
     const meta = await tako_search.extraMeta!(
       { ...charts[0], charts } as never,
       { ...CTX, surface: "chatgpt" } as never,
     );
-    expect((meta as { chart_dims?: unknown } | undefined)?.chart_dims).toBeUndefined();
+    expect((meta as { charts?: unknown } | undefined)?.charts).toBeUndefined();
   });
 });

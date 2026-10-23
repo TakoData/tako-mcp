@@ -671,7 +671,7 @@ export const LEGACY_OUTPUT_SCHEMA_CEILINGS: Record<string, { generic: number; ch
   // `projectedCardShape` — a field this tool's handler can never fill, since it
   // passes `rowCap: null` on every call. Was 4,381/4,704 when the gate landed
   // 2026-08-31.
-  tako_search: { generic: 3245, chatgpt: 3846 },
+  tako_search: { generic: 3245, chatgpt: 3568 },
   // `tako_available_data` IS migrated — description 759/5 lines, max param
   // 181, every prose cap held — and still cannot reach 2,000, because its BARE
   // structure is 2,389 with every field description deleted. Measured cost per

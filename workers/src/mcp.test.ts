@@ -618,7 +618,8 @@ describe("chart render gates per surface", () => {
 
     const result = await callSearch("chatgpt");
 
-    const charts = result.structuredContent?.charts as { pub_id: string }[] | undefined;
+    expect(result.structuredContent?.charts).toBeUndefined();
+    const charts = result._meta?.charts as { pub_id: string }[] | undefined;
     expect(charts?.map((c) => c.pub_id)).toEqual(["c1", "c2"]);
   });
 
@@ -628,6 +629,7 @@ describe("chart render gates per surface", () => {
     const result = await callSearch("generic");
 
     expect(result.structuredContent?.charts).toBeUndefined();
+    expect(result._meta?.charts).toBeUndefined();
   });
 
   it("generic surface: no image block when the search returns zero cards", async () => {

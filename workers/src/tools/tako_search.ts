@@ -149,14 +149,13 @@ export function buildSearchBody(input: Input, tier: Tier): z.input<typeof Search
 }
 
 
-async function fetchChartDims(
-  charts: readonly CardChart[],
-): Promise<({ image_natural_width: number; image_natural_height: number } | null)[]> {
+async function fetchChartsMeta(charts: readonly CardChart[]): Promise<Record<string, unknown>[]> {
   return Promise.all(
-    charts.map(async ({ image_url }) => {
-      const dims = await fetchPngDimensions(image_url);
-      if (dims === undefined) return null;
+    charts.map(async (chart) => {
+      const dims = await fetchPngDimensions(chart.image_url);
+      if (dims === undefined) return { ...chart };
       return {
+        ...chart,
         image_natural_width: dims.naturalWidth,
         image_natural_height: dims.naturalHeight,
       };
@@ -242,7 +241,7 @@ const tako_search = {
     // schema now, so the loose base Output no longer types them.
     const o = output as SearchOutput;
     const charts = o.charts ?? [];
-    const [meta, chartDims] = await Promise.all([
+    const [meta, chartsMeta] = await Promise.all([
       buildChartExtraMeta(o.image_url, {
         bakeImage: ctx.surface !== "chatgpt",
         env: ctx.env,
@@ -250,11 +249,11 @@ const tako_search = {
         pubId: o.pub_id,
       }),
       ctx.surface === "chatgpt" && charts.length >= 2
-        ? fetchChartDims(charts)
+        ? fetchChartsMeta(charts)
         : undefined,
     ]);
-    if (chartDims === undefined) return meta;
-    return { ...meta, chart_dims: chartDims };
+    if (chartsMeta === undefined) return meta;
+    return { ...meta, charts: chartsMeta };
   },
   async extraContentBlocks(output, _ctx): Promise<ToolContentBlock[]> {
     void _ctx;

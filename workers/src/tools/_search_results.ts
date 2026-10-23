@@ -1718,8 +1718,7 @@ export function buildSearchOutput(
  * lifted these fields and answer did not, so an answer's cited card came back as
  * text with no chart even though the card ids were right there in the output.
  *
- * Only the TOP card gets a chart — the widget renders one, and `pub_id` is
- * singular in the output schema.
+ * The top-level fields describe the first chart; `charts` lists every card's chart.
  */
 export function topCardChartFields(
   // `card_id` is nullable on the wire (`takoCardSchema`), so accept null here
