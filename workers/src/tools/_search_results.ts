@@ -1485,13 +1485,10 @@ export function buildDataGapGuidance(
  * not being covered, and every retry is a priced call the model burns on a
  * loop that never converges.
  *
- * This protocol is mirrored in the three bundled skills' SKILL.md files
- * under skills/ and their embedded copies in README.md, each as the
- * "Zero cards?" workflow step. What must stay consistent is the
- * RECIPE — free tako_available_data check → ONE retry on the exact metric
- * NAME → stop and answer from the web results — not the phrasing;
- * pin an invariant here rather than a quoted sentence, so a reworded skill
- * does not silently make this comment a lie. Update all four copies together.
+ * The bundled skill doesn't repeat this protocol: on a miss it tells the
+ * model to answer from the web results, so this guidance is the only place
+ * the RECIPE lives — free tako_available_data check → ONE retry on the exact
+ * metric NAME → stop and answer from the web results.
  *
  * NOTHING HERE PINS ANY MORE, and the skills never did. This guidance used to
  * interpolate {@link PINNED_RETRY}; after the D4 split `tako_search` takes no

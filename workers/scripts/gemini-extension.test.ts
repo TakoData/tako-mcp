@@ -204,7 +204,7 @@ describe("gemini extension skills", () => {
   it("exposes the same bundled skills Claude Code ships", () => {
     // Gemini discovers `SKILL.md` and `*/SKILL.md` under the extension's
     // `skills/` directory, which is the very directory the Claude plugin uses, so the
-    // three research skills ride along with no duplication. Frontmatter
+    // bundled skill rides along with no duplication. Frontmatter
     // validity is guarded in `skills.test.ts`.
     const discovered = fs
       .readdirSync(path.join(REPO_ROOT, "skills"), { withFileTypes: true })
@@ -217,10 +217,6 @@ describe("gemini extension skills", () => {
       )
       .map((entry) => entry.name)
       .sort();
-    expect(discovered).toEqual([
-      "tako-financial-research",
-      "tako-macroeconomics",
-      "tako-web-traffic",
-    ]);
+    expect(discovered).toEqual(["tako-data"]);
   });
 });

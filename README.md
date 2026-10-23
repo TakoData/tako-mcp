@@ -350,10 +350,10 @@ Two tools, one step apart — `tako_search` finds, `tako_contents` fetches:
 
 ## Agent Skills
 
-Ready-to-use skills for Claude Code. Each teaches Claude how to use Tako for a specific kind of data work. Copy the block inside a dropdown and paste it into Claude Code — it sets up the connection and skill for you.
+A ready-to-use skill for Claude Code. It teaches Claude when to look something up with Tako and how to report what it finds. Copy the block inside the dropdown and paste it into Claude Code — it sets up the connection and skill for you.
 
 <details>
-<summary><b>Financial Research</b></summary>
+<summary><b>Tako</b></summary>
 
 Copy the block below and paste it into Claude Code. It will set up the MCP connection and skill for you.
 
@@ -368,163 +368,33 @@ claude mcp add tako-mcp --transport http "https://mcp.tako.com/mcp" --header "Au
 Step 2: Add this Claude skill
 
 ---
-name: tako-financial-research
+name: tako-data
 description: >-
-  Use when the user asks what a company's financial metric is or was (revenue, margins, EPS, cash flow, valuation, stock price, analyst estimates), compares companies on a metric, asks who a company competes with or what data exists on it, or wants a financial chart — including private companies and crypto spot prices. Returns the figures as structured, citation-backed data from Tako (S&P Global, Fiscal.ai, Visible Alpha, Xignite and others), each with a chart. Company-level data only, not country indicators or website traffic.
+  Use when you need to look something up: current events, facts, figures, or pages on any topic. Tako searches the live web and a knowledge graph of licensed data in one call, and returns web results, plus a structured, cited card when the graph has one.
 ---
 
-# Financial Research (Tako)
+# Tako
 
-Tako serves company financials as structured, cited data: each result is a card carrying the headline value, the underlying rows, and a chart of the series. All tools below live on the Tako MCP server installed in Step 1. The tool descriptions and every result already carry the card fields, the `sources` guidance and the zero-card recovery; this skill covers how to shape a financial query, how to check a card against the question, and how to report.
+Tako searches the live web and a knowledge graph of licensed and public data in one call. The graph covers companies, markets, economies, sports, weather, prediction markets, websites, and more, and refreshes much of it during the day. When the graph has the answer, the result leads with a card: a headline value, its source, and a chart. Every search also returns web results. All tools below live on the Tako MCP server installed in Step 1.
 
-## Workflow
+## Look something up
 
-1. **Query as ENTITY + METRIC**: `"Nvidia revenue"`, `"Tesla free cash flow"`, with `quarterly` or `annual` to steer the period. When the user wants several metrics or companies, run one call per pair in parallel: each answer then comes back as its own card, and the checks below apply cleanly to each.
-2. **Call `tako_search`** with the default sources. Web results carry the qualitative half and the facts the graph doesn't hold (earnings dates, management commentary, companies with no filings or coverage).
-3. **Check the top card against the question** with the list below. The top card renders inline automatically; if a different card is the right one, link its title to its `url` and say so.
-4. **Read the figure from the card's `description`.** Fetch the series with `tako_contents` on the card's `url` only when you need the rows, such as to compute a growth rate, ratio or change yourself: search retrieves reported values and derives nothing. A locked card (`exportable: false`) is a licensing wall, not an error: quote the headline and stop.
-5. **Zero cards?** Follow the recovery the result states, and keep to two priced searches per question. Empty means Tako doesn't cover it, not that the fact is false: no dividend card is not "pays no dividend".
-6. **Ambiguous entity?** `"Costco"` resolves to Costco Wholesale Corporation and Costco Wholesale Australia; `"Coca-Cola"` to four listed companies. If the user's intent doesn't settle it, ask before quoting a number.
-7. **Discovery asks** ("who does Nvidia compete with", "what does Tako track for Tesla", "Nvidia's acquisitions")? Resolve the entity with `tako_available_data` to get its node id, then call `tako_graph_related` on it. The first call returns the relation map with counts (`rel:competes_with`, `rel:subsidiaries`, `rel:acquisitions`, `metrics`, `sources`); pass `relation` to page one and `q` to filter it, then search on the names it returns.
+1. Search first. Call `tako_search` once per question, naming the entity and what you want: "Apple revenue", "Lakers last game score", "US CPI inflation", "EU AI Act timeline". For a comparison, name both entities in one query: "Nvidia vs AMD gross margin". Run independent searches in parallel.
+2. Query website traffic by domain: "netflix.com monthly visits", not "Netflix website visits".
+3. If a card comes back, check that it answers the question: the same entity, metric, and unit. For example, operating income isn't operating margin. Read the value from the card's `description`.
+4. If no card answers the question, answer from the web results. To read a page in full, pass its url to `tako_contents`.
+5. If a name is ambiguous, such as "Costco" or "Coca-Cola", and the question doesn't settle which entity, ask before quoting a number.
 
-## Checking a card against the question
+## Explore what Tako has
 
-Search ranks on relevance to the words, and financial vocabulary is dense: the same query can match a level and a rate, a segment and the total, an actual and an estimate. Before quoting, confirm:
+For questions about coverage or relationships, such as "What does Tako track for Tesla?", "Who competes with Nvidia?", or "Which countries are in the G7?", resolve the entity with `tako_available_data`. Then call `tako_graph_related` on the node id it returns.
 
-1. **Metric.** The title names the metric asked for, not an overview of several. Overview cards ("Earnings & Estimates Overview", "Ratios Overview", "Stock Overview") summarize many metrics and lead with estimate-vs-actual; use one only when the question is that broad.
-2. **Scope.** The card is company-wide unless a segment or geography was asked for. Segment cards exist for every line the company reports, so they can match the same words. If only a segment card exists, say so; never pass a segment off as the total.
-3. **Unit.** A rate query can match the level (operating income vs operating margin). Confirm the unit in `description`.
-4. **Reported or estimate, as asked.** Analyst-estimate and consensus cards match plain metric queries, and a future `coverage_end` is how you spot one. Both are financial data: quote the estimate when the question is about forecasts or consensus and label it so; otherwise take the reported card.
-5. **Entity.** `nodes` names the company asked about; related listed entities share names. Some cards (Fiscal.ai charts, Stock and Ratios Overviews) carry no nodes; fall back to the title there.
+## Report
 
-## Comparisons
-
-- A two-series comparison card exists for many pairs but not all; some pairs return two single-entity cards. Treat a card as a comparison only if every compared entity appears in its `nodes` or title; otherwise synthesize from the per-entity cards. Comparisons default to annual; say `quarterly` for quarterly.
-- A cross-currency pair plots both series on one axis unnormalized. State each currency and convert before comparing; never present the raw chart as like-for-like.
-- Period labels are calendar-normalized (a September fiscal year-end shows as Dec 31). Flag the normalization when the fiscal period matters.
-
-## Output
-
-1. One or two lines on the finding, referencing the chart in prose. Never re-post the image URL: it double-renders the inline chart.
-2. Source name and `coverage_end` date. Cite the source the card names; it varies by metric. Say plainly when a figure came from a web result rather than a card.
-3. One `[Open in Tako](url)` link for the card you embedded.
-
-Step 3: Ask the user to restart Claude Code
-
-Ask the user to restart Claude Code so the config change takes effect.
-````
-
-</details>
-
-<details>
-<summary><b>Website &amp; App Traffic</b></summary>
-
-Copy the block below and paste it into Claude Code. It will set up the MCP connection and skill for you.
-
-````
-Step 1: Install or update Tako MCP
-
-If Tako MCP already exists in your config, update it to this endpoint. Run this in your terminal:
-
-claude mcp add tako-mcp --transport http "https://mcp.tako.com/mcp" --header "Authorization: Bearer $TAKO_API_TOKEN"
-
-
-Step 2: Add this Claude skill
-
----
-name: tako-web-traffic
-description: >-
-  Use when the user asks how much traffic a website gets, compares sites' visits, wants a top-sites ranking, asks which sites compete with a brand for attention, or asks about an app's monthly active users — including when they name the brand rather than the domain ("how much traffic does Netflix get"). Returns SimilarWeb figures as structured, citation-backed data from Tako, each with a chart. Not for company financials such as subscribers or revenue.
----
-
-# Web & App Traffic (Tako)
-
-Tako serves SimilarWeb traffic data as structured, cited data: each result is a card carrying the headline value and a chart of the series. All tools below live on the Tako MCP server installed in Step 1. The tool descriptions and every result already carry the card fields, the `sources` guidance and the zero-card recovery; this skill covers how to shape a traffic query, how to check a card against the question, and how to report.
-
-## Workflow
-
-1. **Query by domain**: `"netflix.com monthly visits"`, `"chatgpt.com"`. Traffic data is keyed by domain, so resolve a brand to its domain yourself. For app usage, query app name + metric: `"Spotify app monthly active users"`; app cards are keyed by the bare app name.
-2. **Call `tako_search`** with the default sources. Web results add competitive write-ups and ranking roundups.
-3. **Check the top card against the question** with the list below. You have the traffic number only when the card's title is `<domain> Monthly Visits`, or the app's active-users card.
-4. **Read the figure from `description`**: the latest monthly value and the % change over the period. Traffic cards are licensed and don't export (`exportable: false`), so the description and the chart are the data; don't call `tako_contents` on one. Web-result urls remain fetchable.
-5. **Zero cards?** If the query wasn't a bare domain, make it one and retry once. If a domain query is still empty, answer from the web results and label the figure web-sourced. Don't use `tako_available_data` to rule a domain out: the graph resolves brands to companies, not to domains, so a domain it doesn't know can still have a traffic card.
-6. **Competitive asks** ("who competes with Netflix for attention", "Netflix vs its rivals")? Resolve the brand with `tako_available_data` to get its company node id, call `tako_graph_related` with `relation: "rel:competes_with"`, map the competitors to their domains yourself, and run one domain search per site in parallel.
-
-## Checking a card against the question
-
-1. **Domain, from the title.** Traffic cards list only the metric in `nodes`; the domain never appears there, so the entity check that works elsewhere doesn't apply.
-2. **Absolute vs relative.** An `"A vs B"` card's description reports each series as a % change over the period. For absolute visits, read each domain's single-series card; run a per-domain search if the comparison result didn't include them.
-3. **Ranking scope.** Ranking cards exist per category and per measure ("Top Websites by Visits", "Top Arts and Entertainment Websites by Visits", "… by Average Visit Duration"). The title names both; confirm they match the question.
-4. **Metric family.** SimilarWeb app "Monthly Active Users" and a company's own reported MAU are different numbers from different sources, and both can appear in one result. Say which you're quoting.
-5. **Month.** `coverage_end` is the data month. Cite it.
-
-## Output
-
-1. One or two lines on the traffic, referencing the inline chart in prose. Never re-post the image URL: it double-renders the chart.
-2. "SimilarWeb" and the `coverage_end` month. Say plainly when a figure is web-sourced.
-3. One `[Open in Tako](url)` link for the top card; point at extra cards by linking their titles to their `url`.
-
-Step 3: Ask the user to restart Claude Code
-
-Ask the user to restart Claude Code so the config change takes effect.
-````
-
-</details>
-
-<details>
-<summary><b>Macroeconomics</b></summary>
-
-Copy the block below and paste it into Claude Code. It will set up the MCP connection and skill for you.
-
-````
-Step 1: Install or update Tako MCP
-
-If Tako MCP already exists in your config, update it to this endpoint. Run this in your terminal:
-
-claude mcp add tako-mcp --transport http "https://mcp.tako.com/mcp" --header "Authorization: Bearer $TAKO_API_TOKEN"
-
-
-Step 2: Add this Claude skill
-
----
-name: tako-macroeconomics
-description: >-
-  Use when the user asks what a country's economic indicator is or was (inflation, CPI, PCE, unemployment, GDP, interest rates, population), compares countries on one, asks which indicators exist for a country or which countries belong to a bloc, or wants a macro chart or briefing. Returns the figures as structured, citation-backed data from Tako (FRED, BLS, OECD, BIS, IMF, World Bank, Census and Polymarket), each with a chart. Country-level indicators only, not company financials or website traffic.
----
-
-# Macroeconomics (Tako)
-
-Tako serves macro and demographic indicators as structured, cited data: each result is a card carrying the headline value, the underlying rows, and a chart of the series. All tools below live on the Tako MCP server installed in Step 1. The tool descriptions and every result already carry the card fields, the `sources` guidance and the zero-card recovery; this skill covers how to shape a macro query, how to check a card against the question, and how to report.
-
-## Workflow
-
-1. **Query as COUNTRY + INDICATOR**: `"US CPI inflation"`, `"Japan unemployment rate"`. Coverage is keyed by country. For a bloc or region, check coverage with `tako_available_data` before searching: member-country series are far denser, so aggregate them yourself or take the figure from the web results and say so.
-2. **Name the variant when intent is precise.** Most indicators exist in several variants with materially different values: headline vs core, seasonally adjusted or not, BLS vs IMF vs OECD-harmonised, U-3 vs U-6, target rate vs effective rate. When you don't know the exact name, call `tako_available_data` first, which is free, and search on the name it returns. Level and rate series share a stem: "Core PCE Price Index" is the index level and "Core PCE Price Index (% Change)" is the inflation rate, and a query that says "inflation" can match either, or a CPI series.
-3. **Call `tako_search`** with the default sources. Web results carry release commentary and cover the gaps in bloc-level data.
-4. **Check the top card against the question** with the list below. If a different card is the right one, link its title to its `url` and say so.
-5. **Read the value from `description`.** When the card is exportable and you need more than the headline, `tako_contents` on its `url` returns the series.
-6. **Zero cards?** Follow the recovery the result states, and keep to two priced searches per question. Empty means not covered, not that the indicator doesn't exist.
-7. **Discovery asks** ("what does Tako track for Japan", "which countries are in the G7", "who publishes Japan's data")? Resolve the country with `tako_available_data` to get its node id, then call `tako_graph_related` on it. The first call returns the relation map with counts (`metrics`, `part_of`, `siblings`, `sources`; `members` on a bloc node); pass `relation` to page one and `q` to filter it, then search on the names it returns.
-
-## Checking a card against the question
-
-One indicator name covers many series: providers, methodologies, vintages, levels and rates, and prediction markets on the same quantity. Before quoting, confirm:
-
-1. **Variant.** The title names the variant asked for; several providers' headline numbers can come back together. Don't average them or take the first.
-2. **Vintage, as asked.** For a current figure, take the series whose `coverage_end` is latest among the matches: discontinued series stay in the graph and an annual series can sit a year behind the monthly one. For a historical period, any series that covers it is valid. Series refresh on different schedules, so don't present two indicators as the same vintage without checking.
-3. **Rate, not level.** A "(% Change)" card is a percentage; a bare "Price Index" card is index points. Confirm from the unit in `description`.
-4. **Indicator or expectation, as asked.** Polymarket cards report what traders expect, not what a statistics agency published, and exist for many macro quantities. Quote one when the question is about expectations, and label it market-implied; otherwise take the published series.
-5. **Country.** `nodes` names it. Country overview cards sometimes carry no nodes; fall back to the title there.
-
-## Comparisons
-
-- Cross-country comparison is built in: `"US vs China inflation"` returns a two-series card. For currency-denominated indicators (GDP, wages) the chart plots both currencies on one axis unnormalized; state each currency and convert before comparing.
-
-## Output
-
-1. One or two lines on the indicator, referencing the chart in prose. Never re-post the image URL: it double-renders the inline chart.
-2. Source name and `coverage_end` date. The roster is wider than FRED, so cite what the card names. Say plainly when a figure is web-sourced.
-3. One `[Open in Tako](url)` link for the card you embedded.
+- Lead with the answer in one or two lines. The top card renders inline as a chart, so refer to it in prose; don't re-post its image URL.
+- Name the source: the card's `source`, or the web page you used.
+- Link the card you used: `[Open in Tako](url)`.
+- If the series ended well before today, give its as-of date from `coverage_end`.
 
 Step 3: Ask the user to restart Claude Code
 

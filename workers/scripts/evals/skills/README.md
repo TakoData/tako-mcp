@@ -26,10 +26,9 @@ nothing to regenerate).
 
 ## What to assert
 
-Trigger rows (`trig-*`, `haiku-*`): `skills=` names the intended skill, or is
-empty for a `neg` row. `trig-fin-nearmiss-traffic` ("Netflix subscribers") must
-load financial, not traffic; `trig-traffic-brand` ("traffic does Netflix get")
-must load traffic and query `netflix.com`.
+Trigger rows (`trig-*`, `haiku-*`): `skills=` names `tako-data`, or is empty for
+a `neg` row. `trig-traffic-brand` ("traffic does Netflix get") must query
+`netflix.com`, not "Netflix".
 
 Output rows (`out-*`), skill arm vs noskill arm on the same prompt:
 
