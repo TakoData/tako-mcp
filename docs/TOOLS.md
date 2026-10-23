@@ -51,7 +51,7 @@ Server instructions:
 ```text
 Tako searches the web and a proprietary knowledge graph of live structured data in the same call. Default sources are data + web, so one call answers a question that mixes a figure with context. Coverage includes finance, markets, company KPIs, economics, website/app traffic, sports, weather, elections, prediction markets, demographics, energy, real estate, health, and more.
 
-`tako_search` finds cards and web links. `tako_contents` fetches a url in full: a web page returns its text, and an exportable Tako card returns its data rows. `tako_available_data` answers what data Tako has on an entity or metric, including a metric's canonical name. `tako_graph_related` lists a node's related metrics, entities, competitors, and sources.
+`tako_search` finds cards and web links. `tako_contents` fetches a url in full: a web page returns its text, and an exportable Tako card returns its data rows. `tako_available_data` answers what data Tako has on an entity or metric, including a metric's canonical name. `tako_graph_related` lists a node's related metrics, entities, competitors, and sources. Use `tako_company_agent` for a list of companies or people, such as a registry screen, and `tako_agent` for a ranking, trend, or aggregate of metrics.
 ```
 
 ## Tools

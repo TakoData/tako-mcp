@@ -29,7 +29,7 @@ import {
   PLURAL_UNQUALIFIED,
 } from "../src/tools/_pin_form_rules.js";
 import {
-  SERVER_INSTRUCTIONS,
+  serverInstructionsFor,
 } from "../src/instructions.js";
 import {
   FREE_TIER_TOOL_NAMES,
@@ -1039,7 +1039,8 @@ export function buildToolSamples(modules: ReadonlyArray<ToolModule>): Map<string
 export interface ToolsDocInput {
   modules: ReadonlyArray<ToolModule>;
   registryTools: ReadonlyArray<RegistryTool>;
-  instructions: string;
+  /** The `initialize` instructions a connection gets for the tools it registers. */
+  instructionsFor: (registered: ReadonlySet<string>) => string;
   freeTierToolNames: ReadonlySet<string>;
   /** Generated sample results (see `buildToolSamples`); tools without an
    *  entry render schemas only. */
@@ -1139,7 +1140,7 @@ export function buildToolsDoc(input: ToolsDocInput): string {
     // One string for every tier: the host loads it once at `initialize`,
     // so a per-tier variant would outlive a mid-conversation sign-in (see
     // `instructions.ts`). Anonymous connections differ only at dispatch.
-    out.push("", "Server instructions:", "", "```text", input.instructions, "```", "");
+    out.push("", "Server instructions:", "", "```text", input.instructionsFor(listed), "```", "");
   }
 
   out.push("## Tools", "");
@@ -1906,11 +1907,14 @@ async function main(): Promise<void> {
   );
   // The prose-budget gate runs in BOTH modes: an over-budget string fails
   // registry:check in CI the same way it fails a local registry:gen.
-  assertProseBudget(modules.map((m) => m.tool), registryTools, SERVER_INSTRUCTIONS);
+  const longestServedInstructions = SURFACE_PATHS.map(({ surface }) =>
+    serverInstructionsFor(resolveToolSet(surface, null)),
+  ).reduce((a, b) => (b.length > a.length ? b : a));
+  assertProseBudget(modules.map((m) => m.tool), registryTools, longestServedInstructions);
   const toolsDoc = buildToolsDoc({
     modules: modules.map((m) => m.tool),
     registryTools,
-    instructions: SERVER_INSTRUCTIONS,
+    instructionsFor: serverInstructionsFor,
     freeTierToolNames: FREE_TIER_TOOL_NAMES,
     samples: buildToolSamples(modules.map((m) => m.tool)),
   });

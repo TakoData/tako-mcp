@@ -73,7 +73,7 @@ Two path-selected surfaces, no User-Agent sniffing (`workers/src/surface.ts`): `
 7. `tako_company_agent` — Company Agent for which companies or people match registry facts (status, incorporation date, location, industry), plus officers and directors. Same start-or-resume contract, 45 s window, and SSE progress as `tako_agent`, with a `company_run_…` `run_id`. It sends `cards: true` and leaves `locale`, `timezone`, and `output_settings` unset. Opt-in via `?tools=company_agent` on the generic surface; always listed on the chatgpt surface and in `chatgpt-app-submission.json`.
 8. `tako_visualize` — Create a card from your own structured data. The one tool here that WRITES: the card is public and permanent, and anyone with the returned url can open it without signing in. Opt-in on `/mcp`, listed by default on `/mcp/chatgpt`, the host that renders the widget inline.
 
-Items 5-8 are opt-in: name the tool in `?tools=` (an allowlist that replaces the defaults; see `workers/src/tools/_tools_param.ts` and `_surface.ts`). The generated reference is `docs/TOOLS.md`; `registry:check` fails when it is stale.
+On `/mcp`, items 5-8 are opt-in: name the tool in `?tools=` (an allowlist that replaces the defaults; see `workers/src/tools/_tools_param.ts` and `_surface.ts`). `/mcp/chatgpt` lists items 6-8 by default. The generated reference is `docs/TOOLS.md`; `registry:check` fails when it is stale.
 
 ### Endpoints
 

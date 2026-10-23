@@ -209,7 +209,7 @@ const TOOL_SENTENCES: readonly ToolSentence[] = [
   },
   {
     tools: ["tako_agent", "tako_company_agent"],
-    text: "Use `tako_company_agent` when the answer is a list of companies or people, such as a screen by industry, location, status, or revenue. Use `tako_agent` when the answer is an analysis of metrics, such as a ranking, a trend, or an aggregate.",
+    text: "Use `tako_company_agent` for a list of companies or people, such as a registry screen, and `tako_agent` for a ranking, trend, or aggregate of metrics.",
     optIn: true,
   },
 ];

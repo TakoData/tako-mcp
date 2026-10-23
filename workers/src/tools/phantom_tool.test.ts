@@ -336,8 +336,8 @@ describe("server instructions name no tool outside the resolved ?tools= set", ()
     );
     const one = serverInstructionsFor(resolveToolSet("generic", new Set(["tako_agent"])));
 
-    expect(both).toContain("Use `tako_company_agent` when the answer is a list of companies or people");
-    expect(both).toContain("Use `tako_agent` when the answer is an analysis of metrics");
+    expect(both).toContain("Use `tako_company_agent` for a list of companies or people");
+    expect(both).toContain("`tako_agent` for a ranking, trend, or aggregate of metrics");
     expect(one).not.toContain("tako_company_agent");
     expect(SERVER_INSTRUCTIONS).not.toContain("tako_company_agent");
   });
