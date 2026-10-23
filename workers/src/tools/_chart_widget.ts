@@ -1905,6 +1905,10 @@ const WIDGET_HTML = `<!doctype html>
   // document's measurable height there. And no height is notified after the
   // zero: the label dresses a box the host chose to keep, and must never be a
   // reason to reserve one that was already given up.
+  //
+  // A labelled collapse also asks ChatGPT to close the card
+  // (\`requestHostClose\`). The label is what's left when the host ignores the
+  // request or doesn't support it.
   function collapse(labelled) {
     placeholder.classList.add("hidden");
     // \`labelled\` is only true where the emptiness is a FACT: structured content
@@ -1944,6 +1948,21 @@ const WIDGET_HTML = `<!doctype html>
     document.body.style.height = "0px";
     notifyHeight(0);
     rendered = true;
+    if (labelled) requestHostClose();
+  }
+
+  function requestHostClose() {
+    try {
+      var oa = window.openai;
+      if (!oa || typeof oa.requestClose !== "function") return;
+      var pending = oa.requestClose();
+      if (pending && typeof pending.catch === "function") {
+        pending.catch(function (err) { log("host close request rejected", { error: String(err) }); });
+      }
+      log("asked the host to close the empty widget");
+    } catch (e) {
+      log("host close request threw", { error: String(e) });
+    }
   }
 
   function requestedHeight(structuredContent) {
@@ -2232,6 +2251,12 @@ const WIDGET_HTML = `<!doctype html>
     // no \`card_id\` — either way there is no top card to render, so
     // \`buildSearchOutput\` omits the widget URLs.
     //
+    // ChatGPT's stripped reload payload (\`{width, height}\`) also lands here.
+    // It always comes from a result that had a chart, because
+    // \`topCardChartFields\` emits those fields only with the chart URLs. So
+    // only a payload that \`looksComplete\` gets the label and the close; a
+    // stripped one collapses blank.
+    //
     // Without this guard, the placeholder sits at "Loading chart…"
     // forever and stacks a 240-px-tall empty widget box in the chat.
     // Detect the empty shape by the absence of any chart URL:
@@ -2244,7 +2269,7 @@ const WIDGET_HTML = `<!doctype html>
       typeof structuredContent.embed_url !== "string" &&
       typeof structuredContent.image_url !== "string"
     ) {
-      collapse(true);
+      collapse(looksComplete(structuredContent));
       log("no-chart payload, collapsed widget");
       return true;
     }
