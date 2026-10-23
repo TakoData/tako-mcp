@@ -1944,6 +1944,7 @@ const WIDGET_HTML = `<!doctype html>
     document.body.style.height = "0px";
     notifyHeight(0);
     rendered = true;
+    if (labelled) requestHostClose();
   }
 
   function requestHostClose() {
@@ -2258,9 +2259,8 @@ const WIDGET_HTML = `<!doctype html>
       typeof structuredContent.embed_url !== "string" &&
       typeof structuredContent.image_url !== "string"
     ) {
-      collapse(true);
+      collapse(looksComplete(structuredContent));
       log("no-chart payload, collapsed widget");
-      if (looksComplete(structuredContent)) requestHostClose();
       return true;
     }
     // Past the no-chart guard, so this payload has a chart in it. Persist the
@@ -2727,7 +2727,6 @@ const WIDGET_HTML = `<!doctype html>
     empty.textContent = "No chart: the call failed.";
     collapse(true);
     log("failed call, collapsed widget with label");
-    requestHostClose();
   }
 
   // Best-first over ordered candidates, plus the widget-state mirror as the

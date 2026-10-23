@@ -267,12 +267,15 @@ describe("ChatGPT Apps SDK delivery paths", () => {
     expect(m.toParent).toContainEqual(expect.objectContaining({ method: "ui/initialize" }));
   });
 
-  it("EMPTY: doesn't close a stripped reload payload", () => {
+  it("EMPTY: collapses a stripped reload payload blank, without closing", () => {
     const requestClose = vi.fn();
-    mountWidget(html(), {
+    const m = mountWidget(html(), {
       toolOutput: { width: 900, height: 720 },
       requestClose,
     });
+    const empty = m.widgetWin.document.getElementById("tako-empty") as HTMLElement;
+    expect(empty.classList.contains("hidden")).toBe(true);
+    expect(renderedIframe(m)).toBe(false);
     expect(requestClose).not.toHaveBeenCalled();
   });
 
