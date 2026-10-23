@@ -3,7 +3,7 @@ description = "Chart a metric or time series from Tako's live data"
 prompt = """
 Chart this using Tako: {{args}}
 
-Call `tako_search` with one entity and one metric. The top result renders as a chart and
+Call `tako_search` with one entity and one metric. The first result renders as a chart and
 carries an **Open in Tako** link. For a comparison, fire one narrow search per series
 concurrently rather than one broad query.
 

@@ -9,11 +9,12 @@
  * `tako_available_data` coverage check instead of priced
  * reword-and-retry loops.
  *
- * The top result auto-renders inline as a chart: `buildSearchOutput`
- * lifts the top card's `card_id` into top-level widget fields
- * (`pub_id`, `embed_url`, `image_url`, …) that the host's chart widget
- * reads. `buildChartUrls` only needs a `card_id`, which v3 TakoCards
- * carry directly.
+ * Cards keep search's order. `buildSearchOutput` lifts the first
+ * card's `card_id` into top-level widget fields (`pub_id`, `embed_url`,
+ * `image_url`, …), which is the single chart that renders on generic
+ * `/mcp`. On `/mcp/chatgpt`, `_meta.charts` carries a chart for every
+ * card, and the widget renders two or more as a carousel. `buildChartUrls` only needs a
+ * `card_id`, which v3 TakoCards carry directly.
  */
 import { z } from "zod";
 
@@ -32,11 +33,11 @@ import {
 } from "./_render_markdown.js";
 import { runSearch } from "./_run_search.js";
 import { SOURCES_DESCRIBE } from "./_shared_prose.js";
-import type { SearchOutput } from "./_search_results.js";
+import type { CardChart, SearchOutput } from "./_search_results.js";
 import type { AppUiResource, ToolContentBlock, ToolContext, ToolModule } from "./types.js";
 
 const DESCRIPTION = [
-  "Search Tako's data graph and the live web in one call: many results at once, as structured cards plus web results, with the top card rendered inline as a chart.",
+  "Search Tako's data graph and the live web in one call: many results at once, as structured cards plus web results. The first card's chart renders inline; some hosts also show every other card's chart, in search's order.",
   "",
   "It finds results; `tako_contents` fetches what's behind them. Each card carries a headline value, node ids, and a url — pass the url to `tako_contents` for rows (`exportable: true` cards) or a web result's full page text. When `exportable` is false the rows are locked — read the headline value from the card's `description`.",
   "",
@@ -148,6 +149,22 @@ export function buildSearchBody(input: Input, tier: Tier): z.input<typeof Search
 }
 
 
+type ChartMeta = CardChart & { image_natural_width?: number; image_natural_height?: number };
+
+function withTopChartDims(
+  charts: readonly CardChart[],
+  topPubId: string | undefined,
+  topMeta: Record<string, unknown> | undefined,
+): ChartMeta[] {
+  const width = topMeta?.image_natural_width;
+  const height = topMeta?.image_natural_height;
+  return charts.map((chart) =>
+    chart.pub_id === topPubId && typeof width === "number" && typeof height === "number"
+      ? { ...chart, image_natural_width: width, image_natural_height: height }
+      : { ...chart },
+  );
+}
+
 const tako_search = {
   name: "tako_search",
   description: DESCRIPTION,
@@ -225,12 +242,16 @@ const tako_search = {
     // Cast: the widget fields are declared only on the chatgpt advertised
     // schema now, so the loose base Output no longer types them.
     const o = output as SearchOutput;
-    return buildChartExtraMeta(o.image_url, {
+    const charts = o.charts ?? [];
+    const metaOpts = {
       bakeImage: ctx.surface !== "chatgpt",
       env: ctx.env,
       origin: ctx.origin,
       pubId: o.pub_id,
-    });
+    };
+    const topMeta = await buildChartExtraMeta(o.image_url, metaOpts);
+    if (ctx.surface !== "chatgpt" || charts.length < 2) return topMeta;
+    return { ...topMeta, charts: withTopChartDims(charts, o.pub_id, topMeta) };
   },
   async extraContentBlocks(output, _ctx): Promise<ToolContentBlock[]> {
     void _ctx;

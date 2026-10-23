@@ -597,6 +597,42 @@ describe("chart render gates per surface", () => {
     expect(pngRequest.headers.get("range")).not.toBeNull();
   });
 
+  function twoCardSearchResponse(): Response {
+    return jsonResponse(200, {
+      cards: [
+        { card_id: "c1", title: "US GDP", embed_url: "https://trytako.com/embed/c1/" },
+        { card_id: "c2", title: "US CPI", embed_url: "https://trytako.com/embed/c2/" },
+      ],
+      web_results: [],
+      request_id: "req-2cards",
+    });
+  }
+
+  it("the chatgpt surface returns every card's chart and reads only the top chart's PNG", async () => {
+    const fetchMock = mockFetchSequence([twoCardSearchResponse(), realPngResponse()]);
+
+    const result = await callSearch("chatgpt");
+
+    expect(result.structuredContent?.charts).toBeUndefined();
+    const charts = result._meta?.charts as
+      | { pub_id: string; image_natural_width?: number }[]
+      | undefined;
+    expect(charts?.map((c) => c.pub_id)).toEqual(["c1", "c2"]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(result._meta?.image_natural_width).toEqual(expect.any(Number));
+    expect(charts?.[0]?.image_natural_width).toBe(result._meta?.image_natural_width);
+    expect(charts?.[1]?.image_natural_width).toBeUndefined();
+  });
+
+  it("the generic surface doesn't return charts", async () => {
+    mockFetchSequence([twoCardSearchResponse(), pngResponse()]);
+
+    const result = await callSearch("generic");
+
+    expect(result.structuredContent?.charts).toBeUndefined();
+    expect(result._meta?.charts).toBeUndefined();
+  });
+
   it("generic surface: no image block when the search returns zero cards", async () => {
     // Empty result → no top card → no image_url → `extraMeta`'s PNG
     // prefetch must not fire (queue holds only the search response; an
