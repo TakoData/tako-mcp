@@ -368,7 +368,7 @@ claude mcp add tako-mcp --transport http "https://mcp.tako.com/mcp" --header "Au
 Step 2: Add this Claude skill
 
 ---
-name: tako-data
+name: tako-search
 description: >-
   Use when you need to look something up: current events, facts, figures, or pages on any topic. Tako searches the live web and a knowledge graph of licensed data in one call, and returns web results, plus a structured, cited card when the graph has one.
 ---

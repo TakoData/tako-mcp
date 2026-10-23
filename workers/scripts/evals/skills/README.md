@@ -26,7 +26,7 @@ nothing to regenerate).
 
 ## What to assert
 
-Trigger rows (`trig-*`, `haiku-*`): `skills=` names `tako-data`, or is empty for
+Trigger rows (`trig-*`, `haiku-*`): `skills=` names `tako-search`, or is empty for
 a `neg` row. `trig-traffic-brand` ("traffic does Netflix get") must query
 `netflix.com`, not "Netflix".
 

@@ -1,5 +1,5 @@
 ---
-name: tako-data
+name: tako-search
 description: >-
   Use when you need to look something up: current events, facts, figures, or pages on any topic. Tako searches the live web and a knowledge graph of licensed data in one call, and returns web results, plus a structured, cited card when the graph has one.
 ---

@@ -217,6 +217,6 @@ describe("gemini extension skills", () => {
       )
       .map((entry) => entry.name)
       .sort();
-    expect(discovered).toEqual(["tako-data"]);
+    expect(discovered).toEqual(["tako-search"]);
   });
 });
