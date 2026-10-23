@@ -13,8 +13,9 @@
  * card's `card_id` into top-level widget fields (`pub_id`, `embed_url`,
  * `image_url`, …), which is the single chart that renders on generic
  * `/mcp`. On `/mcp/chatgpt`, `_meta.charts` carries a chart for every
- * card, and the widget renders two or more as a carousel. `_meta` goes
- * only to the widget, never to the model. `buildChartUrls` only needs a
+ * card, and the widget renders two or more as a carousel. `_meta.charts`
+ * reaches the widget, not the tool result the model reads; the widget
+ * mirrors it into widget state. `buildChartUrls` only needs a
  * `card_id`, which v3 TakoCards carry directly.
  */
 import { z } from "zod";
