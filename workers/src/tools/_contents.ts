@@ -38,8 +38,8 @@ import {
 
 /**
  * One requested url's result. Exactly one payload field rides per item:
- * `rows` or `card` for a Tako card (`download` in place of `rows` in link
- * mode), `text` for a web page, `error` for a url that failed on its own.
+ * `rows` or `card` for a Tako card (`download` in place of `rows` or `card`
+ * in link mode), `text` for a web page, `error` for a url that failed on its own.
  *
  * `truncated` sits HERE rather than inside `rows` (where the spec's shape puts
  * it for search) because an item has exactly one payload: a row cap and a
