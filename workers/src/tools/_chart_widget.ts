@@ -1946,6 +1946,20 @@ const WIDGET_HTML = `<!doctype html>
     rendered = true;
   }
 
+  function requestHostClose() {
+    try {
+      var oa = window.openai;
+      if (!oa || typeof oa.requestClose !== "function") return;
+      var pending = oa.requestClose();
+      if (pending && typeof pending.catch === "function") {
+        pending.catch(function (err) { log("host close request rejected", { error: String(err) }); });
+      }
+      log("asked the host to close the empty widget");
+    } catch (e) {
+      log("host close request threw", { error: String(e) });
+    }
+  }
+
   function requestedHeight(structuredContent) {
     return typeof structuredContent.height === "number" && structuredContent.height > 0
       ? structuredContent.height
@@ -2246,6 +2260,7 @@ const WIDGET_HTML = `<!doctype html>
     ) {
       collapse(true);
       log("no-chart payload, collapsed widget");
+      if (looksComplete(structuredContent)) requestHostClose();
       return true;
     }
     // Past the no-chart guard, so this payload has a chart in it. Persist the
@@ -2712,6 +2727,7 @@ const WIDGET_HTML = `<!doctype html>
     empty.textContent = "No chart: the call failed.";
     collapse(true);
     log("failed call, collapsed widget with label");
+    requestHostClose();
   }
 
   // Best-first over ordered candidates, plus the widget-state mirror as the

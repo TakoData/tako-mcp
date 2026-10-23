@@ -242,6 +242,50 @@ describe("ChatGPT Apps SDK delivery paths", () => {
     expect(heights).toEqual([1, 0]);
   });
 
+  it("EMPTY: asks ChatGPT to close the widget for a chart-less result", () => {
+    const requestClose = vi.fn();
+    const m = mountWidget(html(), {
+      toolOutput: { cards: [], web_results: [], usage: {} },
+      requestClose,
+    });
+    expect(requestClose).toHaveBeenCalledTimes(1);
+    const empty = m.widgetWin.document.getElementById("tako-empty") as HTMLElement;
+    expect(empty.classList.contains("hidden")).toBe(false);
+  });
+
+  it.each([
+    ["throws", () => { throw new Error("closed"); }],
+    ["rejects", () => Promise.reject(new Error("closed"))],
+  ])("EMPTY: keeps the label and finishes booting when requestClose %s", (_label, requestClose) => {
+    const m = mountWidget(html(), {
+      toolOutput: { cards: [] },
+      requestClose,
+    });
+    const empty = m.widgetWin.document.getElementById("tako-empty") as HTMLElement;
+    expect(empty.classList.contains("hidden")).toBe(false);
+    expect(empty.textContent).toMatch(/no chart/i);
+    expect(m.toParent).toContainEqual(expect.objectContaining({ method: "ui/initialize" }));
+  });
+
+  it("EMPTY: doesn't close a stripped reload payload", () => {
+    const requestClose = vi.fn();
+    mountWidget(html(), {
+      toolOutput: { width: 900, height: 720 },
+      requestClose,
+    });
+    expect(requestClose).not.toHaveBeenCalled();
+  });
+
+  it("EMPTY: doesn't close a widget that renders a chart", () => {
+    const requestClose = vi.fn();
+    const m = mountWidget(html(), {
+      toolOutput: PROD_STRUCTURED_CONTENT,
+      requestClose,
+    });
+    expect(renderedIframe(m)).toBe(true);
+    expect(requestClose).not.toHaveBeenCalled();
+  });
+
   it("EMPTY: reads the label colour from window.openai.theme, both ways", () => {
     // `window.openai.theme` is the ONLY theme source on ChatGPT — it never
     // sends `hostContext`, so the MCP Apps coverage in widget-dom.test.ts says
@@ -318,6 +362,35 @@ describe("ChatGPT Apps SDK delivery paths", () => {
       // then the collapse. Labelling a box the host kept is not a request
       // for one.
       expect(heights).toEqual([1, 0]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("ERROR: a failed call asks ChatGPT to close the widget", () => {
+    vi.useFakeTimers();
+    try {
+      const requestClose = vi.fn();
+      mountWidget(html(), {
+        toolOutput: null,
+        toolResponseMetadata: { _meta: { "tako/error": { kind: "timeout" } } },
+        requestClose,
+      });
+      expect(requestClose).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(10_000);
+      expect(requestClose).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("WATCHDOG: doesn't close when no data and no error arrived", () => {
+    vi.useFakeTimers();
+    try {
+      const requestClose = vi.fn();
+      mountWidget(html(), { requestClose });
+      vi.advanceTimersByTime(10_000);
+      expect(requestClose).not.toHaveBeenCalled();
     } finally {
       vi.useRealTimers();
     }
