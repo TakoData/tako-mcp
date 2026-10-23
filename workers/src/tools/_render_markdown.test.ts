@@ -617,7 +617,6 @@ describe("renderAgentRunMarkdown", () => {
     const output = projectRunningRun({
       toolName: "tako_agent",
       publicRunId: "answer_run_1",
-      threadId: "th-2",
       elapsedS: 47,
       progress: "Querying the data graph",
     });
@@ -625,20 +624,6 @@ describe("renderAgentRunMarkdown", () => {
     for (const leaf of [output.message, output.run_id]) {
       expect(text, `text channel is missing: ${leaf}`).toContain(leaf as string);
     }
-  });
-
-  it("doesn't invite a follow-up on the thread while its run is still going", () => {
-    const text = renderAgentRunMarkdown(
-      projectRunningRun({
-        toolName: "tako_agent",
-        publicRunId: "answer_run_1",
-        threadId: "th-2",
-        elapsedS: 47,
-      }),
-    );
-    expect(text).toContain("run_id: answer_run_1");
-    expect(text).not.toContain("thread_id: th-2");
-    expect(text).not.toContain("ask a follow-up");
   });
 
   it("renders the error for a failed run", () => {

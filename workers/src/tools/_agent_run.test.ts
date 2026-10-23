@@ -318,14 +318,8 @@ describe("status and run_id", () => {
     );
   });
 
-  it("carries thread_id on a running run and words an absent progress without a step", () => {
-    const out = projectRunningRun({
-      toolName: "tako_agent",
-      publicRunId: "answer_run_1",
-      threadId: "t1",
-      elapsedS: 45,
-    });
-    expect(out.thread_id).toBe("t1");
+  it("words an absent progress without a step", () => {
+    const out = projectRunningRun({ toolName: "tako_agent", publicRunId: "answer_run_1", elapsedS: 45 });
     expect(out.message).toContain("(45 s).");
   });
 

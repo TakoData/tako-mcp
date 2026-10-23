@@ -30,7 +30,7 @@ function completedStream(): void {
       id: "a1",
       data: { answer: "Acme Corp matches [1].", cards: [], citations: [] },
     },
-    { kind: "run_summary", status: "completed", error: null, usage: null },
+    { kind: "run_summary", status: "completed", created_at: "2026-10-22T00:00:00Z", error: null, usage: null },
   ].map(
     (block) =>
       `data: ${JSON.stringify({ seq: 1, run_id: RUN, thread_id: "t1", category: "x", block })}\n\n`,

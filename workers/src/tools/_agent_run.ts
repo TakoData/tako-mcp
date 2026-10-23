@@ -12,8 +12,8 @@
  *
  * Both channels now carry the same projected result. Every field is mapped on
  * purpose, so an unknown backend key cannot leak; wire-drift protection is the
- * `agentRunSchema` guard in `waitForRun` and `runAgentCall` plus the
- * conformance test in `_agent_run.test.ts`.
+ * `parseRun` guard in `_agent_wait.ts` plus the conformance test in
+ * `_agent_run.test.ts`.
  *
  * What the projection drops, and why (sizes measured on two staging runs,
  * 2026-08-30 — `effort: "medium"`):
@@ -158,7 +158,7 @@ export type AgentRun = z.infer<typeof agentRunSchema>;
  *
  * `total_rows` is a plain `number()`, not `.int()`: draft-7 renders `.int()` as
  * a 55-char ±2^53 bound pair, and the projection already lifts the value from
- * a wire field the run-lifecycle guard validated. Same call `tako_contents`
+ * a wire field `parseRun` validated. Same call `tako_contents`
  * made in #275.
  */
 export const projectedAgentCardShape = z.looseObject({
@@ -192,7 +192,7 @@ export const projectedCitationShape = z.looseObject({
   source_index: z
     .enum(["data", "web"])
     .optional()
-    .describe("`web` → a page `tako_contents` can fetch."),
+    .describe("`web` → a page `tako_contents` can fetch. `data` → a source's home page."),
 });
 export type ProjectedCitation = {
   index: number;
@@ -213,7 +213,7 @@ export const agentRunOutputShape = z.looseObject({
   status: z.enum(["completed", "failed", "running"]),
   run_id: z.string(),
   message: z.string().optional(),
-  answer: z.string().optional().describe("Its [n] markers join to `citations`."),
+  answer: z.string().optional(),
   guidance: z.string().optional().describe("Rejected queries only."),
   cards: z
     .array(projectedAgentCardShape)
@@ -464,11 +464,10 @@ export function runningMessage(
 export function projectRunningRun(args: {
   toolName: string;
   publicRunId: string;
-  threadId?: string;
   elapsedS: number;
   progress?: string;
 }): AgentRunOutput {
-  const out: AgentRunOutput = {
+  return {
     status: "running",
     run_id: args.publicRunId,
     message: runningMessage(args.toolName, args.publicRunId, args.elapsedS, args.progress),
@@ -476,6 +475,4 @@ export function projectRunningRun(args: {
     citations: [],
     usage: null,
   };
-  if (args.threadId !== undefined) out.thread_id = args.threadId;
-  return out;
 }

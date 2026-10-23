@@ -1,29 +1,28 @@
-import {
-  DjangoError,
-  DjangoHttpError,
-  DjangoNotFoundError,
-  djangoGet,
-  djangoPost,
-} from "../django.js";
+import { z } from "zod";
+
+import { DjangoError, DjangoHttpError, DjangoNotFoundError, djangoPost } from "../django.js";
 import {
   AGENT_TOOL_NAME,
   AgentInputError,
   type AgentProduct,
+  otherToolName,
   runsPath,
   toBackendRunId,
   toPublicRunId,
 } from "./_agent_product.js";
+import { type AgentRunOutput, projectAgentRun, projectRunningRun } from "./_agent_run.js";
 import {
-  type AgentRun,
-  type AgentRunOutput,
-  agentRunSchema,
-  projectAgentRun,
-  projectRunningRun,
-} from "./_agent_run.js";
-import { AGENT_CALL_WINDOW_MS, type WaitOutcome, waitForRun } from "./_agent_wait.js";
-import { logWireGuardFailure } from "./_log.js";
-import { nonEmpty, usageSchema } from "./_search_results.js";
-import type { ToolContext } from "./types.js";
+  AGENT_CALL_WINDOW_MS,
+  elapsedS,
+  isTerminal,
+  parseRun,
+  readRun,
+  type RunWire,
+  type WaitOutcome,
+  waitForRun,
+} from "./_agent_wait.js";
+import { nonEmpty } from "./_search_results.js";
+import type { FixedInput, ToolContext } from "./types.js";
 
 /** The inputs both agent tools share: start a run with `query`, or resume one with `run_id`. */
 export type AgentCallInput = {
@@ -32,26 +31,39 @@ export type AgentCallInput = {
   thread_id?: string | undefined;
 };
 
+/** The description line both agent tools end with. */
+export const AGENT_CALL_WINDOW_SENTENCE = `A call returns within ${AGENT_CALL_WINDOW_MS / 1000} s. If \`status\` is \`running\`, call again with \`run_id\`; don't start a new run.`;
+
+/** The `query` input both agent tools take. */
+export const agentQueryInput = z
+  .string()
+  .min(1)
+  .optional()
+  .describe(
+    "The question to research, in natural language. Ask one question per call; the agent plans its own sub-steps. Send `query` or `run_id`, not both.",
+  );
+
+/** The `thread_id` input both agent tools take. */
+export const agentThreadIdInput = z
+  .uuid()
+  .optional()
+  .describe(
+    "A `thread_id` from an earlier run. Pass it back to ask a follow-up in that conversation; omit it to start a new one.",
+  );
+
+/** The Worker-side call window, as both agent tools publish it. */
+export const AGENT_CALL_WINDOW_FIXED_INPUT: FixedInput = {
+  field: "call window",
+  value: `${AGENT_CALL_WINDOW_MS / 1000} s`,
+  note: "A call returns within the window; resume a running run with run_id.",
+  scope: "worker",
+};
+
 const REQUEST_TIMEOUT_MS = 30_000;
 const REQUEST_MARGIN_MS = 1_000;
 
-const OTHER_TOOL: Record<AgentProduct, string> = {
-  answer: AGENT_TOOL_NAME.company,
-  company: AGENT_TOOL_NAME.answer,
-};
-
 const RUN_NOT_FOUND_GUIDANCE =
   "No run with that `run_id` for this account. Start a new run with `query`.";
-
-type RunWire = {
-  run_id?: string | undefined;
-  thread_id?: string | null | undefined;
-  status?: string | undefined;
-  created_at?: string | undefined;
-  result?: unknown;
-  error?: unknown;
-  usage?: unknown;
-};
 
 function conflictCode(err: DjangoHttpError): string | undefined {
   let parsed: unknown;
@@ -69,7 +81,7 @@ function threadProductMismatchGuidance(
   product: AgentProduct,
   registeredTools: ReadonlySet<string> | undefined,
 ): string {
-  const otherTool = OTHER_TOOL[product];
+  const otherTool = otherToolName(product);
   if (registeredTools?.has(otherTool) !== true) {
     return "This thread belongs to a different agent. Omit `thread_id` to start a new conversation.";
   }
@@ -131,7 +143,7 @@ export function mapStartError(
  * Maps a 404, or a 403 for a run that belongs to someone else, to
  * run-not-found. Leaves every other error unchanged. Returns `err`.
  */
-export function mapResumeError(err: DjangoError, _product: AgentProduct): DjangoError {
+export function mapResumeError(err: DjangoError): DjangoError {
   if (err instanceof DjangoNotFoundError || err.status === 403) {
     err.modelGuidance = RUN_NOT_FOUND_GUIDANCE;
   }
@@ -155,37 +167,11 @@ function createdAtMs(createdAt: string | undefined): number {
   return Number.isNaN(parsed) ? Date.now() : parsed;
 }
 
-function elapsedS(createdAt: number): number {
-  return Math.max(0, Math.floor((Date.now() - createdAt) / 1000));
-}
-
-function parseTerminalRun(product: AgentProduct, backendRunId: string, wire: RunWire): AgentRun {
-  const tool = AGENT_TOOL_NAME[product];
-  const usageGuard = wire.usage == null ? undefined : usageSchema.safeParse(wire.usage);
-  if (usageGuard !== undefined && !usageGuard.success) {
-    logWireGuardFailure(tool, "usage", usageGuard.error, wire);
-  }
-  const parsed = agentRunSchema.safeParse({
-    run_id: wire.run_id ?? backendRunId,
-    thread_id: wire.thread_id ?? null,
-    status: wire.status,
-    result: wire.result ?? null,
-    error: wire.error ?? null,
-    usage: usageGuard?.success ? usageGuard.data : null,
-  });
-  if (!parsed.success) {
-    logWireGuardFailure(tool, "resume-normalise", parsed.error, wire);
-    throw new Error(`The ${product} agent run endpoint returned an unexpected shape.`);
-  }
-  return parsed.data;
-}
-
 function projectOutcome(
   product: AgentProduct,
   backendRunId: string,
   outcome: WaitOutcome,
   startedAtMs: number,
-  knownThreadId: string | undefined,
 ): AgentRunOutput {
   const publicRunId = toPublicRunId(product, backendRunId);
   if (outcome.kind === "terminal") return projectAgentRun(outcome.run, publicRunId);
@@ -194,8 +180,6 @@ function projectOutcome(
     publicRunId,
     elapsedS: elapsedS(startedAtMs),
   };
-  const threadId = outcome.threadId ?? knownThreadId;
-  if (threadId !== undefined) args.threadId = threadId;
   if (outcome.progress !== undefined) args.progress = outcome.progress;
   return projectRunningRun(args);
 }
@@ -224,14 +208,13 @@ async function startRun(
     throw new Error(`The ${product} agent start returned no run_id.`);
   }
   const startedAtMs = createdAtMs(started.created_at);
-  const threadId = nonEmpty(started.thread_id);
   try {
     const outcome = await waitForRun(ctx, product, backendRunId, {
       windowMs: remainingMs(deadline),
       createdAtMs: startedAtMs,
       ...(ctx.signal === undefined ? {} : { signal: ctx.signal }),
     });
-    return projectOutcome(product, backendRunId, outcome, startedAtMs, threadId);
+    return projectOutcome(product, backendRunId, outcome, startedAtMs);
   } catch (err) {
     const guidance = waitFailedGuidance(toPublicRunId(product, backendRunId));
     if (err instanceof DjangoError) {
@@ -250,14 +233,9 @@ async function resumeRun(
 ): Promise<AgentRunOutput> {
   const backendRunId = toBackendRunId(product, publicRunId);
   try {
-    const wire = await djangoGet<RunWire>(
-      ctx.env,
-      ctx.token,
-      `${runsPath(product)}/${backendRunId}`,
-      { timeoutMs: requestTimeoutMs(deadline), caller: ctx.caller },
-    );
-    if (wire.status === "completed" || wire.status === "failed") {
-      return projectAgentRun(parseTerminalRun(product, backendRunId, wire), publicRunId);
+    const wire = await readRun(ctx, product, backendRunId, requestTimeoutMs(deadline));
+    if (isTerminal(wire.status)) {
+      return projectAgentRun(parseRun(product, backendRunId, wire), publicRunId);
     }
     const startedAtMs = createdAtMs(wire.created_at);
     const outcome = await waitForRun(ctx, product, backendRunId, {
@@ -265,10 +243,10 @@ async function resumeRun(
       createdAtMs: startedAtMs,
       ...(ctx.signal === undefined ? {} : { signal: ctx.signal }),
     });
-    return projectOutcome(product, backendRunId, outcome, startedAtMs, nonEmpty(wire.thread_id));
+    return projectOutcome(product, backendRunId, outcome, startedAtMs);
   } catch (err) {
     if (err instanceof DjangoNotFoundError || err instanceof DjangoHttpError) {
-      mapResumeError(err, product);
+      mapResumeError(err);
     }
     throw err;
   }

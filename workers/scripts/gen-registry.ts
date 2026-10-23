@@ -46,6 +46,7 @@ import {
   webResultSchema,
   type Usage,
 } from "../src/tools/_search_results.js";
+import { type AgentProduct, toPublicRunId } from "../src/tools/_agent_product.js";
 import { projectAgentRun, type AgentRunWireLike } from "../src/tools/_agent_run.js";
 import {
   fenceRunFor,
@@ -993,34 +994,19 @@ function buildGraphRelatedSample(tool: ToolModule): ToolSample {
   };
 }
 
-const AGENT_SAMPLE_FIXTURE = resolve(HERE, "../test/fixtures/tako_agent_sample.json");
-const COMPANY_AGENT_SAMPLE_FIXTURE = resolve(
-  HERE,
-  "../test/fixtures/tako_company_agent_sample.json",
-);
+const AGENT_SAMPLE_FIXTURE: Record<AgentProduct, string> = {
+  answer: resolve(HERE, "../test/fixtures/tako_agent_sample.json"),
+  company: resolve(HERE, "../test/fixtures/tako_company_agent_sample.json"),
+};
 
-function buildAgentSample(tool: ToolModule): ToolSample {
-  const raw = JSON.parse(readFileSync(AGENT_SAMPLE_FIXTURE, "utf8")) as AgentRunWireLike;
-  const output = projectAgentRun(raw, "answer_run_sample");
+function buildAgentSample(tool: ToolModule, product: AgentProduct): ToolSample {
+  const raw = JSON.parse(readFileSync(AGENT_SAMPLE_FIXTURE[product], "utf8")) as AgentRunWireLike;
+  const output = projectAgentRun(raw, toPublicRunId(product, "sample"));
   return {
     structured: pickDeclared(
       // One schema on both surfaces (no widget fields), but resolved through
       // the same helper the server uses, so a future per-surface variant
       // cannot silently skip the sample.
-      outputSchemaForSurface(tool, "generic"),
-      output as unknown as Record<string, unknown>,
-    ),
-    text: renderAgentRunMarkdown(output),
-  };
-}
-
-function buildCompanyAgentSample(tool: ToolModule): ToolSample {
-  const raw = JSON.parse(
-    readFileSync(COMPANY_AGENT_SAMPLE_FIXTURE, "utf8"),
-  ) as AgentRunWireLike;
-  const output = projectAgentRun(raw, "company_run_sample");
-  return {
-    structured: pickDeclared(
       outputSchemaForSurface(tool, "generic"),
       output as unknown as Record<string, unknown>,
     ),
@@ -1038,8 +1024,8 @@ export function buildToolSamples(modules: ReadonlyArray<ToolModule>): Map<string
     if (m.name === "tako_visualize") samples.set(m.name, buildVisualizeSample(m));
     if (m.name === "tako_available_data") samples.set(m.name, buildAvailableDataSample(m));
     if (m.name === "tako_graph_related") samples.set(m.name, buildGraphRelatedSample(m));
-    if (m.name === "tako_agent") samples.set(m.name, buildAgentSample(m));
-    if (m.name === "tako_company_agent") samples.set(m.name, buildCompanyAgentSample(m));
+    if (m.name === "tako_agent") samples.set(m.name, buildAgentSample(m, "answer"));
+    if (m.name === "tako_company_agent") samples.set(m.name, buildAgentSample(m, "company"));
     if (m.name === "tako_search_advanced") samples.set(m.name, buildAdvancedSample(m));
   }
   return samples;

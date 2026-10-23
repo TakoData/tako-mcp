@@ -22,31 +22,30 @@
 import { z } from "zod";
 
 import { AnswerAgentRunRequest } from "../generated/schemas.js";
-import { runAgentCall } from "./_agent_call.js";
+import {
+  AGENT_CALL_WINDOW_FIXED_INPUT,
+  AGENT_CALL_WINDOW_SENTENCE,
+  agentQueryInput,
+  agentThreadIdInput,
+  runAgentCall,
+} from "./_agent_call.js";
 import { AgentInputError, runIdInputSchema } from "./_agent_product.js";
 import { agentRunOutputShape, type AgentRunOutput } from "./_agent_run.js";
-import { AGENT_CALL_WINDOW_MS } from "./_agent_wait.js";
 import { looseArray } from "./_loose_array.js";
 import { renderAgentRunMarkdown } from "./_render_markdown.js";
-import { SOURCES_DESCRIBE } from "./_shared_prose.js";
+import { AGENT_SOURCES_THREAD_RULE, SOURCES_DESCRIBE } from "./_shared_prose.js";
 import type { ToolModule } from "./types.js";
 
 const DESCRIPTION = [
   "Run Tako's Answer Agent on a question that needs research rather than a lookup. It plans, queries the data graph and the web over several steps, and returns a written `answer` with numbered citations plus the chart `cards` it built.",
   "",
-  "Best for metric-driven research: ranking or screening by financial or economic metrics, multi-step aggregation, multi-hop reasoning. Also the fallback when `tako_search` finds nothing. Not for a known value or a two-entity comparison — `tako_search` answers those in one round trip. Not for questions about which companies or people match registry facts such as status, incorporation date, location, or industry.",
+  "Best for metric-driven research: ranking or screening by financial or economic metrics, multi-step aggregation, multi-hop reasoning. Also the fallback when `tako_search` finds nothing. Not for a known value or a two-entity comparison — `tako_search` answers those in one round trip.",
   "",
-  "A call returns within 45 s. If `status` is `running`, call again with `run_id`; don't start a new run.",
+  AGENT_CALL_WINDOW_SENTENCE,
 ].join("\n");
 
 export const inputSchema = z.object({
-  query: z
-    .string()
-    .min(1)
-    .optional()
-    .describe(
-      "The question to research, in natural language. Ask one question per call; the agent plans its own sub-steps. Send `query` or `run_id`, not both.",
-    ),
+  query: agentQueryInput,
   run_id: runIdInputSchema("answer").optional(),
   // looseArray: hosts that stringify the array they meant to send (observed
   // from OpenBB Copilot) get it coerced instead of a -32602. `commaSeparated` is safe
@@ -54,16 +53,15 @@ export const inputSchema = z.object({
   // contains a comma. See
   // _loose_array.ts.
   sources: looseArray(
-    z.array(z.enum(["data", "web"])).min(1).optional().describe(SOURCES_DESCRIBE),
+    z
+      .array(z.enum(["data", "web"]))
+      .min(1)
+      .optional()
+      .describe(`${SOURCES_DESCRIBE} ${AGENT_SOURCES_THREAD_RULE}`),
     // The label names the file the schema is declared in.
     { field: "tako_agent.sources", commaSeparated: true },
   ),
-  thread_id: z
-    .uuid()
-    .optional()
-    .describe(
-      "A `thread_id` from an earlier run. Pass it back to ask a follow-up in that conversation; omit it to start a new one.",
-    ),
+  thread_id: agentThreadIdInput,
 });
 
 type AgentInput = z.infer<typeof inputSchema>;
@@ -132,13 +130,9 @@ const takoAgent = {
   },
   fixedInputs: [
     { field: "effort", value: "\"medium\"", note: "The only Answer Agent effort level launched." },
-    {
-      field: "call window",
-      value: `${AGENT_CALL_WINDOW_MS / 1000} s`,
-      note: "A call returns within the window; resume a running run with run_id.",
-      scope: "worker",
-    },
+    AGENT_CALL_WINDOW_FIXED_INPUT,
   ],
+  streamsProgress: true,
   // The handler's output IS the advertised shape, so there is no
   // `slimStructured` hook: `structuredContentFor` narrows to the declared keys
   // and both channels render the same object.

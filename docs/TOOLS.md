@@ -65,7 +65,7 @@ Description:
 
 Run Tako's Answer Agent on a question that needs research rather than a lookup. It plans, queries the data graph and the web over several steps, and returns a written `answer` with numbered citations plus the chart `cards` it built.
 
-Best for metric-driven research: ranking or screening by financial or economic metrics, multi-step aggregation, multi-hop reasoning. Also the fallback when `tako_search` finds nothing. Not for a known value or a two-entity comparison — `tako_search` answers those in one round trip. Not for questions about which companies or people match registry facts such as status, incorporation date, location, or industry.
+Best for metric-driven research: ranking or screening by financial or economic metrics, multi-step aggregation, multi-hop reasoning. Also the fallback when `tako_search` finds nothing. Not for a known value or a two-entity comparison — `tako_search` answers those in one round trip.
 
 A call returns within 45 s. If `status` is `running`, call again with `run_id`; don't start a new run.
 
@@ -75,7 +75,7 @@ Parameters:
 |---|---|---|---|---|
 | `query` | string | no |  | The question to research, in natural language. Ask one question per call; the agent plans its own sub-steps. Send `query` or `run_id`, not both. |
 | `run_id` | string | no |  | A `run_id` from an earlier call that returned `status: running`. Send it instead of `query` to keep waiting for that run. |
-| `sources` | array | no |  | Which corpora to search; default is both. Narrow to ["data"] once `tako_available_data` confirms coverage; narrow to ["web"] only for news or page text — website traffic is in the data graph. |
+| `sources` | array | no |  | Which corpora to search; default is both. Narrow to ["data"] once `tako_available_data` confirms coverage; narrow to ["web"] only for news or page text — website traffic is in the data graph. A thread keeps its sources, so omit this on a follow-up. |
 | `thread_id` | string | no |  | A `thread_id` from an earlier run. Pass it back to ask a follow-up in that conversation; omit it to start a new one. |
 
 Fixed request inputs (the caller cannot change these):
@@ -109,7 +109,7 @@ Annotations:
       "description": "A `run_id` from an earlier call that returned `status: running`. Send it instead of `query` to keep waiting for that run."
     },
     "sources": {
-      "description": "Which corpora to search; default is both. Narrow to [\"data\"] once `tako_available_data` confirms coverage; narrow to [\"web\"] only for news or page text — website traffic is in the data graph.",
+      "description": "Which corpora to search; default is both. Narrow to [\"data\"] once `tako_available_data` confirms coverage; narrow to [\"web\"] only for news or page text — website traffic is in the data graph. A thread keeps its sources, so omit this on a follow-up.",
       "minItems": 1,
       "type": "array",
       "items": {
@@ -153,7 +153,6 @@ Annotations:
       "type": "string"
     },
     "answer": {
-      "description": "Its [n] markers join to `citations`.",
       "type": "string"
     },
     "guidance": {
@@ -217,7 +216,7 @@ Annotations:
             "type": "string"
           },
           "source_index": {
-            "description": "`web` → a page `tako_contents` can fetch.",
+            "description": "`web` → a page `tako_contents` can fetch. `data` → a source's home page.",
             "type": "string",
             "enum": [
               "data",
@@ -884,7 +883,7 @@ Parameters:
 |---|---|---|---|---|
 | `query` | string | no |  | The question to research, in natural language. Ask one question per call; the agent plans its own sub-steps. Send `query` or `run_id`, not both. |
 | `run_id` | string | no |  | A `run_id` from an earlier call that returned `status: running`. Send it instead of `query` to keep waiting for that run. |
-| `sources` | array | no |  | Which corpora to search; default is both. Narrow to ["data"] once `tako_available_data` confirms coverage; narrow to ["web"] only for news or page text — website traffic is in the data graph. |
+| `sources` | array | no |  | Which sources to research: `data` for Tako's curated data, `web` for the open web. A new thread uses both. A thread keeps its sources, so omit this on a follow-up. |
 | `thread_id` | string | no |  | A `thread_id` from an earlier run. Pass it back to ask a follow-up in that conversation; omit it to start a new one. |
 | `effort` | string ("low" \\| "medium" \\| "high") | no |  | Research depth. `medium` is the default. `high` is stronger and slower. `low` answers from the company registry and the web only, and can't filter or rank by financial metrics such as revenue or headcount. Effort is fixed for a thread. |
 
@@ -919,7 +918,7 @@ Annotations:
       "description": "A `run_id` from an earlier call that returned `status: running`. Send it instead of `query` to keep waiting for that run."
     },
     "sources": {
-      "description": "Which corpora to search; default is both. Narrow to [\"data\"] once `tako_available_data` confirms coverage; narrow to [\"web\"] only for news or page text — website traffic is in the data graph.",
+      "description": "Which sources to research: `data` for Tako's curated data, `web` for the open web. A new thread uses both. A thread keeps its sources, so omit this on a follow-up.",
       "minItems": 1,
       "type": "array",
       "items": {
@@ -972,7 +971,6 @@ Annotations:
       "type": "string"
     },
     "answer": {
-      "description": "Its [n] markers join to `citations`.",
       "type": "string"
     },
     "guidance": {
@@ -1036,7 +1034,7 @@ Annotations:
             "type": "string"
           },
           "source_index": {
-            "description": "`web` → a page `tako_contents` can fetch.",
+            "description": "`web` → a page `tako_contents` can fetch. `data` → a source's home page.",
             "type": "string",
             "enum": [
               "data",

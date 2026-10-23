@@ -45,10 +45,10 @@ export interface ToolContext {
    * arrives — so a long-running handler can stay under the per-call
    * timeout indefinitely as long as it keeps emitting progress.
    *
-   * Only agent tool calls deliver progress: `mcp.ts` answers them over SSE.
-   * Every other request gets a buffered JSON response, where the transport
-   * drops request-scoped notifications, so progress from any other tool
-   * reaches no client.
+   * Only a tool that declares `streamsProgress` delivers progress: `mcp.ts`
+   * answers its calls over SSE. Every other request gets a buffered JSON
+   * response, where the transport drops request-scoped notifications, so
+   * progress from any other tool reaches no client.
    *
    * No-op when the request did not carry a progressToken (the client
    * isn't asking for progress, so we don't send any). No-op when the
@@ -425,6 +425,11 @@ export interface ToolModule<
   /** Request fields sent with a constant value — see {@link FixedInput}. */
   fixedInputs?: ReadonlyArray<FixedInput>;
   /**
+   * Answer this tool's calls over SSE so `ctx.sendProgress` reaches the
+   * client. Every other tool's calls get a buffered JSON response.
+   */
+  streamsProgress?: true;
+  /**
    * Optional anonymous-input gate, consulted by `registerTool` on
    * `tier: "free"` calls BEFORE the handler runs. Return the extra
    * model-facing sentence when the anonymous call must be refused
@@ -544,6 +549,8 @@ export interface AnyToolModule {
   annotationsBySurface?: { chatgpt?: Partial<ToolAnnotations> };
   /** Request fields sent with a constant value — see {@link FixedInput}. */
   fixedInputs?: ReadonlyArray<FixedInput>;
+  /** SSE responses for progress — see {@link ToolModule.streamsProgress}. */
+  streamsProgress?: true;
   /** Anonymous-input gate — see {@link ToolModule.anonymousInputRejects}. */
   anonymousInputRejects?: (input: Record<string, unknown>) => string | undefined;
   handler: (input: unknown, ctx: ToolContext) => Promise<unknown>;

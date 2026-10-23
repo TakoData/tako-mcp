@@ -885,7 +885,7 @@ export function renderAgentRunMarkdown(o: AgentRunOutput): string {
   if (o.definitions !== undefined) blocks.push(renderNameMap("Definitions", o.definitions));
   if (o.assumptions !== undefined) blocks.push(renderNameMap("Assumptions", o.assumptions));
   if (o.methodology !== undefined) blocks.push(renderNameMap("Methodology", o.methodology));
-  if (o.thread_id !== undefined && o.status !== "running") {
+  if (o.thread_id !== undefined) {
     blocks.push(`thread_id: ${o.thread_id} — send it back to ask a follow-up.`);
   }
   const footer = renderFooter(o.usage);

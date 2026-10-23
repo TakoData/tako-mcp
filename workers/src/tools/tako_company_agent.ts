@@ -15,13 +15,18 @@
 import { z } from "zod";
 
 import { CompanyAgentEffort, type CompanyAgentRunRequest } from "../generated/schemas.js";
-import { runAgentCall } from "./_agent_call.js";
+import {
+  AGENT_CALL_WINDOW_FIXED_INPUT,
+  AGENT_CALL_WINDOW_SENTENCE,
+  agentQueryInput,
+  agentThreadIdInput,
+  runAgentCall,
+} from "./_agent_call.js";
 import { AgentInputError, runIdInputSchema } from "./_agent_product.js";
 import { agentRunOutputShape, type AgentRunOutput } from "./_agent_run.js";
-import { AGENT_CALL_WINDOW_MS } from "./_agent_wait.js";
 import { looseArray } from "./_loose_array.js";
 import { renderAgentRunMarkdown } from "./_render_markdown.js";
-import { SOURCES_DESCRIBE } from "./_shared_prose.js";
+import { AGENT_SOURCES_THREAD_RULE } from "./_shared_prose.js";
 import type { ToolModule } from "./types.js";
 
 const DESCRIPTION = [
@@ -29,28 +34,19 @@ const DESCRIPTION = [
   "",
   "Best for: screening companies by status, incorporation date, registered location, or industry; resolving named companies; finding a company's officers and directors. At `medium` and `high` effort it can also filter by financial metrics such as revenue or headcount.",
   "",
-  "A call returns within 45 s. If `status` is `running`, call again with `run_id`; don't start a new run.",
+  AGENT_CALL_WINDOW_SENTENCE,
 ].join("\n");
 
+const COMPANY_SOURCES_DESCRIBE = `Which sources to research: \`data\` for Tako's curated data, \`web\` for the open web. A new thread uses both. ${AGENT_SOURCES_THREAD_RULE}`;
+
 export const inputSchema = z.object({
-  query: z
-    .string()
-    .min(1)
-    .optional()
-    .describe(
-      "The question to research, in natural language. Ask one question per call; the agent plans its own sub-steps. Send `query` or `run_id`, not both.",
-    ),
+  query: agentQueryInput,
   run_id: runIdInputSchema("company").optional(),
   sources: looseArray(
-    z.array(z.enum(["data", "web"])).min(1).optional().describe(SOURCES_DESCRIBE),
+    z.array(z.enum(["data", "web"])).min(1).optional().describe(COMPANY_SOURCES_DESCRIBE),
     { field: "tako_company_agent.sources", commaSeparated: true },
   ),
-  thread_id: z
-    .uuid()
-    .optional()
-    .describe(
-      "A `thread_id` from an earlier run. Pass it back to ask a follow-up in that conversation; omit it to start a new one.",
-    ),
+  thread_id: agentThreadIdInput,
   effort: CompanyAgentEffort.optional().describe(
     "Research depth. `medium` is the default. `high` is stronger and slower. `low` answers from the company registry and the web only, and can't filter or rank by financial metrics such as revenue or headcount. Effort is fixed for a thread.",
   ),
@@ -93,13 +89,9 @@ const takoCompanyAgent = {
   },
   fixedInputs: [
     { field: "cards", value: "true", note: "The agent may build list cards." },
-    {
-      field: "call window",
-      value: `${AGENT_CALL_WINDOW_MS / 1000} s`,
-      note: "A call returns within the window; resume a running run with run_id.",
-      scope: "worker",
-    },
+    AGENT_CALL_WINDOW_FIXED_INPUT,
   ],
+  streamsProgress: true,
   async handler(input, ctx): Promise<AgentRunOutput> {
     return runAgentCall(ctx, "company", input, () => buildCompanyAgentBody(input));
   },

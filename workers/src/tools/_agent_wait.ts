@@ -1,6 +1,13 @@
 import { z } from "zod";
 
 import {
+  AnswerAgentResult,
+  RetrievalAgentResult,
+  RunSummaryEvent,
+  StatusEvent,
+  ToolCallEvent,
+} from "../generated/schemas.js";
+import {
   DjangoBadRequestError,
   DjangoHttpError,
   DjangoNotFoundError,
@@ -39,15 +46,31 @@ export type StreamEnvelope = z.infer<typeof streamEnvelopeSchema>;
 /** What a wait ends with: the finished run, or a run still in progress. */
 export type WaitOutcome =
   | { kind: "terminal"; run: AgentRun }
-  | { kind: "running"; threadId?: string; progress?: string };
+  | { kind: "running"; progress?: string };
 
-type RunWire = {
+/** The fields of a backend run resource that the wait and the resume read. */
+export type RunWire = {
   run_id?: string | undefined;
   thread_id?: string | null | undefined;
   status?: string | undefined;
+  created_at?: string | undefined;
   result?: unknown;
   error?: unknown;
   usage?: unknown;
+};
+
+/** The backend sent a run or event that doesn't match its published contract. */
+export class AgentWireDriftError extends Error {
+  constructor(product: AgentProduct) {
+    super(`The ${product} agent run endpoint returned an unexpected shape.`);
+  }
+}
+
+const RUN_SUMMARY_CONTRACT = RunSummaryEvent.omit({ usage: true });
+
+const RESULT_CONTRACT: Record<AgentProduct, z.ZodType> = {
+  answer: AnswerAgentResult,
+  company: RetrievalAgentResult,
 };
 
 /**
@@ -124,7 +147,7 @@ function parseEnvelope(dataLines: string[]): StreamEnvelope | undefined {
 class ProgressRelay {
   private latest: string | undefined;
   private lastSentText: string | undefined;
-  private lastSentAt = Number.NEGATIVE_INFINITY;
+  private lastSentAt = Date.now();
   private trailingTimer: ReturnType<typeof setTimeout> | undefined;
   private heartbeatTimer: ReturnType<typeof setTimeout> | undefined;
   private stopped = false;
@@ -167,17 +190,13 @@ class ProgressRelay {
     this.send(this.latest);
   }
 
-  private elapsedS(): number {
-    return Math.max(0, Math.floor((Date.now() - this.createdAtMs) / 1000));
-  }
-
   private send(message: string): void {
     if (this.stopped) return;
     this.lastSentAt = Date.now();
     this.armHeartbeat();
-    const elapsedS = this.elapsedS();
+    const progress = elapsedS(this.createdAtMs);
     Promise.resolve()
-      .then(() => (this.stopped ? undefined : this.ctx.sendProgress(elapsedS, { message })))
+      .then(() => (this.stopped ? undefined : this.ctx.sendProgress(progress, { message })))
       .catch((err: unknown) => {
         console.warn("[tako] agent progress notification failed:", err);
       });
@@ -186,7 +205,7 @@ class ProgressRelay {
   private armHeartbeat(): void {
     clearTimeout(this.heartbeatTimer);
     this.heartbeatTimer = setTimeout(() => {
-      this.send(`Still working (${this.elapsedS()} s): ${this.latest ?? "starting"}`);
+      this.send(`Still working (${elapsedS(this.createdAtMs)} s): ${this.latest ?? "starting"}`);
     }, HEARTBEAT_INTERVAL_MS);
   }
 }
@@ -203,12 +222,31 @@ function isClientError(err: unknown): boolean {
   return err.status >= 400 && err.status < 500 && err.status !== 408 && err.status !== 429;
 }
 
-function isTerminal(status: string | undefined): boolean {
+/** Whole seconds since `createdAtMs`, never negative. */
+export function elapsedS(createdAtMs: number): number {
+  return Math.max(0, Math.floor((Date.now() - createdAtMs) / 1000));
+}
+
+export function isTerminal(status: string | undefined): boolean {
   return status === "completed" || status === "failed";
 }
 
-function parseRun(product: AgentProduct, backendRunId: string, wire: RunWire): AgentRun | undefined {
+/**
+ * Normalize a terminal run from the backend into an `AgentRun`.
+ *
+ * Throws `AgentWireDriftError` when a completed run's `result` is missing or
+ * doesn't match the product's published result contract, or when the run
+ * doesn't normalize. A malformed `usage` is logged and dropped.
+ */
+export function parseRun(product: AgentProduct, backendRunId: string, wire: RunWire): AgentRun {
   const tool = AGENT_TOOL_NAME[product];
+  if (wire.status === "completed" && wire.result !== null) {
+    const resultGuard = RESULT_CONTRACT[product].safeParse(wire.result);
+    if (!resultGuard.success) {
+      logWireGuardFailure(tool, "completed-result", resultGuard.error, wire);
+      throw new AgentWireDriftError(product);
+    }
+  }
   let usage: Usage | null = null;
   if (wire.usage != null) {
     const usageGuard = usageSchema.safeParse(wire.usage);
@@ -224,10 +262,33 @@ function parseRun(product: AgentProduct, backendRunId: string, wire: RunWire): A
     usage,
   });
   if (!parsed.success) {
-    logWireGuardFailure(tool, "wait-normalise", parsed.error, wire);
-    return undefined;
+    logWireGuardFailure(tool, "run-normalise", parsed.error, wire);
+    throw new AgentWireDriftError(product);
   }
   return parsed.data;
+}
+
+/**
+ * Read a run's JSON resource once.
+ *
+ * Throws `AgentWireDriftError` when the run's `status` isn't one the contract
+ * defines, and the `DjangoError` for a failed request.
+ */
+export async function readRun(
+  ctx: ToolContext,
+  product: AgentProduct,
+  backendRunId: string,
+  timeoutMs: number,
+): Promise<RunWire> {
+  const wire = await djangoGet<RunWire>(ctx.env, ctx.token, `${runsPath(product)}/${backendRunId}`, {
+    caller: ctx.caller,
+    timeoutMs: Math.min(REQUEST_TIMEOUT_MS, timeoutMs),
+  });
+  if (!agentRunSchema.shape.status.safeParse(wire.status).success) {
+    logWireGuardFailure(AGENT_TOOL_NAME[product], "poll-status", undefined, wire);
+    throw new AgentWireDriftError(product);
+  }
+  return wire;
 }
 
 function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T | undefined> {
@@ -270,11 +331,13 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
  * `ctx.sendProgress`, at most once per `PROGRESS_MIN_INTERVAL_MS`, with a
  * heartbeat after `HEARTBEAT_INTERVAL_MS` of silence. Progress values are whole
  * seconds since `opts.createdAtMs`. Returns `terminal` once the stream's
- * `run_summary` arrives. If the stream breaks first, polls the run's JSON
- * resource every 5 s for the rest of the window. Returns `running` when the
- * window ends, when `opts.signal` aborts, or when the poll fails three times in
- * a row; it never cancels the run. Throws the `DjangoError` for any 4xx from the
- * backend except 408 and 429.
+ * `run_summary` arrives. If the stream breaks, or its run summary or result
+ * doesn't match its contract, polls the run's JSON resource every 5 s for the
+ * rest of the window. A status or tool-call event that doesn't match its
+ * contract is logged once per kind and skipped. Returns `running` when the window ends, when `opts.signal`
+ * aborts, or when the poll fails three times in a row; it never cancels the
+ * run. Throws the `DjangoError` for any 4xx from the backend except 408 and
+ * 429, and `AgentWireDriftError` when the polled run doesn't match its contract.
  */
 export async function waitForRun(
   ctx: ToolContext,
@@ -298,7 +361,19 @@ export async function waitForRun(
     const id = nonEmpty(threadId);
     if (id !== undefined) seen.threadId = id;
   };
-  const path = `${runsPath(product)}/${backendRunId}`;
+  const driftLoggedKinds = new Set<string>();
+  const guardEvent = <S extends z.ZodType>(
+    schema: S,
+    block: StreamEnvelope["block"],
+  ): z.output<S> | undefined => {
+    const parsed = schema.safeParse(block);
+    if (parsed.success) return parsed.data;
+    if (!driftLoggedKinds.has(block.kind)) {
+      driftLoggedKinds.add(block.kind);
+      logWireGuardFailure(AGENT_TOOL_NAME[product], `stream-${block.kind}`, parsed.error, block);
+    }
+    return undefined;
+  };
 
   const finish = (run: AgentRun): WaitOutcome => {
     console.log(`[tako] agent run terminal run_id=${backendRunId} status=${run.status}`);
@@ -311,7 +386,6 @@ export async function waitForRun(
     const polled = await pollRun();
     if (polled !== undefined) return finish(polled);
     const running: WaitOutcome = { kind: "running" };
-    if (seen.threadId !== undefined) running.threadId = seen.threadId;
     if (progress.text !== undefined) running.progress = progress.text;
     return running;
   } finally {
@@ -326,7 +400,7 @@ export async function waitForRun(
     let result: unknown = null;
     let sawResult = false;
     try {
-      const stream = await djangoOpenStream(ctx.env, ctx.token, path, {
+      const stream = await djangoOpenStream(ctx.env, ctx.token, `${runsPath(product)}/${backendRunId}`, {
         caller: ctx.caller,
         timeoutMs: Math.min(REQUEST_TIMEOUT_MS, opts.windowMs),
         signal: callWindow.signal,
@@ -337,26 +411,29 @@ export async function waitForRun(
         const block = envelope.block;
         switch (block.kind) {
           case "status": {
-            const message = nonEmpty(block.message);
+            const message = nonEmpty(guardEvent(StatusEvent, block)?.message);
             if (message !== undefined) progress.update(message);
             break;
           }
           case "tool_call": {
-            const message = nonEmpty(block.status_message);
+            const message = nonEmpty(guardEvent(ToolCallEvent, block)?.status_message);
             if (message !== undefined) progress.update(message);
             break;
           }
           case "agent_result":
-            result = block.data ?? null;
+            result = block.data;
             sawResult = true;
             break;
           case "run_summary": {
-            const status = typeof block.status === "string" ? block.status : undefined;
-            if (!isTerminal(status) || (status === "completed" && !sawResult)) return undefined;
+            const summary = guardEvent(RUN_SUMMARY_CONTRACT, block);
+            if (summary === undefined) return undefined;
+            if (!isTerminal(summary.status) || (summary.status === "completed" && !sawResult)) {
+              return undefined;
+            }
             return parseRun(product, backendRunId, {
               run_id: backendRunId,
               thread_id: seen.threadId ?? null,
-              status,
+              status: summary.status,
               result,
               error: block.error,
               usage: block.usage,
@@ -381,16 +458,10 @@ export async function waitForRun(
       if (remainingMs <= 0) return undefined;
       let wire: RunWire | undefined;
       try {
-        wire = await abortable(
-          djangoGet<RunWire>(ctx.env, ctx.token, path, {
-            caller: ctx.caller,
-            timeoutMs: Math.min(REQUEST_TIMEOUT_MS, remainingMs),
-          }),
-          callWindow.signal,
-        );
+        wire = await abortable(readRun(ctx, product, backendRunId, remainingMs), callWindow.signal);
         transient = 0;
       } catch (err) {
-        if (isClientError(err)) throw err;
+        if (isClientError(err) || err instanceof AgentWireDriftError) throw err;
         transient += 1;
         console.warn(
           `[tako] agent poll transient error run_id=${backendRunId} attempt=${transient}/${MAX_TRANSIENT_ERRORS}:`,
@@ -399,19 +470,8 @@ export async function waitForRun(
         if (transient > MAX_TRANSIENT_ERRORS) return undefined;
       }
       if (callWindow.signal.aborted) return undefined;
-      if (wire !== undefined) {
-        noteThread(wire.thread_id);
-        if (!agentRunSchema.shape.status.safeParse(wire.status).success) {
-          logWireGuardFailure(AGENT_TOOL_NAME[product], "poll-status", undefined, wire);
-          throw new Error(`The ${product} agent run endpoint returned an unexpected shape.`);
-        }
-        if (isTerminal(wire.status)) {
-          const run = parseRun(product, backendRunId, wire);
-          if (run === undefined) {
-            throw new Error(`The ${product} agent run endpoint returned an unexpected shape.`);
-          }
-          return run;
-        }
+      if (wire !== undefined && isTerminal(wire.status)) {
+        return parseRun(product, backendRunId, wire);
       }
       await sleep(Math.min(POLL_INTERVAL_MS, deadline - Date.now()), callWindow.signal);
     }

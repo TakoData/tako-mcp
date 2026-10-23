@@ -19,6 +19,11 @@ export const RUN_ID_PREFIX: Record<AgentProduct, string> = {
 
 export class AgentInputError extends Error {}
 
+/** The tool that serves the other agent product. */
+export function otherToolName(product: AgentProduct): string {
+  return AGENT_TOOL_NAME[OTHER_PRODUCT[product]];
+}
+
 /** Backend path for starting and reading runs of a product. */
 export function runsPath(product: AgentProduct): string {
   return `/api/v1/agent/${product}/runs`;
@@ -43,7 +48,7 @@ function wrongPrefixMessage(product: AgentProduct): string {
   const other = OTHER_PRODUCT[product];
   return (
     `\`${AGENT_TOOL_NAME[product]}\` takes a run_id that starts with \`${RUN_ID_PREFIX[product]}\`. ` +
-    `A \`${RUN_ID_PREFIX[other]}\` id belongs to \`${AGENT_TOOL_NAME[other]}\`; call that tool instead.`
+    `A \`${RUN_ID_PREFIX[other]}\` id belongs to \`${otherToolName(product)}\`; call that tool instead.`
   );
 }
 

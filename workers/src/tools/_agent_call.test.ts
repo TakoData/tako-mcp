@@ -87,7 +87,7 @@ describe("runAgentCall", () => {
 
     expect(out.status).toBe("running");
     expect(out.run_id).toBe("company_run_r1");
-    expect(out.thread_id).toBe("t1");
+    expect(out.thread_id).toBeUndefined();
     expect(out.message).toContain("Searching");
     expect(vi.mocked(djangoPost).mock.calls[0]?.[2]).toBe("/api/v1/agent/company/runs");
     expect(vi.mocked(djangoPost).mock.calls[0]?.[3]).toEqual({ query: "q" });
@@ -187,12 +187,12 @@ describe("runAgentCall", () => {
       status: "running",
       created_at: CREATED_AT,
     });
-    vi.mocked(waitForRun).mockResolvedValue({ kind: "running", threadId: "t1" });
+    vi.mocked(waitForRun).mockResolvedValue({ kind: "running" });
 
     const out = await runAgentCall(ctx, "answer", { run_id: "answer_run_r1" }, startBody);
 
     expect(out.status).toBe("running");
-    expect(out.thread_id).toBe("t1");
+    expect(out.thread_id).toBeUndefined();
     expect(waitForRun).toHaveBeenCalledWith(
       ctx,
       "answer",

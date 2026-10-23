@@ -51,7 +51,7 @@ function stubStream(frames: string[], keepOpen = false): ReturnType<typeof vi.fn
 function completedFrames(result: Record<string, unknown>): string[] {
   return [
     frame({ kind: "agent_result", id: "a1", data: result }),
-    frame({ kind: "run_summary", status: "completed", error: null, usage: null }),
+    frame({ kind: "run_summary", status: "completed", created_at: "2026-10-22T00:00:00Z", error: null, usage: null }),
   ];
 }
 
@@ -119,7 +119,7 @@ describe("tako_agent", () => {
 
     expect(out.status).toBe("running");
     expect(out.run_id).toBe("answer_run_run_1");
-    expect(out.thread_id).toBe("t1");
+    expect(out.thread_id).toBeUndefined();
     expect(out.message).toContain("answer_run_run_1");
     expect(out.answer).toBeUndefined();
   });
@@ -182,6 +182,7 @@ describe("tako_agent", () => {
       frame({
         kind: "run_summary",
         status: "failed",
+        created_at: "2026-10-22T00:00:00Z",
         error: { code: "x", message: "boom" },
         usage: null,
       }),
@@ -198,7 +199,7 @@ describe("tako_agent", () => {
     vi.mocked(djangoPost).mockResolvedValue({ run_id: RUN, thread_id: "t1" });
     stubStream([
       frame({ kind: "agent_result", id: "a1", data: { answer: "kept", cards: [], citations: [] } }),
-      frame({ kind: "run_summary", status: "completed", error: null, usage: { total_cost_usd: "nope" } }),
+      frame({ kind: "run_summary", status: "completed", created_at: "2026-10-22T00:00:00Z", error: null, usage: { total_cost_usd: "nope" } }),
     ]);
 
     const out = await tool.handler({ query: "q", sources: ["data"] }, ctx);

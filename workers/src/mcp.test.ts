@@ -26,7 +26,7 @@ import {
   closeWhenStreamEnds,
   createMcpServer,
   djangoErrorToToolResult,
-  isAgentToolCall,
+  streamingToolCallName,
   logSdkValidationRejections,
   PAYMENT_REQUIRED_MESSAGE,
   PAYMENT_REQUIRED_REMEDY_FALLBACK,
@@ -2267,6 +2267,23 @@ describe("agent tool calls over SSE", () => {
     expect(errorSpy).not.toHaveBeenCalled();
   });
 
+  it("answers an agent input mistake as a tool error without logging a handler bug", async () => {
+    const errorSpy = vi.spyOn(console, "error");
+    const body = {
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: { name: "tako_agent", arguments: { query: "q", run_id: "answer_run_r1" } },
+    };
+
+    const res = await worker.fetch(mcpPost("/mcp?tools=agent", body), env);
+
+    const [message] = sseMessages(await res.text());
+    expect(message!.result?.isError).toBe(true);
+    expect(JSON.stringify(message!.result)).toContain("Send exactly one of `query`");
+    expect(errorSpy).not.toHaveBeenCalled();
+  });
+
   it("keeps JSON responses for tools/list and non-agent tools/call", async () => {
     mockFetchSequence([jsonResponse(200, {})]);
 
@@ -2430,7 +2447,7 @@ describe("closeWhenStreamEnds", () => {
   });
 });
 
-describe("isAgentToolCall", () => {
+describe("streamingToolCallName", () => {
   const call = (name: string) => ({
     jsonrpc: "2.0",
     id: 1,
@@ -2438,19 +2455,19 @@ describe("isAgentToolCall", () => {
     params: { name, arguments: {} },
   });
 
-  it("is true for a single tools/call to either agent tool", () => {
-    expect(isAgentToolCall(call("tako_agent"))).toBe(true);
-    expect(isAgentToolCall(call("tako_company_agent"))).toBe(true);
+  it("names a single tools/call to either agent tool", () => {
+    expect(streamingToolCallName(call("tako_agent"))).toBe("tako_agent");
+    expect(streamingToolCallName(call("tako_company_agent"))).toBe("tako_company_agent");
   });
 
-  it("is false for other tools and methods", () => {
-    expect(isAgentToolCall(call("tako_search"))).toBe(false);
-    expect(isAgentToolCall({ jsonrpc: "2.0", id: 1, method: "tools/list" })).toBe(false);
-    expect(isAgentToolCall(null)).toBe(false);
-    expect(isAgentToolCall("tools/call")).toBe(false);
+  it("is undefined for other tools and methods", () => {
+    expect(streamingToolCallName(call("tako_search"))).toBeUndefined();
+    expect(streamingToolCallName({ jsonrpc: "2.0", id: 1, method: "tools/list" })).toBeUndefined();
+    expect(streamingToolCallName(null)).toBeUndefined();
+    expect(streamingToolCallName("tools/call")).toBeUndefined();
   });
 
-  it("isAgentToolCall is false for a batch", () => {
-    expect(isAgentToolCall([call("tako_agent")])).toBe(false);
+  it("is undefined for a batch", () => {
+    expect(streamingToolCallName([call("tako_agent")])).toBeUndefined();
   });
 });

@@ -135,6 +135,7 @@ describe("waitForRun", () => {
           text: frame({
             kind: "run_summary",
             status: "failed",
+            created_at: "2026-10-22T00:00:00Z",
             error: { code: "agent_error", message: "boom" },
             usage: { total_cost_usd: 0.5 },
           }),
@@ -155,7 +156,7 @@ describe("waitForRun", () => {
 
   it("opens the company product's run path", async () => {
     const fetchMock = stubStream(
-      scriptedStream([{ atMs: 0, text: frame({ kind: "run_summary", status: "failed" }) }]),
+      scriptedStream([{ atMs: 0, text: frame({ kind: "run_summary", status: "failed", created_at: "2026-10-22T00:00:00Z" }) }]),
     );
 
     await waitForRun(makeCtx(), "company", RUN, { windowMs: AGENT_CALL_WINDOW_MS, createdAtMs: Date.now() });
@@ -165,11 +166,12 @@ describe("waitForRun", () => {
     );
   });
 
-  it("relays status and tool_call status_message as throttled progress", async () => {
+  it("relays the latest status as throttled progress, one message a second", async () => {
     stubStream(
       scriptedStream([
         { atMs: 0, text: status("Searching the company registry") },
         { atMs: 200, text: status("Building the list") },
+        { atMs: 1_500, text: status("Ranking the matches") },
       ]),
     );
     const ctx = makeCtx();
@@ -182,13 +184,62 @@ describe("waitForRun", () => {
       signal: controller.signal,
     });
     await vi.advanceTimersByTimeAsync(999);
-    expect(ctx.sendProgress).toHaveBeenCalledTimes(1);
-    expect(ctx.sendProgress).toHaveBeenLastCalledWith(5, { message: "Searching the company registry" });
+    expect(ctx.sendProgress).not.toHaveBeenCalled();
 
     await vi.advanceTimersByTimeAsync(1);
-    expect(ctx.sendProgress).toHaveBeenCalledTimes(2);
+    expect(ctx.sendProgress).toHaveBeenCalledTimes(1);
     expect(ctx.sendProgress).toHaveBeenLastCalledWith(6, { message: "Building the list" });
 
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(ctx.sendProgress).toHaveBeenCalledTimes(2);
+    expect(ctx.sendProgress).toHaveBeenLastCalledWith(7, { message: "Ranking the matches" });
+
+    controller.abort();
+    await pending;
+  });
+
+  it("sends the newest step first when a resumed stream replays its history", async () => {
+    stubStream(
+      scriptedStream([
+        { atMs: 0, text: status("Step 1 oldest") + status("Step 2") + status("Step 3 latest") },
+      ]),
+    );
+    const ctx = makeCtx();
+    const controller = new AbortController();
+
+    const pending = waitForRun(ctx, "answer", RUN, {
+      windowMs: AGENT_CALL_WINDOW_MS,
+      createdAtMs: Date.now(),
+      signal: controller.signal,
+    });
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    expect(progressMessages(ctx)).toEqual(["Step 3 latest"]);
+    controller.abort();
+    await pending;
+  });
+
+  it("logs one wire-guard line for status events that break their contract and relays none", async () => {
+    stubStream(
+      scriptedStream([
+        { atMs: 0, text: frame({ kind: "status", text: "renamed" }) },
+        { atMs: 0, text: frame({ kind: "status", text: "renamed again" }) },
+      ]),
+    );
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const ctx = makeCtx();
+    const controller = new AbortController();
+
+    const pending = waitForRun(ctx, "answer", RUN, {
+      windowMs: AGENT_CALL_WINDOW_MS,
+      createdAtMs: Date.now(),
+      signal: controller.signal,
+    });
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    const driftLines = errorSpy.mock.calls.map((call) => String(call[0])).filter((line) => line.includes("stage=stream-status"));
+    expect(driftLines).toHaveLength(1);
+    expect(progressMessages(ctx)).toEqual([]);
     controller.abort();
     await pending;
   });
@@ -218,7 +269,7 @@ describe("waitForRun", () => {
     await pending;
   });
 
-  it("sends a heartbeat after 15 s of silence", async () => {
+  it("sends a heartbeat after 15 s of silence since the last progress", async () => {
     stubStream(scriptedStream([{ atMs: 0, text: status("Building the list") }]));
     const ctx = makeCtx();
     const controller = new AbortController();
@@ -228,15 +279,35 @@ describe("waitForRun", () => {
       createdAtMs: Date.now(),
       signal: controller.signal,
     });
-    await vi.advanceTimersByTimeAsync(HEARTBEAT_INTERVAL_MS - 1);
-    expect(ctx.sendProgress).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(PROGRESS_MIN_INTERVAL_MS + HEARTBEAT_INTERVAL_MS - 1);
+    expect(progressMessages(ctx)).toEqual(["Building the list"]);
 
     await vi.advanceTimersByTimeAsync(1);
-    expect(ctx.sendProgress).toHaveBeenCalledTimes(2);
-    const message = progressMessages(ctx)[1]!;
-    expect(message).toMatch(/^Still working \(\d+ s\): /);
-    expect(message).toBe("Still working (15 s): Building the list");
+    expect(progressMessages(ctx)).toEqual([
+      "Building the list",
+      "Still working (16 s): Building the list",
+    ]);
 
+    controller.abort();
+    await pending;
+  });
+
+  it("keeps sending a heartbeat every 15 s while the run stays silent", async () => {
+    stubStream(scriptedStream([]));
+    const ctx = makeCtx();
+    const controller = new AbortController();
+
+    const pending = waitForRun(ctx, "answer", RUN, {
+      windowMs: AGENT_CALL_WINDOW_MS,
+      createdAtMs: Date.now(),
+      signal: controller.signal,
+    });
+    await vi.advanceTimersByTimeAsync(2 * HEARTBEAT_INTERVAL_MS);
+
+    expect(progressMessages(ctx)).toEqual([
+      "Still working (15 s): starting",
+      "Still working (30 s): starting",
+    ]);
     controller.abort();
     await pending;
   });
@@ -275,6 +346,29 @@ describe("waitForRun", () => {
     expect(vi.mocked(djangoGet).mock.calls[0]![2]).toBe("/api/v1/agent/answer/runs/r1");
   });
 
+  it("falls back to the JSON poll when an agent_result event breaks its contract", async () => {
+    stubStream(
+      scriptedStream([
+        { atMs: 0, text: frame({ kind: "agent_result", id: "a1", result: { answer: "renamed" } }) },
+        {
+          atMs: 0,
+          text: frame({ kind: "run_summary", status: "completed", created_at: "2026-10-22T00:00:00Z" }),
+        },
+      ]),
+    );
+    vi.mocked(djangoGet).mockResolvedValue({ status: "completed", result: { answer: "polled" } });
+
+    const pending = waitForRun(makeCtx(), "answer", RUN, {
+      windowMs: AGENT_CALL_WINDOW_MS,
+      createdAtMs: Date.now(),
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    const outcome = await pending;
+
+    if (outcome.kind !== "terminal") throw new Error("expected terminal");
+    expect(outcome.run.result?.answer).toBe("polled");
+  });
+
   it("keeps polling through the completion grace window when the poll still says running", async () => {
     stubStream(scriptedStream([], 0));
     vi.mocked(djangoGet)
@@ -294,7 +388,7 @@ describe("waitForRun", () => {
   });
 
   it("falls back to the JSON poll when a completed run_summary arrives without an agent_result", async () => {
-    stubStream(scriptedStream([{ atMs: 0, text: frame({ kind: "run_summary", status: "completed" }) }]));
+    stubStream(scriptedStream([{ atMs: 0, text: frame({ kind: "run_summary", status: "completed", created_at: "2026-10-22T00:00:00Z" }) }]));
     vi.mocked(djangoGet).mockResolvedValue({ status: "completed", result: { answer: "G" } });
 
     const pending = waitForRun(makeCtx(), "answer", RUN, {
@@ -344,6 +438,33 @@ describe("waitForRun", () => {
     expect(outcome.run.result?.answer).toBe("E");
   });
 
+  it("falls back to the JSON poll when the stream sends no headers within 15 s", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(
+        (_input, init) =>
+          new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener("abort", () =>
+              reject(new DOMException("aborted", "AbortError")),
+            );
+          }),
+      ),
+    );
+    vi.mocked(djangoGet).mockResolvedValue({ status: "completed", result: { answer: "F" } });
+
+    const pending = waitForRun(makeCtx(), "answer", RUN, {
+      windowMs: AGENT_CALL_WINDOW_MS,
+      createdAtMs: Date.now(),
+    });
+    await vi.advanceTimersByTimeAsync(14_999);
+    expect(djangoGet).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(1);
+    const outcome = await pending;
+    if (outcome.kind !== "terminal") throw new Error("expected terminal");
+    expect(outcome.run.result?.answer).toBe("F");
+  });
+
   it("falls back to the JSON poll when the stream doesn't open", async () => {
     vi.stubGlobal(
       "fetch",
@@ -372,16 +493,21 @@ describe("waitForRun", () => {
       return pending;
     }
 
-    it("returns a completed run with no result as terminal and projects it without an answer", async () => {
+    it("throws the unexpected-shape error when a completed run has no result field", async () => {
       vi.mocked(djangoGet).mockResolvedValue({ run_id: RUN, status: "completed" });
+
+      await expect(pollOutcome(0)).rejects.toThrow(
+        "The answer agent run endpoint returned an unexpected shape.",
+      );
+    });
+
+    it("keeps a completed run whose result is null", async () => {
+      vi.mocked(djangoGet).mockResolvedValue({ run_id: RUN, status: "completed", result: null });
 
       const outcome = await pollOutcome(0);
 
       if (outcome.kind !== "terminal") throw new Error("expected terminal");
-      const projected = projectAgentRun(outcome.run, "answer_run_1");
-      expect(projected.status).toBe("completed");
-      expect(projected.answer).toBeUndefined();
-      expect(projected.cards).toEqual([]);
+      expect(projectAgentRun(outcome.run, "answer_run_1").answer).toBeUndefined();
     });
 
     it("throws the unexpected-shape error when a completed run's citation lacks a title", async () => {
@@ -440,7 +566,7 @@ describe("waitForRun", () => {
     await vi.advanceTimersByTimeAsync(10_000);
     const outcome = await pending;
 
-    expect(outcome).toEqual({ kind: "running", progress: "Searching", threadId: "t1" });
+    expect(outcome).toEqual({ kind: "running", progress: "Searching" });
     expect(djangoGet).toHaveBeenCalledTimes(3);
   });
 
@@ -493,7 +619,7 @@ describe("waitForRun", () => {
     expect(djangoGet).toHaveBeenCalledTimes(1);
   });
 
-  it("returns running with the last progress and thread_id when the window ends", async () => {
+  it("returns running with the last progress when the window ends", async () => {
     const scripted = scriptedStream([{ atMs: 0, text: status("Building the list") }]);
     stubStream(scripted);
     const ctx = makeCtx();
@@ -505,7 +631,7 @@ describe("waitForRun", () => {
     await vi.advanceTimersByTimeAsync(45_000);
     const outcome = await pending;
 
-    expect(outcome).toEqual({ kind: "running", progress: "Building the list", threadId: "t1" });
+    expect(outcome).toEqual({ kind: "running", progress: "Building the list" });
     expect(djangoGet).not.toHaveBeenCalled();
     expect(scripted.cancel).toHaveBeenCalled();
 
@@ -525,7 +651,7 @@ describe("waitForRun", () => {
     await vi.advanceTimersByTimeAsync(45_000);
     const outcome = await pending;
 
-    expect(outcome).toEqual({ kind: "running", threadId: "t9" });
+    expect(outcome).toEqual({ kind: "running" });
     const polls = vi.mocked(djangoGet).mock.calls.length;
     await vi.advanceTimersByTimeAsync(60_000);
     expect(djangoGet).toHaveBeenCalledTimes(polls);
@@ -549,7 +675,7 @@ describe("waitForRun", () => {
     controller.abort();
     const outcome = await pending;
 
-    expect(outcome).toEqual({ kind: "running", progress: "Searching", threadId: "t1" });
+    expect(outcome).toEqual({ kind: "running", progress: "Searching" });
     expect(scripted.cancel).toHaveBeenCalled();
     const sent = ctx.sendProgress.mock.calls.length;
     await vi.advanceTimersByTimeAsync(60_000);
@@ -604,6 +730,15 @@ describe("readSseEnvelopes", () => {
       'data: {"run_id": "r1"}\n\n',
       "data: [1, 2]\n\n",
       'data: {"run_id": "r1", "block": {"kind": "status", "message": "ok"}}\n\n',
+    ]);
+
+    expect(envelopes.map((e) => e.block.kind)).toEqual(["status"]);
+  });
+
+  it("holds a CR at a chunk boundary so a split CRLF ends one line, not two", async () => {
+    const envelopes = await collect([
+      'data: {"run_id": "r1",\r',
+      '\ndata: "block": {"kind": "status", "message": "a"}}\r\n\r\n',
     ]);
 
     expect(envelopes.map((e) => e.block.kind)).toEqual(["status"]);

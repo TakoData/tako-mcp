@@ -38,7 +38,7 @@ import {
 } from "./freetier.js";
 import { serverInstructionsFor } from "./instructions.js";
 import { tryResolveOAuthAccessToken } from "./oauth/access.js";
-import { AGENT_TOOL_NAME } from "./tools/_agent_product.js";
+import { AgentInputError } from "./tools/_agent_product.js";
 import { logToolRequestId } from "./tools/_log.js";
 import { GENERIC_SIGN_IN_HINT } from "./tools/_shared_prose.js";
 import { parseToolsParam, readToolsParam } from "./tools/_tools_param.js";
@@ -911,6 +911,12 @@ function registerTool(
           }
           return mapped;
         }
+        if (err instanceof AgentInputError) {
+          console.log(
+            `[mcp] tool input rejected tool=${tool.name} surface=${options.surface} tier=${callCtx.tier}: ${err.message}`,
+          );
+          return { content: [{ type: "text" as const, text: err.message }], isError: true };
+        }
         // Non-Django throws (wire-guard drift, handler bugs) re-throw to the
         // SDK, which converts them into client-visible tool text WITHOUT
         // logging — so this line is the only server-side record of them.
@@ -1475,9 +1481,9 @@ export function freeTierHiddenToolResponse(
  * everywhere else the missing-header case 401s exactly as it always did,
  * and `initialize` requires auth.
  *
- * An agent tool call (`isAgentToolCall`) on a connection that registers
- * that tool gets an SSE response, so its `notifications/progress` reach the
- * client. Every other request runs with `enableJsonResponse: true`: one
+ * A call to a tool that declares `streamsProgress` (`streamingToolCallName`),
+ * on a connection that registers that tool, gets an SSE response, so its
+ * `notifications/progress` reach the client. Every other request runs with `enableJsonResponse: true`: one
  * buffered JSON-RPC body, in which the transport drops every request-scoped
  * notification.
  */
@@ -1663,10 +1669,11 @@ export async function handleMcpRequest(
       requestedToolNames,
       tier,
     });
-    const agentTool = agentToolCallName(await peekJsonBody(request));
+    const peekedBody = await peekJsonBody(request);
+    const streamingTool = streamingToolCallName(peekedBody);
     const streamsProgress =
-      agentTool !== undefined &&
-      resolveToolSet(surface, requestedToolNames).has(agentTool);
+      streamingTool !== undefined &&
+      resolveToolSet(surface, requestedToolNames).has(streamingTool);
     // Omitting `sessionIdGenerator` puts the transport in stateless mode — no
     // `Mcp-Session-Id` header is issued or validated. This matches the Worker
     // model (no persistent per-session state) and keeps each request
@@ -1694,7 +1701,10 @@ export async function handleMcpRequest(
     };
     let closesWhenStreamEnds = false;
     try {
-      const response = await transport.handleRequest(request);
+      const response = await transport.handleRequest(
+        request,
+        peekedBody === undefined ? undefined : { parsedBody: peekedBody },
+      );
       if (streamsProgress && isEventStream(response)) {
         const streamed = closeWhenStreamEnds(response, closeServer, (reason) =>
           responseCancelled.abort(reason),
@@ -1736,18 +1746,16 @@ export async function handleMcpRequest(
   }
 }
 
-const AGENT_TOOL_NAMES: ReadonlySet<string> = new Set(Object.values(AGENT_TOOL_NAME));
+const STREAMING_TOOL_NAMES: ReadonlySet<string> = new Set(
+  TOOL_REGISTRY.filter((tool) => tool.streamsProgress === true).map((tool) => tool.name),
+);
 
 /**
- * True for a single JSON-RPC `tools/call` whose `params.name` is an agent
- * tool (`tako_agent` or `tako_company_agent`). False for a batch and for
- * every other method.
+ * The tool name of a single JSON-RPC `tools/call` whose tool declares
+ * `streamsProgress`. `undefined` for a batch, for every other method, and for
+ * every other tool.
  */
-export function isAgentToolCall(body: unknown): boolean {
-  return agentToolCallName(body) !== undefined;
-}
-
-function agentToolCallName(body: unknown): string | undefined {
+export function streamingToolCallName(body: unknown): string | undefined {
   if (typeof body !== "object" || body === null || Array.isArray(body)) {
     return undefined;
   }
@@ -1756,7 +1764,7 @@ function agentToolCallName(body: unknown): string | undefined {
     return undefined;
   }
   const { name } = params as { name?: unknown };
-  return typeof name === "string" && AGENT_TOOL_NAMES.has(name) ? name : undefined;
+  return typeof name === "string" && STREAMING_TOOL_NAMES.has(name) ? name : undefined;
 }
 
 async function peekJsonBody(request: Request): Promise<unknown> {

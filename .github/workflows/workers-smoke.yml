@@ -25,8 +25,6 @@ name: workers-smoke
 # NOTE: the smoke calls `tako_visualize`, which charges one credit and creates a
 # card in the target env. That is now a per-release cost on production, and it is
 # the point — a check that cannot create a card cannot prove the render path.
-# The smoke also starts one billable `tako_company_agent` run at `effort: "low"`
-# in the target env, and doesn't cancel it.
 #
 # `workflow_run` only fires for upstream runs that completed (any conclusion);
 # the `if:` on the job below filters to successful push- or release-triggered
