@@ -10,13 +10,13 @@ the descriptions before you ship it.
 
 | Surface | Where it lives | When the model reads it | Its job |
 |---|---|---|---|
-| Skill | `skills/tako-search/SKILL.md` | The description before every task; the body only after the model opens the skill | Decide whether the model calls Tako, then carry the workflow and the report template |
+| Skill | `skills/tako-search/SKILL.md` and `skills/tako-agent/SKILL.md` | The description before every task; the body only after the model opens the skill | Decide whether the model calls Tako, then carry the workflow and the report template |
 | Server instructions | `workers/src/instructions.ts` | Whenever the host puts them in context; not every host does | Describe the server for hosts without the skill |
 | Tool descriptions | `workers/src/tools/*.ts`, rendered in `docs/TOOLS.md` | When the model plans a call | Say how to call the tool and how to read its result |
 | Results | The tool's output and `guidance` | After a call | Report what this call found and what it cost |
 | Hand-written copies | `docs/gemini/GEMINI.md`, `commands/*.toml`, `llms-full.txt`, `agent.json`, `README.md`, and the test cases in `chatgpt-app-submission.json` | The Gemini context file in every Gemini session; the rest when an agent or a reviewer opens them | Restate the skill and the descriptions. No check compares their advice with the descriptions, so update them in the same change |
 
-The skill reaches only hosts that install the plugin: the Claude plugin, the
+The skills reach only hosts that install the plugin: the Claude plugin, the
 Gemini extension, and the ChatGPT plugin package. A host connected to bare
 `/mcp` sees only the instructions, the descriptions, and the results, so each
 tool description must still stand on its own.
