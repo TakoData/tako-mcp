@@ -103,7 +103,7 @@ const searchCoreFields = {
   guidance: z
     .string()
     .optional()
-    .describe("Zero-card verdict and next action, or how a keyless caller unlocks a placeholder card."),
+    .describe("How a keyless caller unlocks a placeholder card."),
   metric_definitions: z
     .record(z.string(), z.string())
     .optional()
@@ -196,6 +196,7 @@ export const searchAdvancedOutputShape = z.looseObject({
     // `include_contents: true` caller into a priced refetch of rows it had
     // already paid to inline.
     .describe("The data cards. Rows ride in a card's `rows` only when the request asked to inline them — otherwise fetch an exportable card's rows with tako_contents on its url."),
+  guidance: z.string().optional().describe("Why a `strict: true` pin returned no cards."),
   ...answerFoldFields,
 });
 
@@ -477,8 +478,8 @@ function renderNameMap(title: string, map: Record<string, string>): string {
 export function renderSearchMarkdown(o: SearchOutput): string {
   const blocks: string[] = [];
   // The answer leads. A verdict ahead of it reads as "this answer failed"
-  // rather than "the data index has a gap" — the guidance is about coverage,
-  // and the prose above it may be a complete, correct web-grounded answer.
+  // rather than "the data index has a gap" — the guidance is about the data
+  // cards, and the prose above it may be a complete, correct web-grounded answer.
   if (o.answer !== undefined) blocks.push(o.answer);
   if (o.guidance !== undefined) blocks.push(`> ${o.guidance}`);
   if (o.structured_output_error !== undefined) {

@@ -1065,7 +1065,6 @@ describe("channel parity (tako_search and tako_search_advanced)", () => {
       "req-1",
       { total_cost_usd: 0.007 },
       ENV,
-      ["data", "web"],
       false,
       "authenticated",
       { rowCap: "all", keepWebText: true, toolName: "tako_search_advanced" },

@@ -81,6 +81,19 @@ same domains raised it to 24 of 26.
   release, when OpenAI's daily scan picks it up. Keep a changed input schema
   compatible with the approved one until the new definition is live.
 
+## Results report what came back
+
+- **Let an empty result speak for itself.** A search with no card returns an
+  empty `cards` list beside its `web_results`, and nothing else. Zero-card
+  `guidance` that told the model to call `tako_available_data` and retry once
+  was removed in TAKO-5260: nobody had measured whether it helped, and MCP
+  traffic is too low to measure it from production logs. The skill and the
+  `tako_available_data` description already cover a miss.
+- **Add `guidance` only for a fact the model can't see in the result.** Today
+  that's two cases: a `strict: true` pin that returned no cards, where zero
+  cards says something about the filter and not about coverage, and a
+  placeholder card a keyless caller can unlock by signing in.
+
 ## Cost belongs in results, not descriptions
 
 - **Keep prices out of tool descriptions.** None of the comparable paid servers

@@ -6,8 +6,6 @@ import {
   serverInstructionsFor,
 } from "../instructions.js";
 import { TOOL_REGISTRY } from "./_registry.js";
-import { buildSearchOutput } from "./_search_results.js";
-import type { Env } from "../env.js";
 import { isToolOnSurface, outputSchemaForSurface, resolveToolSet } from "./_surface.js";
 import type { Surface } from "../surface.js";
 
@@ -329,80 +327,4 @@ describe("server instructions name no tool outside the resolved ?tools= set", ()
     expect(one).not.toContain("tako_company_agent");
     expect(SERVER_INSTRUCTIONS).not.toContain("tako_company_agent");
   });
-});
-
-/**
- * The same rule, applied to a tool RESULT rather than a description.
- *
- * Everything above scans `tools/list` text, which is why the zero-result
- * guidance escaped: it is built per call, and it branched on TIER
- * (`tier === "free"`) as a proxy for "can this connection call
- * tako_available_data". Tier is not that predicate. `?tools=` REPLACES the
- * defaults (spec D1), so a SIGNED-IN `?tools=search` connection registers
- * `tako_search` alone, took the authenticated arm, and read "Call
- * tako_available_data (free) to learn the canonical metric name" — a call
- * that resolves to the SDK's bare "tool not found".
- *
- * Every branch is enumerated rather than sampled: the guidance has four
- * shapes on the search path plus three on the answer path, and the bug lived
- * in exactly one of them.
- */
-describe("zero-result guidance names no tool the connection lacks", () => {
-  const ENV: Env = { DJANGO_BASE_URL: "https://example.invalid" };
-
-  // The tool sets a real connection can resolve: each surface's defaults, and
-  // — on generic, the only surface `?tools=` reaches — each single-tool
-  // allowlist, which is the narrowest thing an operator can ask for.
-  const connections: Array<{ label: string; surface: Surface; requested: ReadonlySet<string> | null }> = [
-    { label: "generic defaults", surface: "generic", requested: null },
-    { label: "chatgpt", surface: "chatgpt", requested: null },
-    ...TOOL_REGISTRY.map((t) => ({
-      label: `generic ?tools=${t.name}`,
-      surface: "generic" as Surface,
-      requested: new Set([t.name]) as ReadonlySet<string>,
-    })),
-  ];
-
-  for (const { label, surface, requested } of connections) {
-    const registered = resolveToolSet(surface, requested);
-
-    it(`${label} — every tool named in guidance is registered`, () => {
-      for (const tier of ["free", "authenticated"] as const) {
-        for (const sources of [["data"], ["web"], ["data", "web"]] as const) {
-          for (const webResults of [[], [{ title: "t", url: "https://e.com" }]] as const) {
-            for (const extras of [{}, { answer: "Some synthesized prose." }] as const) {
-              const out = buildSearchOutput(
-                [],
-                webResults as never,
-                "req-1",
-                null,
-                ENV,
-                [...sources],
-                false,
-                tier,
-                {
-                  rowCap: null,
-                  keepWebText: false,
-                  registeredTools: registered,
-                  toolName: extras.answer === undefined ? "tako_search" : "tako_search_advanced",
-                },
-                extras,
-              );
-              const guidance = out.guidance;
-              expect(guidance, "a zero-card response must carry guidance").toBeDefined();
-              const named = [...ALL_TOOL_NAMES].filter((name) =>
-                new RegExp(`\\b${name}\\b`).test(guidance ?? ""),
-              );
-              const unreachable = named.filter((name) => !registered.has(name));
-              expect(
-                unreachable,
-                `${label} / ${tier} / sources=${sources.join("+")} / web=${webResults.length} / ` +
-                  `${extras.answer === undefined ? "search" : "answer"}: guidance names unregistered tool(s)`,
-              ).toEqual([]);
-            }
-          }
-        }
-      }
-    });
-  }
 });

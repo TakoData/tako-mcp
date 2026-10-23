@@ -4,10 +4,8 @@
  *
  * Synchronous and fast-only: `effort` is `fast` (default) or `instant`
  * (cached-embed fast path). There is no in-tool deep/research path and
- * no async polling. A zero-card response carries a `guidance` field
- * (built in `_search_results.ts`) steering the model to the free
- * `tako_available_data` coverage check instead of priced
- * reword-and-retry loops.
+ * no async polling. A zero-card response carries no `guidance`: the empty
+ * `cards` list and the `web_results` beside it are the whole verdict.
  *
  * Cards keep search's order. `buildSearchOutput` lifts the first
  * card's `card_id` into top-level widget fields (`pub_id`, `embed_url`,
@@ -60,8 +58,7 @@ const inputSchema = z.object({
   //
   // The ONE field here that keeps a default, and it is not an exception to the
   // no-defaults rule below: the Worker READS `sources` to decide which
-  // per-source blocks to build and which zero-card guidance branch applies. It
-  // is never forwarded to the API as a value.
+  // per-source blocks to build. It is never forwarded to the API as a value.
   sources: looseArray(
     z
       .array(z.enum(["data", "web"]))
@@ -208,7 +205,6 @@ const tako_search = {
     // that also lets this tool run anonymously.
     return runSearch(
       { endpoint: "search", body: buildSearchBody(input, ctx.tier ?? "authenticated") },
-      input.sources,
       null,
       ctx,
       "tako_search",

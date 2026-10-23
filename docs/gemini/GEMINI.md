@@ -39,9 +39,8 @@ opt-in `tako_search_advanced` returns a prose answer instead — name `search_ad
   yourself. A single broad query retrieves worse than three narrow ones.
 - **Search first.** Use `tako_available_data` for questions about what Tako covers. It
   reports on the graph only, so a miss there means fall back to the web half, not give up.
-- **When a search returns zero data cards**, `tako_search` returns a `guidance` field
-  saying so. Run the free coverage check, retry ONCE on the exact name it returns, then
-  stop and answer from the web results; do not rephrase and retry blind.
+- **When no card answers the question**, answer from the web results. To read a page in
+  full, pass its url to `tako_contents`.
 - **Cite what you relay.** Every card carries a source and an **Open in Tako** link.
 
 ## Commands

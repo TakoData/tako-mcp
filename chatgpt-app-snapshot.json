@@ -29,7 +29,7 @@
     "tako_search": {
       "description_sha256": "a4b611e979953fce930ba9e06563a3d295266729272bc264e0f14b8729efe2ce",
       "input_schema_sha256": "d63574b4b90c302d28014df6c86d545dbc99094c236c8f12167f53d5498a08e0",
-      "output_schema_sha256": "69b96f11758976ad1e5ea769f2152526de6e9b862d479d82041b0046b830477c"
+      "output_schema_sha256": "d32265529978a41841d88df6b98ab5229594e380eeeeff7899f4a98996fb9351"
     },
     "tako_visualize": {
       "description_sha256": "8f5f2862aff0f94e6cbd4cca9436926e3ec4859a7a9c8a6beb690f243389e93d",
