@@ -86,10 +86,15 @@ same domains raised it to 24 of 26.
 - **Let an empty search result speak for itself.** A `tako_search` or
   `tako_search_advanced` call with no card returns an empty `cards` list beside
   its `web_results`, and nothing else. TAKO-5260 removed the zero-card
-  `guidance` that told the model to call `tako_available_data` and retry once:
-  nobody had measured whether it helped, and MCP traffic is too low to measure
-  it from production logs. The skill and the `tako_available_data` description
-  already cover a miss.
+  `guidance`. It went in to stop billed reword-and-retry loops: it said
+  rewording wouldn't help and allowed one retry on the canonical name from
+  `tako_available_data`. Models don't loop without it. In the TAKO-4968 runs,
+  the stub answered every search with "No results" and no guidance. In the two
+  arms whose skill had today's `tako-search` step 4 and no retry rule, 8 of 312
+  runs that searched tried one reworded query, and none searched a third time.
+  Every one of those runs had a skill loaded, so a bare `/mcp` host without the
+  skill is still unmeasured. The skill and the `tako_available_data`
+  description already cover a miss.
 - **On the search tools, add `guidance` only for a fact the model can't see in
   the result.** `STRICT_PIN_GUIDANCE` covers a `strict: true` pin that returned
   no cards, where zero cards says something about the filter and not about
