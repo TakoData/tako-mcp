@@ -88,7 +88,7 @@
       "justifications": {
         "read_only_justification": "A call with a query starts a queued agent run that the user can return to later by its run ID and thread ID. The run saves the charts and lists it builds as new Tako cards, each with its own URL.",
         "open_world_justification": "The run searches the live public web, a system outside Tako's first-party context. The cards it saves can be opened by anyone with the link, without signing in.",
-        "destructive_justification": "A call adds a run and new cards. It deletes, overwrites, and sends nothing, and changes no existing record. The cards it saves are public by link and permanent, like the cards tako_visualize publishes.",
+        "destructive_justification": "A call adds a run and new cards. It deletes, overwrites, and sends nothing, and changes no existing record. The cards hold Tako and public web data, not data the user supplied, the same as the cards tako_search returns.",
         "idempotent_justification": "A call with a query starts and bills a new run, so repeating it repeats the work. A call with a run ID only waits on an existing run and repeats nothing; the tool description tells the model to resume with the run ID instead of sending the query again."
       }
     },
@@ -102,7 +102,7 @@
       "justifications": {
         "read_only_justification": "A call with a query starts a queued agent run that the user can return to later by its run ID and thread ID. The run saves the charts and lists it builds as new Tako cards, each with its own URL.",
         "open_world_justification": "The run searches the live public web, a system outside Tako's first-party context. The cards it saves can be opened by anyone with the link, without signing in.",
-        "destructive_justification": "A call adds a run and new cards. It deletes, overwrites, and sends nothing, and changes no existing record. The cards it saves are public by link and permanent, like the cards tako_visualize publishes.",
+        "destructive_justification": "A call adds a run and new cards. It deletes, overwrites, and sends nothing, and changes no existing record. The cards hold Tako and public web data, not data the user supplied, the same as the cards tako_search returns.",
         "idempotent_justification": "A call with a query starts and bills a new run, so repeating it repeats the work. A call with a run ID only waits on an existing run and repeats nothing; the tool description tells the model to resume with the run ID instead of sending the query again."
       }
     }
