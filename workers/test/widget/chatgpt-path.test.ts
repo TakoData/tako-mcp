@@ -607,3 +607,282 @@ describe("ChatGPT reload rehydration", () => {
     expect(renderedIframe(m)).toBe(true);
   });
 });
+
+describe("ChatGPT carousel", () => {
+  const CAROUSEL_PUB_IDS = [PUB_ID, "Lm3nQ8rT2vWx9yZa1bCd", "Ef4gH5iJ6kL7mN8oP9qR"];
+
+  interface CarouselChart {
+    pub_id: string;
+    embed_url: string;
+    image_url: string;
+    image_natural_width?: number;
+    image_natural_height?: number;
+  }
+
+  function carouselChart(pubId: string, withDims = true): CarouselChart {
+    const chart: CarouselChart = {
+      pub_id: pubId,
+      embed_url: `https://tako.com/embed/${pubId}/?dark_mode=auto&showShare=true`,
+      image_url: `https://tako.com/api/v1/image/${pubId}/?dark_mode=true`,
+    };
+    if (withDims) {
+      chart.image_natural_width = 2400;
+      chart.image_natural_height = 1100;
+    }
+    return chart;
+  }
+
+  function nth<T>(items: readonly T[], i: number): T {
+    const item = items[i];
+    if (item === undefined) throw new Error(`no item at index ${i}`);
+    return item;
+  }
+
+  function threeCharts(withDims = true): CarouselChart[] {
+    return CAROUSEL_PUB_IDS.map((id) => carouselChart(id, withDims));
+  }
+
+  function mountCarousel(
+    charts: CarouselChart[],
+    extra: Record<string, unknown> = {},
+  ): Mounted {
+    return mountWidget(html(), {
+      toolOutput: PROD_STRUCTURED_CONTENT,
+      toolResponseMetadata: { charts },
+      ...extra,
+    });
+  }
+
+  function carouselFrames(m: Mounted): HTMLIFrameElement[] {
+    return Array.from(
+      m.widgetWin.document.querySelectorAll<HTMLIFrameElement>(
+        "#tako-carousel iframe",
+      ),
+    );
+  }
+
+  function carouselSlides(m: Mounted): HTMLElement[] {
+    return Array.from(
+      m.widgetWin.document.querySelectorAll<HTMLElement>(
+        "#tako-carousel .tako-slide",
+      ),
+    );
+  }
+
+  function postEmbedHeight(m: Mounted, source: Window, height: number): void {
+    const WidgetMessageEvent = (
+      m.widgetWin as unknown as { MessageEvent: typeof MessageEvent }
+    ).MessageEvent;
+    m.widgetWin.dispatchEvent(
+      new WidgetMessageEvent("message", {
+        data: { type: "tako-embed-height", height },
+        origin: "https://tako.com",
+        source: source as unknown as MessageEventSource,
+      }),
+    );
+  }
+
+  function fireFrameSrcViolation(m: Mounted): void {
+    const WidgetEvent = (m.widgetWin as unknown as { Event: typeof Event })
+      .Event;
+    const event = new WidgetEvent("securitypolicyviolation");
+    Object.assign(event, {
+      effectiveDirective: "frame-src",
+      violatedDirective: "frame-src",
+    });
+    m.widgetWin.document.dispatchEvent(event);
+  }
+
+  function expectPngFallback(m: Mounted, charts: CarouselChart[]): void {
+    const slides = carouselSlides(m);
+    expect(slides).toHaveLength(charts.length);
+    slides.forEach((slide, i) => {
+      const image = slide.querySelector("a > img") as HTMLImageElement;
+      expect(image.getAttribute("src")).toBe(nth(charts, i).image_url);
+      const link = image.parentElement as HTMLAnchorElement;
+      expect(link.getAttribute("href")).toBe(nth(charts, i).embed_url);
+      expect(link.getAttribute("target")).toBe("_blank");
+      expect(link.getAttribute("rel")).toBe("noopener noreferrer");
+    });
+    expect(carouselFrames(m)).toHaveLength(0);
+  }
+
+  it("renders one iframe per chart, in order", () => {
+    const m = mountCarousel(threeCharts());
+    const frames = carouselFrames(m);
+    expect(frames).toHaveLength(3);
+    frames.forEach((f, i) => {
+      expect(f.getAttribute("src")).toContain(nth(CAROUSEL_PUB_IDS, i));
+      expect(f.getAttribute("src")).toContain("disable_tracking=true");
+      expect(f.getAttribute("title")).toBe(`Tako chart ${i + 1} of 3`);
+      expect(f.classList.contains("veiled")).toBe(true);
+    });
+    expect(frame(m).getAttribute("src")).toBeNull();
+    const doc = m.widgetWin.document;
+    expect(doc.getElementById("tako-carousel")!.classList.contains("hidden")).toBe(false);
+    expect(doc.getElementById("tako-prev")!.getAttribute("aria-label")).toBe("Previous chart");
+    expect(doc.getElementById("tako-next")!.getAttribute("aria-label")).toBe("Next chart");
+  });
+
+  it("keeps the single-frame path for one chart", () => {
+    const m = mountWidget(html(), { toolOutput: PROD_STRUCTURED_CONTENT });
+    expect(frame(m).getAttribute("src")).toContain(PUB_ID);
+    expect(carouselFrames(m)).toHaveLength(0);
+  });
+
+  it("keeps the single-frame path for a one-entry chart list", () => {
+    const m = mountCarousel([carouselChart(PUB_ID)]);
+    expect(frame(m).getAttribute("src")).toContain(PUB_ID);
+    expect(carouselFrames(m)).toHaveLength(0);
+  });
+
+  it("drops a chart whose embed is off the pinned origin", () => {
+    const charts = threeCharts();
+    charts[1] = {
+      ...nth(charts, 1),
+      embed_url: `https://evil.example/embed/${nth(CAROUSEL_PUB_IDS, 1)}/?dark_mode=auto`,
+    };
+    const m = mountCarousel(charts);
+    const frames = carouselFrames(m);
+    expect(frames).toHaveLength(2);
+    expect(nth(frames, 0).getAttribute("src")).toContain(nth(CAROUSEL_PUB_IDS, 0));
+    expect(nth(frames, 1).getAttribute("src")).toContain(nth(CAROUSEL_PUB_IDS, 2));
+    expect(nth(frames, 1).getAttribute("title")).toBe("Tako chart 2 of 2");
+  });
+
+  it("grows to the tallest slide and never shrinks", () => {
+    const heights: number[] = [];
+    const m = mountCarousel(threeCharts(), {
+      notifyIntrinsicHeight: (h: number) => heights.push(h),
+    });
+    const frames = carouselFrames(m);
+    postEmbedHeight(m, nth(frames, 0).contentWindow!, 500);
+    postEmbedHeight(m, nth(frames, 1).contentWindow!, 650);
+    postEmbedHeight(m, nth(frames, 2).contentWindow!, 400);
+    expect(heights[heights.length - 1]).toBe(650);
+    expect(heights).toEqual([1, 500, 650]);
+    frames.forEach((f) => expect(f.classList.contains("veiled")).toBe(false));
+    expect(nth(frames, 2).getAttribute("height")).toBe("400");
+  });
+
+  it("ignores an embed height report from a window that is not a slide", () => {
+    const heights: number[] = [];
+    const m = mountCarousel(threeCharts(), {
+      notifyIntrinsicHeight: (h: number) => heights.push(h),
+    });
+    postEmbedHeight(m, frame(m).contentWindow!, 500);
+    expect(heights).toEqual([1]);
+    carouselFrames(m).forEach((f) =>
+      expect(f.classList.contains("veiled")).toBe(true),
+    );
+  });
+
+  function pinContentDocument(f: HTMLIFrameElement, doc: unknown): void {
+    Object.defineProperty(f, "contentDocument", {
+      configurable: true,
+      get: () => doc as Document,
+    });
+  }
+
+  function fireLoad(m: Mounted, el: Element): void {
+    const WidgetEvent = (m.widgetWin as unknown as { Event: typeof Event }).Event;
+    el.dispatchEvent(new WidgetEvent("load"));
+  }
+
+  it("ignores a slide's stray about:blank load and reveals on the genuine one", () => {
+    const heights: number[] = [];
+    const m = mountCarousel(threeCharts(), {
+      notifyIntrinsicHeight: (h: number) => heights.push(h),
+    });
+    const first = nth(carouselFrames(m), 0);
+    Object.defineProperty(nth(carouselSlides(m), 0), "clientWidth", {
+      configurable: true,
+      get: () => 600,
+    });
+    pinContentDocument(first, { location: { href: "about:blank" } });
+    fireLoad(m, first);
+    expect(first.classList.contains("veiled")).toBe(true);
+    expect(heights).toEqual([1]);
+    pinContentDocument(first, null);
+    fireLoad(m, first);
+    expect(first.classList.contains("veiled")).toBe(false);
+    expect(heights).toEqual([1, Math.round((600 * 1100) / 2400)]);
+  });
+
+  it("falls back to each slide's PNG when the embed times out", () => {
+    vi.useFakeTimers();
+    try {
+      const charts = threeCharts();
+      const m = mountCarousel(charts);
+      vi.advanceTimersByTime(8000);
+      expectPngFallback(m, charts);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps a slide that reported its height when the others time out", () => {
+    vi.useFakeTimers();
+    try {
+      const m = mountCarousel(threeCharts());
+      const first = nth(carouselFrames(m), 0);
+      postEmbedHeight(m, first.contentWindow!, 500);
+      vi.advanceTimersByTime(8000);
+      const frames = carouselFrames(m);
+      expect(frames).toEqual([first]);
+      expect(nth(carouselSlides(m), 1).querySelector("a > img")).not.toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("falls back on a frame-src CSP violation", () => {
+    const heights: number[] = [];
+    const charts = threeCharts();
+    const m = mountCarousel(charts, {
+      notifyIntrinsicHeight: (h: number) => heights.push(h),
+    });
+    fireFrameSrcViolation(m);
+    expectPngFallback(m, charts);
+    expect(Math.max(...heights)).toBeGreaterThan(1);
+  });
+
+  it("sizes a slide without dimensions from the payload height", () => {
+    const m = mountCarousel(threeCharts(false));
+    const frames = carouselFrames(m);
+    expect(frames).toHaveLength(3);
+    frames.forEach((f) => expect(f.getAttribute("height")).toBe("720"));
+  });
+
+  it("next scrolls the row by one slide", () => {
+    const m = mountCarousel(threeCharts());
+    const doc = m.widgetWin.document;
+    const track = doc.querySelector("#tako-carousel .tako-track") as HTMLElement;
+    const scrollBy = vi.fn();
+    (track as unknown as { scrollBy: unknown }).scrollBy = scrollBy;
+    (doc.getElementById("tako-next") as HTMLButtonElement).click();
+    expect(scrollBy).toHaveBeenCalledTimes(1);
+    const [scrollOptions] = nth(scrollBy.mock.calls, 0) as [{ left: number }];
+    expect(scrollOptions.left).toBeGreaterThan(0);
+  });
+
+  it("mirrors the chart list into widget state", () => {
+    const writes: Array<{ charts?: CarouselChart[] }> = [];
+    mountCarousel(threeCharts(), {
+      setWidgetState: (s: { charts?: CarouselChart[] }) => writes.push(s),
+    });
+    expect(writes).toHaveLength(1);
+    const mirrored = nth(writes, 0).charts ?? [];
+    expect(mirrored).toHaveLength(3);
+    expect(nth(mirrored, 1)).toEqual(carouselChart(nth(CAROUSEL_PUB_IDS, 1)));
+  });
+
+  it("repaints the carousel from widget state on reload", () => {
+    const m = mountWidget(html(), {
+      toolOutput: { width: 900, height: 720 },
+      toolResponseMetadata: {},
+      widgetState: { ...PROD_STRUCTURED_CONTENT, charts: threeCharts() },
+    });
+    expect(carouselFrames(m)).toHaveLength(3);
+  });
+});

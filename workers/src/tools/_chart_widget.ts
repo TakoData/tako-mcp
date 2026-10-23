@@ -326,6 +326,9 @@ const MAX_INLINE_WIDGET_HEIGHT_PX = 500;
 // scrollable overflow inside the widget is not.
 const ASSUMED_WIDGET_WIDTH_PX = 800;
 
+const CAROUSEL_GAP_PX = 8;
+const CAROUSEL_PEEK_PX = 32;
+
 /**
  * HTML-escape a string for safe interpolation into attribute values
  * or text content. Base64 data URIs and standard URLs don't normally
@@ -670,6 +673,21 @@ const WIDGET_HTML = `<!doctype html>
      permanent. \`!important\` so the class outranks the inline height
      \`setFrameHeight\` stages at commit time. */
   .veiled { height: 0 !important; min-height: 0 !important; }
+  #tako-carousel { position: relative; width: 100%; }
+  .tako-track { display: flex; gap: ${CAROUSEL_GAP_PX}px; align-items: flex-start; overflow-x: auto; scroll-snap-type: x mandatory; scrollbar-width: none; }
+  .tako-track::-webkit-scrollbar { display: none; }
+  .tako-slide { flex: 0 0 calc(100% - ${CAROUSEL_PEEK_PX}px); min-width: 0; scroll-snap-align: start; }
+  .tako-slide iframe { width: 100%; border: 0; display: block; background: transparent; }
+  .tako-slide a { display: block; cursor: pointer; text-decoration: none; color: #4aa9ff; }
+  .tako-slide img { width: 100%; height: auto; max-height: ${MAX_INLINE_WIDGET_HEIGHT_PX}px; object-fit: contain; display: block; background: transparent; }
+  #tako-prev, #tako-next {
+    position: absolute; top: 50%; transform: translateY(-50%); z-index: 1;
+    width: 32px; height: 32px; padding: 0; border: 0; border-radius: 50%;
+    background: rgba(17, 17, 17, 0.6); color: #ffffff; font-size: 20px; line-height: 32px;
+    cursor: pointer;
+  }
+  #tako-prev { left: 4px; }
+  #tako-next { right: 4px; }
 </style>
 </head>
 <body>
@@ -709,6 +727,11 @@ const WIDGET_HTML = `<!doctype html>
   rel="noopener noreferrer"
   title="Open interactive chart"
 ><img id="tako-embed-img" alt="Tako chart" /></a>
+<div id="tako-carousel" class="hidden">
+  <div class="tako-track"></div>
+  <button id="tako-prev" class="hidden" type="button" aria-label="Previous chart">&#8249;</button>
+  <button id="tako-next" class="hidden" type="button" aria-label="Next chart">&#8250;</button>
+</div>
 <script>
 (function () {
   "use strict";
@@ -750,9 +773,12 @@ const WIDGET_HTML = `<!doctype html>
   // together. One helper so the next height gotcha is a one-line fix
   // instead of the four separate inlined call sites this replaces.
   function setFrameHeight(n) {
-    frame.style.height = n + "px";
-    frame.style.minHeight = n + "px";
-    frame.setAttribute("height", String(n));
+    setIframeHeight(frame, n);
+  }
+  function setIframeHeight(el, n) {
+    el.style.height = n + "px";
+    el.style.minHeight = n + "px";
+    el.setAttribute("height", String(n));
   }
 
   // Height for the embed iframe, derived from the CARD's real aspect ratio.
@@ -773,13 +799,16 @@ const WIDGET_HTML = `<!doctype html>
   // Returns null when we have no dimensions, so callers keep the old behavior
   // rather than guessing.
   function aspectHeight(naturalW, naturalH) {
-    if (!(naturalW > 0) || !(naturalH > 0)) return null;
     var cw =
       (document.documentElement && document.documentElement.clientWidth) ||
       (document.body && document.body.clientWidth) ||
       0;
-    if (!(cw > 0)) return null;
-    return Math.round((cw * naturalH) / naturalW);
+    return aspectHeightAt(cw, naturalW, naturalH);
+  }
+  function aspectHeightAt(width, naturalW, naturalH) {
+    if (!(naturalW > 0) || !(naturalH > 0)) return null;
+    if (!(width > 0)) return null;
+    return Math.round((width * naturalH) / naturalW);
   }
 
   // Record the embed iframe's origin so the \`tako-embed-height\` resize
@@ -1344,10 +1373,8 @@ const WIDGET_HTML = `<!doctype html>
       log("iframe probe succeeded, upgraded to interactive", { height: h });
     }
     function onViolation(event) {
-      var directive =
-        event && (event.effectiveDirective || event.violatedDirective);
-      if (typeof directive === "string" && directive.indexOf("frame-src") === 0) {
-        fail("csp:" + directive);
+      if (isFrameSrcViolation(event)) {
+        fail("csp:" + (event.effectiveDirective || event.violatedDirective));
       }
     }
     function onLoad() {
@@ -1468,10 +1495,8 @@ const WIDGET_HTML = `<!doctype html>
       });
     }
     function onViolation(event) {
-      var directive =
-        event && (event.effectiveDirective || event.violatedDirective);
-      if (typeof directive === "string" && directive.indexOf("frame-src") === 0) {
-        downgrade("csp:" + directive);
+      if (isFrameSrcViolation(event)) {
+        downgrade("csp:" + (event.effectiveDirective || event.violatedDirective));
       }
     }
     function onLoad() {
@@ -1491,13 +1516,10 @@ const WIDGET_HTML = `<!doctype html>
       // \`contentDocument\` reads null (or throws on stricter engines). So a
       // readable document still sitting on about:blank identifies the
       // stray exactly, with no timing heuristics.
-      try {
-        var straydoc = frame.contentDocument;
-        if (straydoc && straydoc.location && straydoc.location.href === "about:blank") {
-          log("ignored stray about:blank load");
-          return;
-        }
-      } catch (e) { /* cross-origin read — the genuine embed load */ }
+      if (isStrayBlankLoad(frame)) {
+        log("ignored stray about:blank load");
+        return;
+      }
       cleanup();
       log("committed iframe loaded", { src: url });
       // Reveal-on-load: the embed has rendered, so it is finally safe to
@@ -1509,6 +1531,20 @@ const WIDGET_HTML = `<!doctype html>
     frame.addEventListener("load", onLoad);
     timer = setTimeout(function () { downgrade("timeout"); }, IFRAME_SETTLE_MS);
     log("iframe watchdog armed", { src: url });
+  }
+
+  function isStrayBlankLoad(el) {
+    try {
+      var straydoc = el.contentDocument;
+      return !!(straydoc && straydoc.location && straydoc.location.href === "about:blank");
+    } catch (e) { /* cross-origin read — the genuine embed load */ }
+    return false;
+  }
+
+  function isFrameSrcViolation(event) {
+    var directive =
+      event && (event.effectiveDirective || event.violatedDirective);
+    return typeof directive === "string" && directive.indexOf("frame-src") === 0;
   }
 
   // Native-card upgrade. Replace the PNG with Tako's REAL card — the same
@@ -1894,6 +1930,230 @@ const WIDGET_HTML = `<!doctype html>
     rendered = true;
   }
 
+  function requestedHeight(structuredContent) {
+    return typeof structuredContent.height === "number" && structuredContent.height > 0
+      ? structuredContent.height
+      : 600;
+  }
+
+  function isHttpUrl(v) {
+    return typeof v === "string" && /^https?:\\/\\//.test(v);
+  }
+
+  function pickChartList(structuredContent, meta) {
+    if (meta && typeof meta === "object" && Array.isArray(meta.charts)) return meta.charts;
+    if (Array.isArray(structuredContent.charts)) return structuredContent.charts;
+    return null;
+  }
+
+  function carouselCharts(charts) {
+    if (!charts) return [];
+    return charts.filter(function (chart) {
+      return (
+        !!chart &&
+        typeof chart === "object" &&
+        isHttpUrl(chart.embed_url) &&
+        embedOriginOk(chart.embed_url)
+      );
+    });
+  }
+
+  var carousel = document.getElementById("tako-carousel");
+  var carouselTrack = carousel.querySelector(".tako-track");
+  var carouselPrev = document.getElementById("tako-prev");
+  var carouselNext = document.getElementById("tako-next");
+  var carouselSlides = [];
+  var carouselNotifiedHeight = 0;
+
+  function renderCarousel(charts, fallbackHeight) {
+    if (carouselSlides.length > 0) return true;
+    carousel.classList.remove("hidden");
+    document.addEventListener("securitypolicyviolation", onCarouselViolation);
+    charts.forEach(function (chart, i) {
+      carouselSlides.push(mountSlide(chart, i, charts.length, fallbackHeight));
+    });
+    carouselTrack.addEventListener("scroll", updateCarouselNav);
+    window.addEventListener("resize", updateCarouselNav);
+    carouselPrev.addEventListener("click", function () { scrollCarousel(-1); });
+    carouselNext.addEventListener("click", function () { scrollCarousel(1); });
+    placeholder.classList.add("hidden");
+    rendered = true;
+    updateCarouselNav();
+    log("rendered", { mode: "carousel", slides: charts.length });
+    return true;
+  }
+
+  function mountSlide(chart, index, total, fallbackHeight) {
+    var el = document.createElement("div");
+    el.className = "tako-slide";
+    carouselTrack.appendChild(el);
+    var iframe = document.createElement("iframe");
+    iframe.className = "veiled";
+    iframe.setAttribute("scrolling", "no");
+    iframe.setAttribute("frameborder", "0");
+    iframe.setAttribute("allow", "fullscreen; clipboard-write");
+    iframe.setAttribute("title", "Tako chart " + (index + 1) + " of " + total);
+    var src = withHostTheme(withoutTracking(chart.embed_url));
+    var slide = {
+      chart: chart,
+      title: iframe.getAttribute("title"),
+      el: el,
+      iframe: iframe,
+      origin: originOf(src),
+      fallbackHeight: fallbackHeight,
+      height: 0,
+      revealed: false,
+      settled: false,
+      timer: null,
+      onLoad: null,
+    };
+    setIframeHeight(iframe, slideFitHeight(slide));
+    slide.onLoad = function () {
+      if (slide.settled || isStrayBlankLoad(iframe)) return;
+      settleSlide(slide);
+      revealSlide(slide, slideFitHeight(slide));
+    };
+    iframe.addEventListener("load", slide.onLoad);
+    iframe.src = src;
+    el.appendChild(iframe);
+    slide.timer = setTimeout(function () {
+      downgradeSlide(slide, "timeout");
+    }, IFRAME_SETTLE_MS);
+    return slide;
+  }
+
+  function originOf(url) {
+    try {
+      return new URL(url).origin;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function slideFitHeight(slide) {
+    var naturalW =
+      typeof slide.chart.image_natural_width === "number" ? slide.chart.image_natural_width : 0;
+    var naturalH =
+      typeof slide.chart.image_natural_height === "number" ? slide.chart.image_natural_height : 0;
+    var fitted = aspectHeightAt(slide.el.clientWidth, naturalW, naturalH);
+    return fitted !== null ? fitted : slide.fallbackHeight;
+  }
+
+  function settleSlide(slide) {
+    if (slide.settled) return;
+    slide.settled = true;
+    if (slide.timer !== null) clearTimeout(slide.timer);
+    if (slide.iframe) slide.iframe.removeEventListener("load", slide.onLoad);
+    var unsettled = carouselSlides.filter(function (s) { return !s.settled; });
+    if (unsettled.length === 0) {
+      document.removeEventListener("securitypolicyviolation", onCarouselViolation);
+    }
+  }
+
+  function revealSlide(slide, h) {
+    slide.height = h;
+    slide.revealed = true;
+    if (slide.iframe) {
+      setIframeHeight(slide.iframe, h);
+      slide.iframe.classList.remove("veiled");
+    }
+    growCarouselHeight();
+  }
+
+  function growCarouselHeight() {
+    var tallest = 0;
+    carouselSlides.forEach(function (s) {
+      if (s.revealed && s.height > tallest) tallest = s.height;
+    });
+    if (tallest > carouselNotifiedHeight) {
+      carouselNotifiedHeight = tallest;
+      notifyHeight(tallest);
+      log("carousel resized", { height: tallest });
+    }
+    updateCarouselNav();
+  }
+
+  function downgradeSlide(slide, reason) {
+    if (slide.settled) return;
+    var estimate = Math.min(slideFitHeight(slide), ${MAX_INLINE_WIDGET_HEIGHT_PX});
+    settleSlide(slide);
+    slide.el.removeChild(slide.iframe);
+    slide.iframe = null;
+    var link = document.createElement("a");
+    link.href = slide.chart.embed_url;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    link.title = "Open interactive chart";
+    if (isHttpUrl(slide.chart.image_url)) {
+      var img = document.createElement("img");
+      img.alt = slide.title;
+      img.addEventListener("load", function () {
+        var shownH = Math.min(
+          Math.round(img.getBoundingClientRect().height || img.offsetHeight || 0),
+          ${MAX_INLINE_WIDGET_HEIGHT_PX}
+        );
+        if (shownH > 0) revealSlide(slide, shownH);
+      });
+      img.addEventListener("error", function () {
+        link.textContent = "Open interactive chart →";
+      });
+      img.src = slide.chart.image_url;
+      link.appendChild(img);
+    } else {
+      link.textContent = "Open interactive chart →";
+    }
+    slide.el.appendChild(link);
+    revealSlide(slide, estimate);
+    log("carousel slide fell back to image", { reason: reason, src: slide.chart.embed_url });
+  }
+
+  function onCarouselViolation(event) {
+    if (!isFrameSrcViolation(event)) return;
+    var reason = "csp:" + (event.effectiveDirective || event.violatedDirective);
+    carouselSlides.forEach(function (s) { downgradeSlide(s, reason); });
+  }
+
+  function carouselSlideFor(source) {
+    var i;
+    for (i = 0; i < carouselSlides.length; i++) {
+      var s = carouselSlides[i];
+      if (s.iframe && s.iframe.contentWindow === source) return s;
+    }
+    return null;
+  }
+
+  function onCarouselEmbedHeight(event, height) {
+    var slide = carouselSlideFor(event.source);
+    if (!slide || event.origin !== slide.origin) return;
+    var n = acceptedEmbedHeight(height);
+    if (n === null) return;
+    settleSlide(slide);
+    revealSlide(slide, n);
+    log("carousel slide resized via embed handshake", { height: n });
+  }
+
+  function updateCarouselNav() {
+    var shown = carouselNotifiedHeight > 0;
+    var maxScroll = carouselTrack.scrollWidth - carouselTrack.clientWidth;
+    carouselPrev.classList.toggle("hidden", !shown || carouselTrack.scrollLeft <= 1);
+    carouselNext.classList.toggle("hidden", !shown || carouselTrack.scrollLeft >= maxScroll - 1);
+  }
+
+  function scrollCarousel(direction) {
+    var first = carouselSlides.length > 0 ? carouselSlides[0].el : null;
+    var step = (first ? first.getBoundingClientRect().width : 0) + ${CAROUSEL_GAP_PX};
+    if (typeof carouselTrack.scrollBy === "function") {
+      carouselTrack.scrollBy({ left: direction * step, behavior: "smooth" });
+    } else {
+      carouselTrack.scrollLeft += direction * step;
+    }
+  }
+
+  function acceptedEmbedHeight(h) {
+    if (typeof h !== "number" || !isFinite(h) || h <= 0 || h > 4000) return null;
+    return Math.round(h);
+  }
+
   function render(structuredContent, meta) {
     if (rendered) return true;
     if (!structuredContent || typeof structuredContent !== "object") return false;
@@ -1926,7 +2186,12 @@ const WIDGET_HTML = `<!doctype html>
     // identity NOW rather than at one of render()'s several success exits:
     // what we are protecting against is losing the payload, and every branch
     // below renders the same card from the same two URLs.
-    persistWidgetState(structuredContent);
+    var chartList = pickChartList(structuredContent, meta);
+    persistWidgetState(structuredContent, chartList);
+    var slideCharts = carouselCharts(chartList);
+    if (hasOpenAiRuntime() && slideCharts.length >= 2) {
+      return renderCarousel(slideCharts, requestedHeight(structuredContent));
+    }
     var url = structuredContent.embed_url;
     var imgUrl = structuredContent.image_url;
     // \`image_data_url\` and PNG natural dimensions live on \`_meta\`
@@ -1976,10 +2241,7 @@ const WIDGET_HTML = `<!doctype html>
     // failure).
     var imageSrc = validDataImage ? imgDataUrl : validHttpImage ? imgUrl : null;
     var validImage = imageSrc !== null;
-    var h =
-      typeof structuredContent.height === "number" && structuredContent.height > 0
-        ? structuredContent.height
-        : 600;
+    var h = requestedHeight(structuredContent);
     var useIframe = hasOpenAiRuntime() && validEmbed;
 
     if (useIframe) {
@@ -2183,32 +2445,50 @@ const WIDGET_HTML = `<!doctype html>
   // renders the cross-origin \`image_url\` directly. A restored render on
   // ChatGPT therefore takes the same branch it took the first time.
   var lastPersistedKey = null;
-  function persistWidgetState(structuredContent) {
+  function persistWidgetState(structuredContent, charts) {
     var w = window;
     if (!w || !w.openai || typeof w.openai.setWidgetState !== "function") return;
     var embedUrl = typeof structuredContent.embed_url === "string" ? structuredContent.embed_url : "";
     var imageUrl = typeof structuredContent.image_url === "string" ? structuredContent.image_url : "";
     if (!embedUrl && !imageUrl) return;
+    var mirroredCharts = mirrorCharts(charts);
     // Write-once per card. \`setWidgetState\` re-renders the widget on some
     // hosts, and render() is reachable from a 250 ms poll, so an unguarded
     // write is a loop — the same hazard the height notifier guards against.
     var key = embedUrl + "|" + imageUrl;
+    if (mirroredCharts) {
+      key += "|" + mirroredCharts.map(function (c) { return c.embed_url; }).join("|");
+    }
     if (key === lastPersistedKey) return;
     lastPersistedKey = key;
+    var state = {
+      pub_id: structuredContent.pub_id,
+      embed_url: structuredContent.embed_url,
+      image_url: structuredContent.image_url,
+      width: structuredContent.width,
+      height: structuredContent.height,
+      dark_mode: structuredContent.dark_mode,
+    };
+    if (mirroredCharts) state.charts = mirroredCharts;
     try {
-      w.openai.setWidgetState({
-        pub_id: structuredContent.pub_id,
-        embed_url: structuredContent.embed_url,
-        image_url: structuredContent.image_url,
-        width: structuredContent.width,
-        height: structuredContent.height,
-        dark_mode: structuredContent.dark_mode,
-      });
+      w.openai.setWidgetState(state);
     } catch (e) {
       // Best-effort: a host without the API, or one that rejects the payload,
       // must not take down the render that is already in progress.
       log("widget-state persist failed", { error: String(e) });
     }
+  }
+
+  function mirrorCharts(charts) {
+    if (!charts) return null;
+    return charts
+      .filter(function (c) { return !!c && typeof c === "object"; })
+      .map(function (c) {
+        var entry = { pub_id: c.pub_id, embed_url: c.embed_url, image_url: c.image_url };
+        if (typeof c.image_natural_width === "number") entry.image_natural_width = c.image_natural_width;
+        if (typeof c.image_natural_height === "number") entry.image_natural_height = c.image_natural_height;
+        return entry;
+      });
   }
 
   // Does this object look like the tool result's \`_meta\` — the one the chart
@@ -2219,6 +2499,7 @@ const WIDGET_HTML = `<!doctype html>
     if (!o || typeof o !== "object") return false;
     return (
       typeof o.image_natural_width === "number" ||
+      Array.isArray(o.charts) ||
       typeof o.image_data_url === "string" ||
       typeof o.native_card_url === "string"
     );
@@ -2818,6 +3099,10 @@ const WIDGET_HTML = `<!doctype html>
       }
       return;
     }
+    if (msg.type === "tako-embed-height" && carouselSlides.length > 0) {
+      onCarouselEmbedHeight(event, msg.height);
+      return;
+    }
     if (msg.type === "tako-embed-height" && embedOrigin && event.origin === embedOrigin) {
       // Source pin, on top of the origin gate: only the widget's OWN embed
       // iframe may drive resize/reveal. Origin alone would also admit any
@@ -2826,9 +3111,8 @@ const WIDGET_HTML = `<!doctype html>
       // embed traversing \`top.frames\`), and this branch now controls
       // visibility, not just size.
       if (event.source !== frame.contentWindow) return;
-      var h = msg.height;
-      if (typeof h !== "number" || !isFinite(h) || h <= 0 || h > 4000) return;
-      var n = Math.round(h);
+      var n = acceptedEmbedHeight(msg.height);
+      if (n === null) return;
       // Latch BEFORE resizing: \`notifyHeight\` can reenter through the host,
       // and a resize that lands between the two calls would still be reading
       // the pre-latch value and could re-derive over what we just set.
