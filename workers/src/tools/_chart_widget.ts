@@ -741,6 +741,9 @@ const WIDGET_HTML = `<!doctype html>
   var placeholder = document.getElementById("tako-placeholder");
   var empty = document.getElementById("tako-empty");
   var rendered = false;
+  var singleFrameAwaitingMeta = false;
+  var singleFramePayload = null;
+  var refitCommittedFrame = null;
   // Origin of the iframe we loaded — used to gate the height handshake
   // listener below so we only honor resize messages from the actual
   // embed page, not arbitrary cross-frame senders.
@@ -1413,6 +1416,7 @@ const WIDGET_HTML = `<!doctype html>
   // subresource, so a stalled font could otherwise let the timeout
   // downgrade a chart the user is already looking at.
   var settleCommittedWatch = null;
+  var cancelCommittedWatch = null;
 
   // Watch the committed (initially veiled) embed iframe and downgrade to
   // the PNG if it never loads. Used only on the \`window.openai\` path,
@@ -1450,9 +1454,15 @@ const WIDGET_HTML = `<!doctype html>
       cleanup();
       log("committed iframe settled via embed handshake", { src: url });
     };
+    cancelCommittedWatch = function () {
+      if (settled) return;
+      cleanup();
+      log("committed iframe watchdog cancelled", { src: url });
+    };
     function downgrade(reason) {
       if (settled) return;
       cleanup();
+      singleFrameAwaitingMeta = false;
       // Unload and hide the frame before painting, so a late-arriving embed
       // cannot appear on top of the PNG, and stop honoring its height
       // messages.
@@ -1693,7 +1703,9 @@ const WIDGET_HTML = `<!doctype html>
   // Some hosts gate widget data delivery on the iframe signaling its
   // intrinsic height. We notify on load (placeholder height) and again
   // after rendering. No-op on hosts that don't expose the function.
+  var highestNotifiedHeight = 0;
   function notifyHeight(h) {
+    if (h > highestNotifiedHeight) highestNotifiedHeight = h;
     // ChatGPT Apps SDK mechanism.
     try {
       if (window.openai && typeof window.openai.notifyIntrinsicHeight === "function") {
@@ -2132,8 +2144,35 @@ const WIDGET_HTML = `<!doctype html>
     log("carousel slide resized via embed handshake", { height: n });
   }
 
+  function upgradeSingleFrameToCarousel(meta) {
+    if (!hasWidgetMeta(meta)) return;
+    singleFrameAwaitingMeta = false;
+    var chartList = pickChartList(singleFramePayload, meta);
+    var slideCharts = carouselCharts(chartList);
+    if (slideCharts.length < 2) return;
+    tearDownSingleFrame();
+    persistWidgetState(singleFramePayload, chartList);
+    carouselNotifiedHeight = highestNotifiedHeight;
+    renderCarousel(slideCharts, requestedHeight(singleFramePayload));
+    log("upgraded single frame to carousel", { slides: slideCharts.length });
+  }
+
+  function tearDownSingleFrame() {
+    if (typeof cancelCommittedWatch === "function") cancelCommittedWatch();
+    if (refitCommittedFrame) window.removeEventListener("resize", refitCommittedFrame);
+    refitCommittedFrame = null;
+    embedOrigin = null;
+    frame.classList.remove("veiled");
+    frame.classList.add("hidden");
+    frame.src = "about:blank";
+  }
+
+  function anySlideRevealed() {
+    return carouselSlides.some(function (s) { return s.revealed; });
+  }
+
   function updateCarouselNav() {
-    var shown = carouselNotifiedHeight > 0;
+    var shown = anySlideRevealed();
     var maxScroll = carouselTrack.scrollWidth - carouselTrack.clientWidth;
     carouselPrev.classList.toggle("hidden", !shown || carouselTrack.scrollLeft <= 1);
     carouselNext.classList.toggle("hidden", !shown || carouselTrack.scrollLeft >= maxScroll - 1);
@@ -2155,7 +2194,10 @@ const WIDGET_HTML = `<!doctype html>
   }
 
   function render(structuredContent, meta) {
-    if (rendered) return true;
+    if (rendered) {
+      if (singleFrameAwaitingMeta) upgradeSingleFrameToCarousel(meta);
+      return true;
+    }
     if (!structuredContent || typeof structuredContent !== "object") return false;
     // Also here, not just on the MCP handshake: ChatGPT never sends
     // \`hostContext\`, so \`window.openai.theme\` is only readable on this path.
@@ -2311,7 +2353,7 @@ const WIDGET_HTML = `<!doctype html>
       // its life, even once the column width became known. That is the exact
       // failure this block exists to prevent, reached by a different route.
       // \`aspectHeight\` already declines per-event, so let it.
-      window.addEventListener("resize", function () {
+      refitCommittedFrame = function () {
         // Stands down while the frame is hidden (downgraded) OR still
         // veiled awaiting its \`load\` reveal — revealCommittedFrame re-fits
         // for the veiled window, so nothing is lost.
@@ -2332,7 +2374,10 @@ const WIDGET_HTML = `<!doctype html>
         committedHeight = next;
         setFrameHeight(next);
         notifyHeight(next);
-      });
+      };
+      window.addEventListener("resize", refitCommittedFrame);
+      singleFramePayload = structuredContent;
+      singleFrameAwaitingMeta = !hasWidgetMeta(meta);
       // Watchdog on the committed iframe — the mirror image of
       // \`probeInteractiveIframe\`. That one starts from the PNG and upgrades
       // to the iframe if the host allows it; this one starts from the iframe
@@ -2438,8 +2483,9 @@ const WIDGET_HTML = `<!doctype html>
   // SDK's own answer to exactly this: \`setWidgetState\` is synchronous, and
   // \`window.openai.widgetState\` is restored on reload.
   //
-  // Only the structuredContent half is mirrored. \`_meta\` (the baked
-  // \`image_data_url\`) is deliberately NOT persisted: it is up to 400 KB
+  // The structuredContent half is mirrored, plus the small \`charts\` list from
+  // \`_meta\`. The big \`_meta\` fields (the baked \`image_data_url\`) are
+  // deliberately NOT persisted: \`image_data_url\` is up to 400 KB
   // against a store the SDK documents as ephemeral and widget-scoped, and the
   // ChatGPT path never reads it anyway — that host's permissive \`img-src\`
   // renders the cross-origin \`image_url\` directly. A restored render on
@@ -2758,7 +2804,7 @@ const WIDGET_HTML = `<!doctype html>
   // runs; otherwise we fall through to a 10s polling window because
   // ChatGPT populates the global at unpredictable times. Cost: one
   // property read every 250 ms.
-  if (!render(pickPayload(null), pickMetaFromOpenAi())) {
+  if (!render(pickPayload(null), pickMetaFromOpenAi()) || singleFrameAwaitingMeta) {
     // Payload first, error second — see \`collapseFailed\`. The error
     // sighting is only RECORDED (see \`errorSeen\`): the poll always runs
     // its full window so a payload landing on a later tick still wins,
@@ -2771,7 +2817,7 @@ const WIDGET_HTML = `<!doctype html>
       // Re-read the meta each tick, not once before the loop: the payload and
       // its \`_meta\` can land on different ticks, and pinning a stale
       // \`undefined\` here would reintroduce the exact bug this fixes.
-      if (render(pickPayload(null), pickMetaFromOpenAi())) {
+      if (render(pickPayload(null), pickMetaFromOpenAi()) && !singleFrameAwaitingMeta) {
         clearInterval(handle);
         return;
       }

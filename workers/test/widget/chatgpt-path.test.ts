@@ -848,10 +848,33 @@ describe("ChatGPT carousel", () => {
   });
 
   it("sizes a slide without dimensions from the payload height", () => {
-    const m = mountCarousel(threeCharts(false));
+    const charts = [
+      carouselChart(nth(CAROUSEL_PUB_IDS, 0)),
+      carouselChart(nth(CAROUSEL_PUB_IDS, 1), false),
+      {
+        ...carouselChart(nth(CAROUSEL_PUB_IDS, 2)),
+        image_natural_width: 1200,
+        image_natural_height: 900,
+      },
+    ];
+    const m = mountCarousel(charts);
+    carouselSlides(m).forEach((slide) =>
+      Object.defineProperty(slide, "clientWidth", {
+        configurable: true,
+        get: () => 600,
+      }),
+    );
     const frames = carouselFrames(m);
     expect(frames).toHaveLength(3);
-    frames.forEach((f) => expect(f.getAttribute("height")).toBe("720"));
+    frames.forEach((f) => {
+      pinContentDocument(f, null);
+      fireLoad(m, f);
+    });
+    expect(frames.map((f) => f.getAttribute("height"))).toEqual([
+      String(Math.round((600 * 1100) / 2400)),
+      "720",
+      String(Math.round((600 * 900) / 1200)),
+    ]);
   });
 
   it("next scrolls the row by one slide", () => {
@@ -884,5 +907,82 @@ describe("ChatGPT carousel", () => {
       widgetState: { ...PROD_STRUCTURED_CONTENT, charts: threeCharts() },
     });
     expect(carouselFrames(m)).toHaveLength(3);
+  });
+
+  function deliverChartsLate(m: Mounted, openai: Record<string, unknown>): void {
+    const toolResponseMetadata = { charts: threeCharts() };
+    openai.toolResponseMetadata = toolResponseMetadata;
+    fireSetGlobals(m, { toolResponseMetadata }, "openai:set_globals");
+  }
+
+  it("upgrades a single frame to the carousel when _meta.charts lands late", () => {
+    vi.useFakeTimers();
+    try {
+      const writes: Array<{ charts?: CarouselChart[] }> = [];
+      const openai: Record<string, unknown> = {
+        toolOutput: PROD_STRUCTURED_CONTENT,
+        setWidgetState: (s: { charts?: CarouselChart[] }) => writes.push(s),
+      };
+      const m = mountWidget(html(), openai);
+      expect(renderedIframe(m)).toBe(true);
+      expect(carouselFrames(m)).toHaveLength(0);
+      deliverChartsLate(m, openai);
+      expect(carouselFrames(m)).toHaveLength(3);
+      expect(frame(m).classList.contains("hidden")).toBe(true);
+      expect(renderedIframe(m)).toBe(false);
+      expect(nth(writes, writes.length - 1).charts).toHaveLength(3);
+      vi.advanceTimersByTime(8000);
+      expect(img(m).getAttribute("src")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("upgrades when the poll reads _meta.charts after the single frame committed", () => {
+    vi.useFakeTimers();
+    try {
+      const openai: Record<string, unknown> = { toolOutput: PROD_STRUCTURED_CONTENT };
+      const m = mountWidget(html(), openai);
+      expect(renderedIframe(m)).toBe(true);
+      openai.toolResponseMetadata = { charts: threeCharts() };
+      vi.advanceTimersByTime(250);
+      expect(carouselFrames(m)).toHaveLength(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each([
+    ["dimensions but no chart list", { image_natural_width: 2400, image_natural_height: 1100 }],
+    ["a one-entry chart list", { charts: [carouselChart(PUB_ID)] }],
+  ])("stays a single frame when the first render had meta with %s", (_label, firstMeta) => {
+    const openai: Record<string, unknown> = {
+      toolOutput: PROD_STRUCTURED_CONTENT,
+      toolResponseMetadata: firstMeta,
+    };
+    const m = mountWidget(html(), openai);
+    expect(renderedIframe(m)).toBe(true);
+    deliverChartsLate(m, openai);
+    expect(carouselFrames(m)).toHaveLength(0);
+    expect(renderedIframe(m)).toBe(true);
+    expect(frame(m).classList.contains("hidden")).toBe(false);
+  });
+
+  it("never shrinks the widget when it upgrades to the carousel", () => {
+    const heights: number[] = [];
+    const openai: Record<string, unknown> = {
+      toolOutput: PROD_STRUCTURED_CONTENT,
+      notifyIntrinsicHeight: (h: number) => heights.push(h),
+    };
+    const m = mountWidget(html(), openai);
+    fireFrameLoad(m);
+    const singleFrameHeight = nth(heights, heights.length - 1);
+    expect(singleFrameHeight).toBe(720);
+    deliverChartsLate(m, openai);
+    const frames = carouselFrames(m);
+    postEmbedHeight(m, nth(frames, 0).contentWindow!, 500);
+    expect(nth(heights, heights.length - 1)).toBeGreaterThanOrEqual(singleFrameHeight);
+    postEmbedHeight(m, nth(frames, 1).contentWindow!, 800);
+    expect(nth(heights, heights.length - 1)).toBe(800);
   });
 });
