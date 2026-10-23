@@ -25,7 +25,6 @@ import {
   buildDataGapGuidance,
   buildReferenceMaps,
   buildSearchOutput,
-  orderCardsByUsefulness,
   projectCard,
   projectCardRows,
   projectWebResult,
@@ -184,7 +183,7 @@ describe("slimCardContent — drop-all mode (capRows = null)", () => {
 });
 
 // `tako_search`'s call shape: no inlined rows, no web page text. Shared by the
-// buildSearchOutput tests below, which exercise guidance and ordering rather
+// buildSearchOutput tests below, which exercise guidance and card order rather
 // than the `tako_search_advanced` inline path.
 const OPTS = { rowCap: null, keepWebText: false, toolName: "tako_search" } as const;
 
@@ -489,174 +488,14 @@ describe("payload layout — data serializes before boilerplate", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// orderCardsByUsefulness
-// ---------------------------------------------------------------------------
-//
-// The failure this ordering exists for, verbatim from prod (2026-07-29):
-// `tako_search "US inflation rate"` ranked `United States Inflation Rate`
-// (newest row 2024-01-01) ABOVE `United States CPI Inflation Rate (Seasonally
-// Adjusted)` (newest row 2026-06-01). Read top-down, that answers "what is US
-// inflation" with a 2½-year-old figure.
-
-const seriesCard = (
-  card_id: string,
-  lastTimestamp: string,
-  extra: Record<string, unknown> = {},
-): TakoCard =>
-  ({
-    card_id,
-    content: {
-      content_format: "json_compact",
-      dataset: {
-        columns: [{ name: "Timestamp", type: "datetime" }, { name: "v", type: "number" }],
-        rows: [["2020-01-01T00:00:00+00:00", 1], [lastTimestamp, 2]],
-      },
-    },
-    ...extra,
-  }) as TakoCard;
-
-describe("orderCardsByUsefulness", () => {
-  it("puts the fresher series first (the live stale-top-card failure)", () => {
-    const stale = seriesCard("annual", "2024-01-01T00:00:00+00:00");
-    const fresh = seriesCard("cpi_sa", "2026-06-01T00:00:00+00:00");
-    expect(orderCardsByUsefulness([stale, fresh]).map((c) => c.card_id)).toEqual([
-      "cpi_sa",
-      "annual",
-    ]);
-  });
-
-  // A `date`-typed column holding bare years is a real shape for annual
-  // series. Passed through unchanged, `2024` compares against ~1.7e12 for any
-  // string-dated card and sorts below every one of them — including genuinely
-  // staler ones. Same-card comparisons (capRecentRows) never saw this because
-  // both sides came from one parse path; ordering compares across cards.
-  const yearRowCard = (card_id: string, lastYear: number): TakoCard =>
-    ({
-      card_id,
-      content: {
-        content_format: "json_compact",
-        dataset: {
-          columns: [{ name: "Year", type: "date" }, { name: "v", type: "number" }],
-          rows: [[2000, 1], [lastYear, 2]],
-        },
-      },
-    }) as TakoCard;
-
-  it("compares bare-year rows on the same scale as string dates", () => {
-    const annual2026 = yearRowCard("annual_2026", 2026);
-    const stale2019 = seriesCard("stale_2019", "2019-01-01T00:00:00+00:00");
-    expect(orderCardsByUsefulness([stale2019, annual2026]).map((c) => c.card_id)).toEqual([
-      "annual_2026",
-      "stale_2019",
-    ]);
-  });
-
-  it("still orders two bare-year cards against each other", () => {
-    expect(
-      orderCardsByUsefulness([yearRowCard("old", 2011), yearRowCard("new", 2025)]).map(
-        (c) => c.card_id,
-      ),
-    ).toEqual(["new", "old"]);
-  });
-
-  it("demotes row-less Overview cards below real series cards", () => {
-    const overview = { card_id: "overview", title: "Earnings & Estimates Overview" } as TakoCard;
-    const series = seriesCard("gross_margin", "2026-06-01T00:00:00+00:00");
-    expect(orderCardsByUsefulness([overview, series]).map((c) => c.card_id)).toEqual([
-      "gross_margin",
-      "overview",
-    ]);
-  });
-
-  it("falls back to data_freshness.data_as_of when no rows are inlined", () => {
-    // include_contents:false strips rows, so the declared as-of date is the
-    // only recency signal left. The backend ships it as an OBJECT.
-    const older = { card_id: "older", data_freshness: { data_as_of: "2024-03-31" } } as TakoCard;
-    const newer = { card_id: "newer", data_freshness: { data_as_of: "2026-06-30" } } as TakoCard;
-    expect(orderCardsByUsefulness([older, newer]).map((c) => c.card_id)).toEqual([
-      "newer",
-      "older",
-    ]);
-  });
-
-  it("normalises a numeric data_as_of against a string-dated one (same rule as rows)", () => {
-    // The as-of tier is also a cross-card comparison, so it goes through
-    // `comparableEpoch` too. Un-normalised, `2011` would sort below a
-    // string-dated 2019 card and, worse, below every string-dated card forever.
-    const numericNewer = { card_id: "numeric_2026", data_freshness: { data_as_of: 2026 } } as TakoCard;
-    const stringOlder = { card_id: "string_2019", data_freshness: { data_as_of: "2019-01-01" } } as TakoCard;
-    expect(orderCardsByUsefulness([stringOlder, numericNewer]).map((c) => c.card_id)).toEqual([
-      "numeric_2026",
-      "string_2019",
-    ]);
-  });
-
-  it("breaks remaining ties on relevance, then on backend order (stable)", () => {
-    const low = { card_id: "low", relevance: "Low" } as TakoCard;
-    const high = { card_id: "high", relevance: "High" } as TakoCard;
-    expect(orderCardsByUsefulness([low, high]).map((c) => c.card_id)).toEqual(["high", "low"]);
-
-    const a = { card_id: "a" } as TakoCard;
-    const b = { card_id: "b" } as TakoCard;
-    const c = { card_id: "c" } as TakoCard;
-    expect(orderCardsByUsefulness([a, b, c]).map((x) => x.card_id)).toEqual(["a", "b", "c"]);
-  });
-
-  it("orders only — never drops, folds, or mutates the input", () => {
-    const input = [
-      seriesCard("stale", "2024-01-01T00:00:00+00:00"),
-      seriesCard("fresh", "2026-06-01T00:00:00+00:00"),
-      { card_id: "no_rows" } as TakoCard,
-    ];
-    const snapshot = JSON.stringify(input);
-    const out = orderCardsByUsefulness(input);
-    expect(out).toHaveLength(3);
-    expect([...out].map((c) => c.card_id).sort()).toEqual(["fresh", "no_rows", "stale"]);
-    expect(JSON.stringify(input)).toBe(snapshot); // immutable
-  });
-
-  it("drives the widget: buildSearchOutput lifts the REORDERED top card", () => {
+describe("buildSearchOutput keeps search's card order", () => {
+  it("lists and charts the cards in the order search returned them", () => {
     const ENV: Env = { DJANGO_BASE_URL: "https://staging.trytako.com" };
-    // Titles, because the projection drops `card_id` and the two cards are
-    // otherwise identical — without them the projected-card assertion below
-    // compares undefined to undefined and passes on any ordering.
-    const stale = seriesCard("stale_top", "2024-01-01T00:00:00+00:00", { title: "Stale series" });
-    const fresh = seriesCard("fresh_second", "2026-06-01T00:00:00+00:00", { title: "Fresh series" });
-    const out = buildSearchOutput([stale, fresh], [], "req-order", null, ENV, ["data"], false, "authenticated", OPTS);
-    // The widget lift is one observable: it must follow the REORDERED top card,
-    // not the wire order.
-    expect(out.pub_id).toBe("fresh_second");
-    // And the document is the other. The chart a host renders must not disagree
-    // with the list beneath it, so the first projected card has to be the same
-    // card the widget lifted.
-    expect(out.cards[0]?.title).toBe("Fresh series");
-  });
-});
-
-describe("orderCardsByUsefulness — as-of presence", () => {
-  it("ranks a card that declares data_freshness above one that declares none", () => {
-    // Both row-less (exportable:false cards carry no inline rows), so without
-    // this rule they tie and backend order wins — which put an
-    // `Earnings & Estimates Overview` above the actual gross-margin series.
-    const overview = { card_id: "overview", title: "Earnings & Estimates Overview" } as TakoCard;
-    const dated = {
-      card_id: "actuals",
-      data_freshness: { data_as_of: "2025-12-31" },
-    } as TakoCard;
-    expect(orderCardsByUsefulness([overview, dated]).map((c) => c.card_id)).toEqual([
-      "actuals",
-      "overview",
-    ]);
-  });
-
-  it("still puts a rowed card above a merely-dated one", () => {
-    const dated = { card_id: "dated", data_freshness: { data_as_of: "2026-06-30" } } as TakoCard;
-    const rowed = seriesCard("rowed", "2024-01-01T00:00:00+00:00");
-    expect(orderCardsByUsefulness([dated, rowed]).map((c) => c.card_id)).toEqual([
-      "rowed",
-      "dated",
-    ]);
+    const first = { card_id: "stale_first", title: "Stale series", data_freshness: { data_as_of: "2024-01-01" } } as TakoCard;
+    const second = { card_id: "fresh_second", title: "Fresh series", data_freshness: { data_as_of: "2026-09-01" } } as TakoCard;
+    const out = buildSearchOutput([first, second], [], "req-order", null, ENV, ["data"], false, "authenticated", OPTS);
+    expect(out.cards.map((c) => c.title)).toEqual(["Stale series", "Fresh series"]);
+    expect(out.pub_id).toBe("stale_first");
   });
 });
 

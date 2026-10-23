@@ -280,35 +280,6 @@ function temporalMagnitude(v: unknown): number | null {
   return null;
 }
 
-/**
- * Parse a cell into an epoch-ms magnitude comparable ACROSS cards, or null.
- *
- * `temporalMagnitude` is safe where it is used by `capRecentRows`, which only
- * ever compares two values from the SAME card and so cannot mix scales. Card
- * ORDERING compares across cards, where a bare number passed through unchanged
- * is not comparable to a `Date.parse` result: an annual series whose `date`-typed
- * column holds `2024` yields 2024 against ~1.7e12 for any string-dated card,
- * sorting it below every one of them — including genuinely staler series.
- *
- * So each recognised shape is converted to epoch-ms, and anything unrecognised
- * returns null rather than a number on an unknown scale. A null simply means
- * "no freshness signal from this cell", which the caller already handles.
- */
-function comparableEpoch(v: unknown): number | null {
-  if (typeof v === "number") {
-    if (!Number.isFinite(v)) return null;
-    // A bare year, the shape annual series use.
-    if (v >= 1000 && v <= 9999) return Date.UTC(Math.trunc(v), 0, 1);
-    // Epoch seconds vs milliseconds, split by magnitude. Both bounds cover
-    // 1973-2286, comfortably outside the year range above and either side of
-    // any date this data carries.
-    if (v >= 1e8 && v < 1e11) return v * 1000;
-    if (v >= 1e11 && v < 1e14) return v;
-    return null;
-  }
-  return temporalMagnitude(v);
-}
-
 // Order of a row sequence from the temporal value of its first vs last row:
 //   +1 descending (newest first) · -1 ascending (newest last) · 0 unknown.
 function orderDirection(firstVal: unknown, lastVal: unknown): 1 | -1 | 0 {
@@ -1608,135 +1579,6 @@ function buildZeroResultGuidance(
 }
 
 /**
- * The newest data point a card actually carries, as a comparable epoch
- * magnitude — derived from the rows already parsed, so it needs no extra
- * field to be populated and cannot be fooled by a title.
- *
- * null when the card carries no temporal rows: an Overview/summary card, or
- * any card under `include_contents: false`.
- */
-function latestDataPoint(card: TakoCard): number | null {
-  const content = card.content as LooseContent | null | undefined;
-  if (content == null) return null;
-  const magnitudes: number[] = [];
-  const dataset = content.dataset;
-  if (dataset && Array.isArray(dataset.rows)) {
-    const idx = temporalColumnIndex(dataset.columns);
-    if (idx >= 0) {
-      for (const row of dataset.rows) {
-        if (!Array.isArray(row)) continue;
-        const m = comparableEpoch(row[idx]);
-        if (m !== null) magnitudes.push(m);
-      }
-    }
-  } else if (Array.isArray(content.records) && content.records.length > 0) {
-    const key = recordDateKey(content.records);
-    if (key !== undefined) {
-      for (const record of content.records) {
-        const m = comparableEpoch(record[key]);
-        if (m !== null) magnitudes.push(m);
-      }
-    }
-  }
-  return magnitudes.length === 0 ? null : Math.max(...magnitudes);
-}
-
-/**
- * The card's declared as-of date as an epoch magnitude. The backend ships
- * `data_freshness` as an OBJECT (`{"data_as_of": "2026-03-31"}`) on search
- * cards and as a bare string elsewhere — accept both, the same way the
- * markdown renderer does.
- *
- * Goes through `comparableEpoch`, not `temporalMagnitude`, for the same reason
- * `latestDataPoint` does: this feeds a CROSS-CARD comparator, so a bare numeric
- * `data_as_of` (`2024`) passed through unchanged would be compared against
- * ~1.7e12 from any string-dated card in the same as-of tier. The backend ships
- * strings today and nothing is broken, but the rule worth being able to state
- * without exception is that every cross-card comparison normalises first.
- */
-function freshnessEpoch(card: TakoCard): number | null {
-  const value = (card as Record<string, unknown>).data_freshness;
-  if (typeof value === "string") return comparableEpoch(value);
-  if (value !== null && typeof value === "object") {
-    return comparableEpoch((value as { data_as_of?: unknown }).data_as_of);
-  }
-  return null;
-}
-
-const RELEVANCE_WORDS: Record<string, number> = { high: 3, medium: 2, low: 1 };
-
-/** Retrieval relevance as a number: the gated numeric score, else the coarse
- *  word unentitled responses carry instead, else 0. */
-function relevanceRank(card: TakoCard): number {
-  const rec = card as Record<string, unknown>;
-  if (typeof rec.relevance_score === "number") return rec.relevance_score;
-  if (typeof rec.relevance === "string") {
-    return RELEVANCE_WORDS[rec.relevance.trim().toLowerCase()] ?? 0;
-  }
-  return 0;
-}
-
-/**
- * Order cards most-useful-first. ORDERING ONLY — no card is dropped, nothing
- * is folded, and every tie falls back to the backend's own order.
- *
- * Why this exists: the backend's rank is not recency-aware, and its #1 can be
- * materially staler than its #2. Measured on prod (2026-07-29),
- * `tako_search "US inflation rate"` returned `United States Inflation Rate`
- * (latest row 2024-01-01, 2.9%) ABOVE `United States CPI Inflation Rate
- * (Seasonally Adjusted)` (latest row 2026-06-01, 3.5%). A model reading the
- * document top-down answers from card #1 and reports a 2½-year-old figure as
- * current — a wrong number carrying a citation, which is the worst failure
- * this server can produce. Separately, `Earnings & Estimates Overview` cards
- * (no rows at all) were observed outranking the actual series card.
- *
- * The comparator, in order:
- *   1. cards WITH temporal rows above cards without (series beats Overview)
- *   2. fresher newest-data-point first
- *   3. fresher declared `data_as_of` first (the fallback when rows are absent,
- *      e.g. `include_contents: false`)
- *   4. higher retrieval relevance
- *   5. backend order (stable)
- *
- * Deliberately NOT recency-aware in one respect: an explicitly historical ask
- * ("annual inflation since 1960") wants the older annual series, which this
- * demotes to #2. Demotion is recoverable — the card is still present with its
- * range in the description — which is exactly why this orders instead of
- * pruning.
- */
-export function orderCardsByUsefulness(cards: readonly TakoCard[]): TakoCard[] {
-  // Decorate-sort-undecorate: computes each signal once, and makes the sort
-  // stable regardless of engine so ties keep the backend's ordering.
-  return cards
-    .map((card, index) => ({
-      card,
-      index,
-      rows: latestDataPoint(card),
-      asOf: freshnessEpoch(card),
-      relevance: relevanceRank(card),
-    }))
-    .sort((a, b) => {
-      const aHasRows = a.rows !== null;
-      const bHasRows = b.rows !== null;
-      if (aHasRows !== bHasRows) return aHasRows ? -1 : 1;
-      if (a.rows !== null && b.rows !== null && a.rows !== b.rows) return b.rows - a.rows;
-      // Declaring an as-of date is itself evidence of a dated series, the same
-      // way carrying temporal rows is. Without this, two row-less cards tie and
-      // fall through to backend order — which is how `Earnings & Estimates
-      // Overview` (no freshness) kept rank 1 over `Actuals - Normalized Gross
-      // Margin` (freshness 2025-12-31) on a gross-margin query, both being
-      // exportable:false and therefore row-less.
-      const aHasAsOf = a.asOf !== null;
-      const bHasAsOf = b.asOf !== null;
-      if (aHasAsOf !== bHasAsOf) return aHasAsOf ? -1 : 1;
-      if (a.asOf !== null && b.asOf !== null && a.asOf !== b.asOf) return b.asOf - a.asOf;
-      if (a.relevance !== b.relevance) return b.relevance - a.relevance;
-      return a.index - b.index;
-    })
-    .map((d) => d.card);
-}
-
-/**
  * Guidance for a keyless search that returned a placeholder card. A keyless
  * connection never opts in to variable-cost sources (`buildSearchBody`), so the
  * backend withholds those cards' data, and the placeholder text says only that
@@ -1800,28 +1642,12 @@ export function buildSearchOutput(
   },
   extras: SearchOutputExtras = {},
 ): SearchOutput {
-  // Order BEFORE projecting: the widget fields lift the TOP card, and the
-  // projection drops `card_id`, so both the chart lift and the reference
-  // maps read the raw ordered cards.
-  //
-  // UNLESS the prose cites by position. "[1]" refers to the BACKEND's card
-  // order, so reordering would silently repoint every citation in the answer.
-  // Observed answers carry no positional markers, so this is a safety valve —
-  // but a mis-citation is worse than a stale top card, so the ordering yields.
-  //
-  // THE PATTERN OVER-TRIGGERS, and that is the direction to err in. Any
-  // bracketed digit matches: a quoted array index, a footnote marker copied out
-  // of a cited page. The cost of a false positive is a stale top card; the cost
-  // of a false negative is every citation in the answer pointing at the wrong
-  // source. Do not tighten this into something that can miss a real citation.
-  const citesByPosition = extras.answer !== undefined && /\[\d+\]/.test(extras.answer);
-  const ordered = citesByPosition ? [...rawCards] : orderCardsByUsefulness(rawCards);
-  const maps = buildReferenceMaps(ordered);
-  const cards = ordered.map((c) =>
+  const maps = buildReferenceMaps(rawCards);
+  const cards = rawCards.map((c) =>
     projectCard(c, opts.rowCap, { toolName: opts.toolName, requestId }),
   );
   const web = webResults.map((w) => projectWebResult(w, opts.keepWebText));
-  const withheld = withheldDataGuidance(ordered);
+  const withheld = withheldDataGuidance(rawCards);
   const base: SearchOutput = {
     cards,
     web_results: web,
@@ -1878,7 +1704,7 @@ export function buildSearchOutput(
   // Branch rather than `...(x ?? {})`: spreading a union of the full field set
   // and `{}` makes every key optional again, which is exactly the widening
   // `exactOptionalPropertyTypes` rejects against `SearchOutput`.
-  const chart = topCardChartFields(ordered, env);
+  const chart = topCardChartFields(rawCards, env);
   return chart === undefined ? base : { ...base, ...chart };
 }
 

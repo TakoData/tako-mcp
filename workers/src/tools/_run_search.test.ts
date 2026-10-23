@@ -150,7 +150,7 @@ describe("runSearch on the answer endpoint", () => {
     expect(out.cards.map((c) => c.title)).toEqual(["Stale", "Fresh"]);
   });
 
-  it("orders by usefulness when the prose carries no positional markers", async () => {
+  it("keeps search's card order when the prose carries no positional markers", async () => {
     // `data_freshness` is a DataFreshness OBJECT on the wire, not a string —
     // AnswerResponse rejects the string form, so the fixture has to be real.
     const fresh = { card_id: "fresh", title: "Fresh", data_freshness: { data_as_of: "2026-06-30" } };
@@ -164,7 +164,7 @@ describe("runSearch on the answer endpoint", () => {
       }),
     ]);
     const out = await runSearch({ endpoint: "answer", body: { query: "q" } }, ["data"], null, CTX, "tako_search_advanced");
-    expect(out.cards.map((c) => c.title)).toEqual(["Fresh", "Stale"]);
+    expect(out.cards.map((c) => c.title)).toEqual(["Stale", "Fresh"]);
   });
 });
 
