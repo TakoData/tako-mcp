@@ -287,6 +287,28 @@ describe("waitForRun", () => {
     await pending;
   });
 
+  it("increases progress with each notification when the backend clock runs ahead", async () => {
+    stubStream(
+      scriptedStream([
+        { atMs: 0, text: status("Reading filings") },
+        { atMs: 2_000, text: status("Ranking banks") },
+      ]),
+    );
+    const ctx = makeCtx();
+    const controller = new AbortController();
+
+    const pending = waitForRun(ctx, "answer", RUN, {
+      windowMs: AGENT_CALL_WINDOW_MS,
+      createdAtMs: Date.now() + 60_000,
+      signal: controller.signal,
+    });
+    await vi.advanceTimersByTimeAsync(PROGRESS_MIN_INTERVAL_MS + HEARTBEAT_INTERVAL_MS + 2_000);
+
+    expect(ctx.sendProgress.mock.calls.map((call) => call[0])).toEqual([0, 1, 2]);
+    controller.abort();
+    await pending;
+  });
+
   it("keeps sending a heartbeat every 15 s while the run stays silent", async () => {
     stubStream(scriptedStream([]));
     const ctx = makeCtx();

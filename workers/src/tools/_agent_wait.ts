@@ -153,6 +153,7 @@ class ProgressRelay {
   private latest: string | undefined;
   private lastSentText: string | undefined;
   private lastSentAt = Date.now();
+  private lastProgress = -1;
   private trailingTimer: ReturnType<typeof setTimeout> | undefined;
   private heartbeatTimer: ReturnType<typeof setTimeout> | undefined;
   private stopped = false;
@@ -199,7 +200,8 @@ class ProgressRelay {
     if (this.stopped) return;
     this.lastSentAt = Date.now();
     this.armHeartbeat();
-    const progress = elapsedS(this.createdAtMs);
+    const progress = Math.max(this.lastProgress + 1, elapsedS(this.createdAtMs));
+    this.lastProgress = progress;
     Promise.resolve()
       .then(() => (this.stopped ? undefined : this.ctx.sendProgress(progress, { message })))
       .catch((err: unknown) => {

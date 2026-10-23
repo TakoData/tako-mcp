@@ -1670,10 +1670,10 @@ export async function handleMcpRequest(
       tier,
     });
     const peekedBody = await peekJsonBody(request);
+    const registeredTools = resolveToolSet(surface, requestedToolNames);
+    logToolInputRejections(peekedBody, registeredTools, surface);
     const streamingTool = streamingToolCallName(peekedBody);
-    const streamsProgress =
-      streamingTool !== undefined &&
-      resolveToolSet(surface, requestedToolNames).has(streamingTool);
+    const streamsProgress = streamingTool !== undefined && registeredTools.has(streamingTool);
     // Omitting `sessionIdGenerator` puts the transport in stateless mode — no
     // `Mcp-Session-Id` header is issued or validated. This matches the Worker
     // model (no persistent per-session state) and keeps each request
@@ -1743,6 +1743,42 @@ export async function handleMcpRequest(
         headers: { "Content-Type": "application/json; charset=utf-8" },
       },
     );
+  }
+}
+
+const TOOLS_BY_NAME: ReadonlyMap<string, AnyToolModule> = new Map(
+  TOOL_REGISTRY.map((tool) => [tool.name, tool]),
+);
+
+const MAX_LOGGED_ISSUES_CHARS = 500;
+
+/**
+ * Log each `tools/call` in `body` whose arguments the tool's input schema
+ * rejects. The SDK turns that rejection into an `isError` result before any
+ * handler runs, so the call never reaches `logSdkValidationRejections` or a
+ * handler's own logging. Checks only tools in `registered`, and logs issue
+ * paths and messages, never the arguments.
+ */
+export function logToolInputRejections(
+  body: unknown,
+  registered: ReadonlySet<string>,
+  surface: Surface,
+): void {
+  for (const message of Array.isArray(body) ? body : [body]) {
+    if (typeof message !== "object" || message === null) continue;
+    const { method, params } = message as { method?: unknown; params?: unknown };
+    if (method !== "tools/call" || typeof params !== "object" || params === null) continue;
+    const { name, arguments: args } = params as { name?: unknown; arguments?: unknown };
+    if (typeof name !== "string" || !registered.has(name)) continue;
+    const tool = TOOLS_BY_NAME.get(name);
+    if (tool === undefined) continue;
+    const parsed = tool.inputSchema.safeParse(args ?? {});
+    if (parsed.success) continue;
+    const issues = parsed.error.issues
+      .map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`)
+      .join("; ")
+      .slice(0, MAX_LOGGED_ISSUES_CHARS);
+    console.log(`[mcp] tool input rejected by schema tool=${name} surface=${surface}: ${issues}`);
   }
 }
 
@@ -1896,16 +1932,12 @@ export async function withChatGptToolSecuritySchemes(
 }
 
 /**
- * Observability tap for SDK-internal tool-argument rejections. The SDK
- * validates `tools/call` arguments against the registered input schema
- * BEFORE the tool callback runs, so an input the schema rejects becomes a
- * JSON-RPC `-32602` to the client with no Worker-side signal — the outer
- * catch in `handleMcpRequest` never sees it, and neither does any tool
- * handler. That blind spot matters whenever a schema is tightened (e.g.
- * `tako_visualize`'s typed configs): traffic the new schema rejects would
- * otherwise surface only as user complaints. Peeking at a buffered JSON
- * response (an SSE response passes through unread, so no stream can be
- * truncated) logs each rejection with its tool name to Workers Logs.
+ * Observability tap for JSON-RPC `-32602` errors the SDK sends with no
+ * Worker-side signal, such as a call to an unknown tool. The SDK reports a
+ * tool-argument rejection as an `isError` result instead, so
+ * `logToolInputRejections` logs those. Peeking at a buffered JSON response
+ * (an SSE response passes through unread, so no stream can be truncated) logs
+ * each `-32602` with its tool name to Workers Logs.
  *
  * `request` must be a clone whose body has not been consumed. Never throws:
  * a malformed body here must not break serving the already-built response.

@@ -11,7 +11,8 @@
   // nodejs_compat: required by the MCP SDK / downstream dependencies we expect
   // to bring in during the port (Buffer, stream, etc.).
   "compatibility_flags": [
-    "nodejs_compat"
+    "nodejs_compat",
+    "enable_request_signal"
   ],
   "observability": {
     "enabled": true

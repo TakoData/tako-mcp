@@ -28,6 +28,7 @@ import {
   djangoErrorToToolResult,
   streamingToolCallName,
   logSdkValidationRejections,
+  logToolInputRejections,
   PAYMENT_REQUIRED_MESSAGE,
   PAYMENT_REQUIRED_REMEDY_FALLBACK,
   paymentRequiredToolResult,
@@ -1261,6 +1262,49 @@ describe("withChatGptToolSecuritySchemes", () => {
   });
 });
 
+describe("logToolInputRejections", () => {
+  const call = (name: string, args: unknown): unknown => ({
+    jsonrpc: "2.0",
+    id: 1,
+    method: "tools/call",
+    params: { name, arguments: args },
+  });
+
+  it("logs the tool and the schema's issue, not the arguments", () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    logToolInputRejections(
+      call("tako_agent", { run_id: "6f1c1d2e-3a4b-4c5d-8e9f-0a1b2c3d4e5f" }),
+      new Set(["tako_agent"]),
+      "generic",
+    );
+
+    expect(logSpy.mock.calls.map((c) => String(c[0]))).toEqual([
+      "[mcp] tool input rejected by schema tool=tako_agent surface=generic: run_id: This run_id isn't one `tako_agent` returned. Send the `run_id` from an earlier `status: running` result unchanged.",
+    ]);
+    logSpy.mockRestore();
+  });
+
+  it("checks every call in a batch and skips valid and unregistered calls", () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    logToolInputRejections(
+      [
+        call("tako_search", { query: "US GDP" }),
+        call("tako_search", { query: 42 }),
+        call("tako_agent", { run_id: "bad" }),
+      ],
+      new Set(["tako_search"]),
+      "generic",
+    );
+
+    const lines = logSpy.mock.calls.map((c) => String(c[0]));
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatch(/^\[mcp\] tool input rejected by schema tool=tako_search surface=generic: query: /);
+    logSpy.mockRestore();
+  });
+});
+
 describe("logSdkValidationRejections", () => {
   // The SDK answers schema-invalid tools/call arguments with -32602 before
   // any tool handler runs; this tap is the only Worker-side signal for those
@@ -2314,6 +2358,25 @@ describe("agent tool calls over SSE", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("logs an agent call the input schema rejects", async () => {
+    const logSpy = vi.spyOn(console, "log");
+
+    const res = await worker.fetch(
+      mcpPost("/mcp?tools=agent", {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "tako_agent", arguments: { run_id: "run_123" } },
+      }),
+      env,
+    );
+    await res.text();
+
+    expect(logSpy.mock.calls.map((c) => String(c[0]))).toContain(
+      "[mcp] tool input rejected by schema tool=tako_agent surface=generic: run_id: This run_id isn't one `tako_agent` returned. Send the `run_id` from an earlier `status: running` result unchanged.",
+    );
   });
 
   it("sends no progress notification when the request has no progressToken", async () => {
