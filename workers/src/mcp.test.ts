@@ -2297,7 +2297,7 @@ describe("agent tool calls over SSE", () => {
     await vi.waitFor(() => expect(closeSpy).toHaveBeenCalledTimes(1));
   });
 
-  it("answers an agent tools/call on /mcp/chatgpt over text/event-stream", async () => {
+  it("answers an agent tools/call on /mcp/chatgpt as buffered JSON", async () => {
     const COMPANY_RUNNING = projectRunningRun({
       toolName: "tako_company_agent",
       publicRunId: "company_run_abc",
@@ -2305,12 +2305,34 @@ describe("agent tool calls over SSE", () => {
     });
     vi.spyOn(takoCompanyAgent, "handler").mockResolvedValue(COMPANY_RUNNING);
 
-    const res = await worker.fetch(mcpPost("/mcp/chatgpt", toolsCall("tako_company_agent")), env);
+    const res = await worker.fetch(
+      mcpPost("/mcp/chatgpt", toolsCall("tako_company_agent", { progressToken: "p1" })),
+      env,
+    );
 
-    expect(res.headers.get("content-type")).toContain("text/event-stream");
-    const messages = sseMessages(await res.text());
-    expect(messages.map((m) => m.method ?? `result:${String(m.id)}`)).toEqual(["result:1"]);
-    expect(messages[0]!.result?.structuredContent).toEqual(COMPANY_RUNNING);
+    expect(res.headers.get("content-type")).toContain("application/json");
+    const body = (await res.json()) as SseMessage;
+    expect(body.id).toBe(1);
+    expect(body.result?.structuredContent).toEqual(COMPANY_RUNNING);
+  });
+
+  it("aborts ctx.signal on /mcp/chatgpt when the request's own signal aborts", async () => {
+    const { contexts } = stubAgentHandler(async (ctx) => {
+      await untilAborted(ctx.signal);
+    });
+    const clientGone = new AbortController();
+
+    const pending = worker.fetch(
+      mcpPost("/mcp/chatgpt", toolsCall("tako_agent"), { signal: clientGone.signal }),
+      env,
+    );
+    await vi.waitFor(() => expect(contexts).toHaveLength(1));
+    clientGone.abort();
+
+    const res = await pending;
+    expect(contexts[0]?.signal?.aborted).toBe(true);
+    expect(res.headers.get("content-type")).toContain("application/json");
+    expect(((await res.json()) as SseMessage).result?.structuredContent).toEqual(RUNNING);
   });
 
   it("relays a backend status event from a real agent run as a progress notification", async () => {

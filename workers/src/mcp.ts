@@ -1482,8 +1482,9 @@ export function freeTierHiddenToolResponse(
  * and `initialize` requires auth.
  *
  * A call to a tool that declares `streamsProgress` (`streamingToolCallName`),
- * on a connection that registers that tool, gets an SSE response, so its
- * `notifications/progress` reach the client. Every other request runs with `enableJsonResponse: true`: one
+ * on a generic connection that registers that tool, gets an SSE response, so
+ * its `notifications/progress` reach the client. The chatgpt surface stays
+ * buffered: ChatGPT sends no `progressToken` and renders no progress. Every other request runs with `enableJsonResponse: true`: one
  * buffered JSON-RPC body, in which the transport drops every request-scoped
  * notification.
  */
@@ -1673,7 +1674,9 @@ export async function handleMcpRequest(
     const registeredTools = resolveToolSet(surface, requestedToolNames);
     logToolInputRejections(peekedBody, registeredTools, surface);
     const streamingTool = streamingToolCallName(peekedBody);
-    const streamsProgress = streamingTool !== undefined && registeredTools.has(streamingTool);
+    const surfaceRendersProgress = surface !== "chatgpt";
+    const streamsProgress =
+      surfaceRendersProgress && streamingTool !== undefined && registeredTools.has(streamingTool);
     // Omitting `sessionIdGenerator` puts the transport in stateless mode — no
     // `Mcp-Session-Id` header is issued or validated. This matches the Worker
     // model (no persistent per-session state) and keeps each request

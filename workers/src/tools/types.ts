@@ -46,7 +46,7 @@ export interface ToolContext {
    * timeout indefinitely as long as it keeps emitting progress.
    *
    * Only a tool that declares `streamsProgress` delivers progress: `mcp.ts`
-   * answers its calls over SSE. Every other request gets a buffered JSON
+   * answers its calls over SSE on the generic surface. Every other request gets a buffered JSON
    * response, where the transport drops request-scoped notifications, so
    * progress from any other tool reaches no client.
    *
@@ -425,8 +425,9 @@ export interface ToolModule<
   /** Request fields sent with a constant value — see {@link FixedInput}. */
   fixedInputs?: ReadonlyArray<FixedInput>;
   /**
-   * Answer this tool's calls over SSE so `ctx.sendProgress` reaches the
-   * client. Every other tool's calls get a buffered JSON response.
+   * Answer this tool's calls over SSE on the generic surface so
+   * `ctx.sendProgress` reaches the client. The chatgpt surface, and every
+   * other tool's calls, get a buffered JSON response.
    */
   streamsProgress?: true;
   /**
