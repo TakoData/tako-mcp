@@ -53,6 +53,7 @@ import {
   FREE_TIER_TOOL_NAMES,
   isToolOnSurface,
   resolveToolSet,
+  inputSchemaForSurface,
   outputSchemaForSurface,
   toolAnnotationsForSurface,
 } from "./tools/_surface.js";
@@ -460,7 +461,7 @@ function registerTool(
   const config: Record<string, unknown> = {
     title: tool.annotations.title,
     description: tool.description,
-    inputSchema: tool.inputSchema,
+    inputSchema: inputSchemaForSurface(tool, options.surface),
     annotations: toolAnnotationsForSurface(tool, options.surface),
   };
 
@@ -1775,7 +1776,7 @@ export function logToolInputRejections(
     if (typeof name !== "string" || !registered.has(name)) continue;
     const tool = TOOLS_BY_NAME.get(name);
     if (tool === undefined) continue;
-    const parsed = tool.inputSchema.safeParse(args ?? {});
+    const parsed = inputSchemaForSurface(tool, surface).safeParse(args ?? {});
     if (parsed.success) continue;
     const issues = parsed.error.issues
       .map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`)

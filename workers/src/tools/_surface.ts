@@ -164,6 +164,15 @@ export function outputSchemaForSurface(
     : tool.outputSchema;
 }
 
+export function inputSchemaForSurface(
+  tool: Pick<AnyToolModule, "inputSchema" | "inputSchemaBySurface">,
+  surface: Surface,
+): z.ZodObject<z.ZodRawShape> {
+  return surface === "chatgpt"
+    ? (tool.inputSchemaBySurface?.chatgpt ?? tool.inputSchema)
+    : tool.inputSchema;
+}
+
 /**
  * The output schema EXACTLY as `tools/list` publishes it.
  *

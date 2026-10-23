@@ -39,7 +39,7 @@ import {
 } from "../src/tools/_surface.js";
 import { TOOL_NAME_PREFIX } from "../src/tools/_tools_param.js";
 import { pickDeclared } from "../src/tools/_pick_declared.js";
-import { outputSchemaForSurface, publishedOutputJsonSchema } from "../src/tools/_surface.js";
+import { inputSchemaForSurface, outputSchemaForSurface, publishedOutputJsonSchema } from "../src/tools/_surface.js";
 import {
   buildSearchOutput,
   takoCardSchema,
@@ -1472,7 +1472,10 @@ const SNAPSHOT_NOTE =
 /** The snapshot for the tools on the fixed chatgpt surface, serialized. */
 export function buildChatgptSnapshot(
   tools: ReadonlyArray<
-    Pick<ToolModule, "name" | "description" | "inputSchema" | "outputSchema" | "outputSchemaBySurface">
+    Pick<
+      ToolModule,
+      "name" | "description" | "inputSchema" | "inputSchemaBySurface" | "outputSchema" | "outputSchemaBySurface"
+    >
   >,
 ): string {
   const snapshot: ChatgptSnapshot = { note: SNAPSHOT_NOTE, tools: {} };
@@ -1493,7 +1496,7 @@ export function buildChatgptSnapshot(
       // report "input_schema changed since the accepted snapshot" for text
       // nobody edited. Sorting makes the digest
       // depend on the schema's content, which is what OpenAI reviewed.
-      input_schema_sha256: sha256(stableStringify(z.toJSONSchema(tool.inputSchema, { io: "input" }))),
+      input_schema_sha256: sha256(stableStringify(z.toJSONSchema(inputSchemaForSurface(tool, "chatgpt"), { io: "input" }))),
       ...(outputSchema !== undefined
         ? { output_schema_sha256: sha256(stableStringify(publishedOutputJsonSchema(outputSchema))) }
         : {}),
@@ -1510,7 +1513,10 @@ export function buildChatgptSnapshot(
  */
 export function assertChatgptSnapshot(
   tools: ReadonlyArray<
-    Pick<ToolModule, "name" | "description" | "inputSchema" | "outputSchema" | "outputSchemaBySurface">
+    Pick<
+      ToolModule,
+      "name" | "description" | "inputSchema" | "inputSchemaBySurface" | "outputSchema" | "outputSchemaBySurface"
+    >
   >,
   snapshotJson: string,
 ): void {

@@ -380,6 +380,7 @@ export interface ToolModule<
    * of plumbing no `/mcp` client reads.
    */
   outputSchemaBySurface?: { chatgpt?: z.ZodType };
+  inputSchemaBySurface?: { chatgpt?: z.ZodObject<z.ZodRawShape> };
   annotations: ToolAnnotations;
   /**
    * Optional per-surface annotation overrides, merged over
@@ -543,6 +544,7 @@ export interface AnyToolModule {
   outputSchema?: z.ZodType<unknown>;
   /** Per-surface outputSchema override — see {@link ToolModule.outputSchemaBySurface}. */
   outputSchemaBySurface?: { chatgpt?: z.ZodType };
+  inputSchemaBySurface?: { chatgpt?: z.ZodObject<z.ZodRawShape> };
   annotations: ToolAnnotations;
   /** Per-surface annotation overrides — see {@link ToolModule.annotationsBySurface}. */
   annotationsBySurface?: { chatgpt?: Partial<ToolAnnotations> };

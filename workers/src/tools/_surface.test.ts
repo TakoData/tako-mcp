@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 
 import { TOOL_REGISTRY } from "./_registry.js";
 import { TIER_CLAIM } from "./__test_helpers.js";
@@ -6,6 +7,7 @@ import {
   CHATGPT_TOOL_NAMES,
   FREE_TIER_TOOL_NAMES,
   GENERIC_DEFAULT_TOOL_NAMES,
+  inputSchemaForSurface,
   isToolOnSurface,
   resolveToolSet,
   toolAnnotationsForSurface,
@@ -148,4 +150,21 @@ describe("tool descriptions are tier-invariant", () => {
     expect(audited.map((t) => t.name)).toEqual(["tako_search"]);
   });
 
+});
+
+describe("inputSchemaForSurface", () => {
+  const generic = z.object({ a: z.string(), b: z.string().optional() });
+  const override = z.object({ a: z.string() });
+
+  it("returns the chatgpt override only on chatgpt", () => {
+    const tool = { inputSchema: generic, inputSchemaBySurface: { chatgpt: override } };
+    expect(inputSchemaForSurface(tool, "chatgpt")).toBe(override);
+    expect(inputSchemaForSurface(tool, "generic")).toBe(generic);
+  });
+
+  it("returns inputSchema on both surfaces when no override is set", () => {
+    const tool = { inputSchema: generic };
+    expect(inputSchemaForSurface(tool, "chatgpt")).toBe(generic);
+    expect(inputSchemaForSurface(tool, "generic")).toBe(generic);
+  });
 });
