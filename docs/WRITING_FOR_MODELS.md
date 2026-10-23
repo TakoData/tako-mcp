@@ -1,0 +1,119 @@
+# Writing for models
+
+Tako reaches a model through four kinds of text: the bundled skill, the server
+instructions, the tool descriptions, and the tool results. Each has one job.
+Read this before you change any of them, and measure a change to the skill or
+the descriptions before you ship it.
+
+## What each surface does
+
+| Surface | Where it lives | When the model reads it | Its job |
+|---|---|---|---|
+| Skill | `skills/tako-search/SKILL.md` | The description before every task; the body only after the model opens the skill | Decide whether the model calls Tako, then carry the workflow and the report template |
+| Server instructions | `workers/src/instructions.ts` | Whenever the host puts them in context; not every host does | Describe the server for hosts without the skill |
+| Tool descriptions | `workers/src/tools/*.ts`, rendered in `docs/TOOLS.md` | When the model plans a call | Say how to call the tool and how to read its result |
+| Results | The tool's output and `guidance` | After a call | Report what this call found and what it cost |
+
+The skill reaches only hosts that install the plugin: the Claude plugin, the
+Gemini extension, and the ChatGPT plugin package. A host connected to bare
+`/mcp` sees only the instructions, the descriptions, and the results, so each
+tool description must still stand on its own.
+
+## The skill decides whether the model calls Tako
+
+Write the skill description to trigger on the task, not on a list of what Tako
+covers.
+
+- **Don't list coverage.** The graph covers more than any description can name,
+  and a listed domain pulls the model toward that list. A description that
+  framed Tako as general search ("Use when you need to look something up:
+  current events, facts, figures, or pages on any topic") beat one that added
+  "especially when the answer is a figure, result, schedule, standing, or
+  forecast", on data questions as well as web lookups.
+- **Don't patch a miss by adding a word.** Adding "result, schedule, standing"
+  fixed the sports prompts it was written for, and a word list tuned to one set
+  of prompts fails on the next. Treat the remaining misses as the measured cost
+  of a general trigger.
+- **Put the workflow in the body.** The body loads only after the model opens
+  the skill, so it doesn't change triggering. Use it for query shapes, the
+  card checks, and the report template.
+
+### Evidence
+
+Codex trigger runs in October 2026 (TAKO-4968), against a stub MCP server that
+served the production `tools/list` and logged every call:
+
+| Arm | Data questions | Web-only lookups | No-lookup tasks |
+|---|---|---|---|
+| No skill | 1 of 268 | 0 of 30 | 0 of 30 |
+| General search ("look something up… on any topic") | 167 of 268 | 16 of 30 | 1 of 30 |
+| General search plus "especially when the answer is a figure…" | 124 of 268 | 5 of 30 | 0 of 30 |
+
+That run used `gpt-6-luna` on Codex 0.164.0, with one question for each
+production-ready data manager spec family, asked twice. The one no-lookup
+trigger was "What does it mean when the yield curve inverts?".
+
+An earlier run on `gpt-6-astra` (Codex 0.155.1) tested the tool description
+instead. Rewriting the `tako_search` description to list its domains and
+sources left triggering unchanged (12 of 26 against 13 of 26), and so did adding
+"Prefer this over a general web search…" (13 of 26). Adding a skill for the
+same domains raised it to 24 of 26.
+
+## Tool descriptions say how to call the tool
+
+- Lead with what the tool does in one line, then a `Best for:` line. See the
+  tool-description rule in `AGENTS.md`.
+- Describe the tool's own scope. OpenAI's plugin guidelines bar descriptions
+  that favor or disparage other plugins or services, or that recommend
+  triggering beyond the plugin's purpose
+  (https://developers.openai.com/apps-sdk/app-submission-guidelines). "Prefer
+  this over web search" fails that rule, and it didn't work anyway.
+- Don't make one tool a step before another. `tako_search` used to tell the
+  model to run `tako_available_data` first. The model searched first in 122 of
+  127 runs that called Tako, and a search that misses still returns web
+  results. `tako_available_data` is for questions about coverage.
+- A description change reaches ChatGPT users after the next production
+  release, when OpenAI's daily scan picks it up. Keep a changed input schema
+  compatible with the approved one until the new definition is live.
+
+## Cost belongs in results, not descriptions
+
+- **Keep prices out of tool descriptions.** None of the comparable paid servers
+  we checked in October 2026 puts prices there: Exa, Parallel, Tavily,
+  Firecrawl, Brave, Perplexity, SerpAPI, Apify, Bright Data, and others. Prompt
+  wording that discourages tool calls also suppresses the calls a task needs
+  (When2Tool, https://arxiv.org/abs/2605.09252).
+- **Allow one neutral clause where the model's choice changes the charge.**
+  Today that's the `max_rows` parameter on `tako_contents`: "Charges scale with
+  rows returned, so lower it when the recent rows are enough." Apify, Firecrawl,
+  and Bright Data do the same on their budget parameters.
+- **Report the actual charge in the result.** `tako_search` returns
+  `usage.total_cost_usd`, and `tako_contents` returns a `cost` on each item.
+  Cost feedback after each call cut searches by 40% with no loss in accuracy
+  (BATS, https://arxiv.org/abs/2511.17006).
+- **Keep exact prices where a paying agent decides.** Agents that pay per call
+  over MPP read prices from `agent.md` and the 402 response before they pay.
+- **Keep pricing out of the ChatGPT listing.** OpenAI's guidelines say "Do not
+  advertise pricing, subscriptions, free trials, discounts, or promotions."
+
+## Measuring a change
+
+To test a skill or description change, run Codex against a stub MCP server.
+The stub serves the production `initialize` and `tools/list` and answers every
+call with "No results." Log each `tools/call` with the run's id, and give each
+arm its own `CODEX_HOME` and `HOME` so only that arm's skills load.
+
+- Run `codex --search exec --ignore-user-config --ephemeral --json` with
+  `mcp_servers.tako.url` pointing at the stub.
+- On Codex 0.164.0 and later, also set `features.apps=false`,
+  `features.plugins=false`, and `features.remote_plugin=false`, and clear
+  `plugins/` and `cache/` from each `CODEX_HOME`. Otherwise Codex connects your
+  account's ChatGPT apps and installs its remote plugins, including the
+  published Tako plugin, into every arm. `--ignore-user-config` doesn't stop
+  either one.
+- Count a run as complete only when it emits `turn.completed`. Codex sends an
+  agent message before it acts, and a spend-cap failure arrives after it.
+- Draw data prompts from the data manager specs, not from a hand-picked list,
+  and include web-only lookups and no-lookup tasks as controls.
+- Run each prompt at least twice. Single prompts flip between runs, so compare
+  totals.

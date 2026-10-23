@@ -106,6 +106,10 @@ On `/mcp`, items 5-8 are opt-in: name the tool in `?tools=` (an allowlist that r
   line, then a `Best for:` line naming when to reach for it. (Not "Use this
   when..." — no tool has led with that phrasing for a long time, and the
   generated `docs/TOOLS.md` is the place to check what the model actually reads.)
+- Before you change the bundled skill, the server instructions, a tool
+  description, or what a result says about cost, read
+  `docs/WRITING_FOR_MODELS.md`. The skill, not the descriptions, decides
+  whether a model calls Tako, and prices stay out of descriptions.
 - Never commit API keys or tokens
 
 ## Safety Rules
