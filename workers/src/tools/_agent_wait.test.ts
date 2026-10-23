@@ -9,6 +9,7 @@ import type { Env } from "../env.js";
 import { projectAgentRun } from "./_agent_run.js";
 import {
   AGENT_CALL_WINDOW_MS,
+  AgentWireDriftError,
   HEARTBEAT_INTERVAL_MS,
   PROGRESS_MIN_INTERVAL_MS,
   readSseEnvelopes,
@@ -92,12 +93,6 @@ afterEach(() => {
 });
 
 describe("waitForRun", () => {
-  it("uses a 45 s window, a 1 s progress interval, and a 15 s heartbeat", () => {
-    expect([AGENT_CALL_WINDOW_MS, PROGRESS_MIN_INTERVAL_MS, HEARTBEAT_INTERVAL_MS]).toEqual([
-      45_000, 1_000, 15_000,
-    ]);
-  });
-
   it("returns terminal with the result as soon as run_summary arrives", async () => {
     const scripted = scriptedStream([
       { atMs: 0, text: status("Searching the company registry") },
@@ -496,9 +491,7 @@ describe("waitForRun", () => {
     it("throws the unexpected-shape error when a completed run has no result field", async () => {
       vi.mocked(djangoGet).mockResolvedValue({ run_id: RUN, status: "completed" });
 
-      await expect(pollOutcome(0)).rejects.toThrow(
-        "The answer agent run endpoint returned an unexpected shape.",
-      );
+      await expect(pollOutcome(0)).rejects.toThrow(AgentWireDriftError);
     });
 
     it("keeps a completed run whose result is null", async () => {
@@ -517,25 +510,19 @@ describe("waitForRun", () => {
         result: { answer: "x", cards: [], citations: [{ index: 1 }] },
       });
 
-      await expect(pollOutcome(0)).rejects.toThrow(
-        "The answer agent run endpoint returned an unexpected shape.",
-      );
+      await expect(pollOutcome(0)).rejects.toThrow(AgentWireDriftError);
     });
 
     it("throws the unexpected-shape error when a poll body has no status", async () => {
       vi.mocked(djangoGet).mockResolvedValue({ run_id: RUN });
 
-      await expect(pollOutcome(0)).rejects.toThrow(
-        "The answer agent run endpoint returned an unexpected shape.",
-      );
+      await expect(pollOutcome(0)).rejects.toThrow(AgentWireDriftError);
     });
 
     it("throws the unexpected-shape error when a poll body has an unknown status", async () => {
       vi.mocked(djangoGet).mockResolvedValue({ run_id: RUN, status: "paused" });
 
-      await expect(pollOutcome(0)).rejects.toThrow(
-        "The answer agent run endpoint returned an unexpected shape.",
-      );
+      await expect(pollOutcome(0)).rejects.toThrow(AgentWireDriftError);
     });
 
     it.each(["running", "queued"])(

@@ -59,10 +59,15 @@ export type RunWire = {
   usage?: unknown;
 };
 
-/** The backend sent a run or event that doesn't match its published contract. */
+/**
+ * The backend sent a run that doesn't match its published contract. The
+ * message is model-facing: resuming the run returns the same error.
+ */
 export class AgentWireDriftError extends Error {
   constructor(product: AgentProduct) {
-    super(`The ${product} agent run endpoint returned an unexpected shape.`);
+    super(
+      `Tako returned a \`${AGENT_TOOL_NAME[product]}\` run that this tool can't read. Calling again with the same \`run_id\` returns this error again, so tell the user the run's result isn't available.`,
+    );
   }
 }
 

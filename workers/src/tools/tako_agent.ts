@@ -85,17 +85,15 @@ type Output = z.infer<typeof agentRunOutputShape>;
  *
  * The body sends `source_indexes` only when the caller set `sources`, so a
  * follow-up inherits the thread's sources; a new thread gets the backend's
- * default of data and web. `effort` only accepts the literal "medium" on the
- * Answer Agent (AnswerAgentEffort) — the sole launched level.
+ * default of data and web. The body never sends `effort`: a new thread runs at
+ * medium, and a follow-up keeps the thread's effort, including a `high` thread
+ * started through the API.
  */
 export function buildAgentBody(input: AgentInput): z.input<typeof AnswerAgentRunRequest> {
   if (input.query === undefined) {
     throw new AgentInputError("Send `query` to start a run.");
   }
-  const body: z.input<typeof AnswerAgentRunRequest> = {
-    query: input.query,
-    effort: "medium",
-  };
+  const body: z.input<typeof AnswerAgentRunRequest> = { query: input.query };
   if (input.thread_id !== undefined) body.thread_id = input.thread_id;
   if (input.sources !== undefined) body.source_indexes = [...input.sources];
   return body satisfies z.input<typeof AnswerAgentRunRequest>; // ← build-time guard: backend request drift breaks here
@@ -128,10 +126,7 @@ const takoAgent = {
     // See `annotationsBySurface` in types.ts.
     openWorldHint: true,
   },
-  fixedInputs: [
-    { field: "effort", value: "\"medium\"", note: "The only Answer Agent effort level launched." },
-    AGENT_CALL_WINDOW_FIXED_INPUT,
-  ],
+  fixedInputs: [AGENT_CALL_WINDOW_FIXED_INPUT],
   streamsProgress: true,
   // The handler's output IS the advertised shape, so there is no
   // `slimStructured` hook: `structuredContentFor` narrows to the declared keys

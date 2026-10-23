@@ -80,7 +80,7 @@ Parameters:
 
 Fixed request inputs (the caller cannot change these):
 
-- `effort` = `"medium"` — The only Answer Agent effort level launched.
+_none_
 
 Fixed worker-side settings (not request fields):
 
@@ -213,6 +213,9 @@ Annotations:
             "type": "string"
           },
           "url": {
+            "type": "string"
+          },
+          "published": {
             "type": "string"
           },
           "source_index": {
@@ -1031,6 +1034,9 @@ Annotations:
             "type": "string"
           },
           "url": {
+            "type": "string"
+          },
+          "published": {
             "type": "string"
           },
           "source_index": {

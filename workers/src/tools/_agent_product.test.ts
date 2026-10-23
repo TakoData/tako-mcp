@@ -38,6 +38,18 @@ describe("agent product table", () => {
     ]);
   });
 
+  it.each(["3f2a9c1e-7b4d-4e8a-9c2f-1d0e5b6a7c8d", "run_123"])(
+    "doesn't send the id %s, which has neither prefix, to the other tool",
+    (runId) => {
+      const parsed = runIdInputSchema("answer").safeParse(runId);
+
+      expect(parsed.error!.issues.map((issue) => issue.message)).toEqual([
+        "This run_id isn't one `tako_agent` returned. Send the `run_id` from an earlier `status: running` result unchanged.",
+      ]);
+      expect(() => toBackendRunId("answer", runId)).toThrow(/isn't one `tako_agent` returned/);
+    },
+  );
+
   it("accepts a run_id this tool returned", () => {
     const publicRunId = toPublicRunId("answer", "3f2a9c1e-7b4d-4e8a-9c2f-1d0e5b6a7c8d");
 

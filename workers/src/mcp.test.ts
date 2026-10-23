@@ -38,6 +38,7 @@ import {
 import type { Surface } from "./surface.js";
 import { TOOL_REGISTRY } from "./tools/_registry.js";
 import { projectRunningRun } from "./tools/_agent_run.js";
+import { PROGRESS_MIN_INTERVAL_MS } from "./tools/_agent_wait.js";
 import takoAgent from "./tools/tako_agent.js";
 import {
   CHATGPT_CLOSED_WORLD_TOOLS,
@@ -2247,6 +2248,72 @@ describe("agent tool calls over SSE", () => {
     });
     expect(messages[1]!.result?.structuredContent).toEqual(RUNNING);
     await vi.waitFor(() => expect(closeSpy).toHaveBeenCalledTimes(1));
+  });
+
+  it("relays a backend status event from a real agent run as a progress notification", async () => {
+    vi.useFakeTimers();
+    try {
+      const encoder = new TextEncoder();
+      const frame = (block: Record<string, unknown>): string =>
+        `data: ${JSON.stringify({ seq: 1, run_id: "abc", thread_id: "t1", category: "x", block })}\n\n`;
+      let finishRun = (): void => {};
+      vi.stubGlobal(
+        "fetch",
+        vi.fn<typeof fetch>(async (input) => {
+          if ((input as Request).method === "POST") {
+            return jsonResponse(202, { run_id: "abc", status: "queued", created_at: new Date().toISOString() });
+          }
+          return new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.enqueue(encoder.encode(frame({ kind: "status", message: "Searching the web" })));
+                finishRun = () => {
+                  controller.enqueue(
+                    encoder.encode(
+                      frame({ kind: "agent_result", id: "a1", data: { answer: "42", cards: [], citations: [] } }),
+                    ),
+                  );
+                  controller.enqueue(
+                    encoder.encode(
+                      frame({
+                        kind: "run_summary",
+                        status: "completed",
+                        created_at: "2026-10-22T00:00:00Z",
+                        error: null,
+                        usage: null,
+                      }),
+                    ),
+                  );
+                  controller.close();
+                };
+              },
+            }),
+            { status: 200, headers: { "content-type": "text/event-stream" } },
+          );
+        }),
+      );
+
+      const pending = worker.fetch(
+        mcpPost("/mcp?tools=agent", toolsCall("tako_agent", { progressToken: "p1" })),
+        env,
+      );
+      await vi.advanceTimersByTimeAsync(PROGRESS_MIN_INTERVAL_MS);
+      finishRun();
+      const messages = sseMessages(await (await pending).text());
+
+      expect(messages.map((m) => m.method ?? `result:${String(m.id)}`)).toEqual([
+        "notifications/progress",
+        "result:1",
+      ]);
+      expect(messages[0]!.params).toMatchObject({ progressToken: "p1", message: "Searching the web" });
+      expect(messages[1]!.result?.structuredContent).toMatchObject({
+        status: "completed",
+        run_id: "answer_run_abc",
+        answer: "42",
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("sends no progress notification when the request has no progressToken", async () => {

@@ -36,7 +36,6 @@
 import { describe, expect, it } from "vitest";
 
 import { TOOL_REGISTRY } from "./_registry.js";
-import tako_agent, { buildAgentBody } from "./tako_agent.js";
 import tako_company_agent, { buildCompanyAgentBody } from "./tako_company_agent.js";
 import tako_contents, { buildContentsBody } from "./tako_contents.js";
 import tako_search, { buildSearchBody } from "./tako_search.js";
@@ -82,11 +81,6 @@ const CASES: ReadonlyArray<{
         tako_search.inputSchema.parse({ query: "US GDP", sources: ["data", "web"] }),
         "authenticated",
       ),
-  },
-  {
-    name: tako_agent.name,
-    fixedInputs: tako_agent.fixedInputs,
-    body: () => buildAgentBody(tako_agent.inputSchema.parse({ query: "US GDP" })),
   },
   {
     name: tako_company_agent.name,

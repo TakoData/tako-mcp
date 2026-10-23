@@ -8,10 +8,16 @@ vi.mock("./_agent_wait.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./_agent_wait.js")>();
   return { ...actual, waitForRun: vi.fn() };
 });
-import { DjangoHttpError, DjangoNotFoundError, djangoGet, djangoPost } from "../django.js";
+import {
+  DjangoHttpError,
+  DjangoNotFoundError,
+  DjangoTimeoutError,
+  djangoGet,
+  djangoPost,
+} from "../django.js";
 import type { Env } from "../env.js";
 import { AgentInputError } from "./_agent_product.js";
-import { AGENT_CALL_WINDOW_MS, waitForRun } from "./_agent_wait.js";
+import { AGENT_CALL_WINDOW_MS, AgentWireDriftError, waitForRun } from "./_agent_wait.js";
 import { runAgentCall } from "./_agent_call.js";
 import type { ToolContext } from "./types.js";
 
@@ -161,6 +167,32 @@ describe("runAgentCall", () => {
     expect(out.run_id).toBe("answer_run_r1");
   });
 
+  it.each([
+    ["answer", new Set(["tako_agent", "tako_search"]), true],
+    ["answer", new Set(["tako_agent"]), false],
+    ["company", new Set(["tako_company_agent", "tako_search"]), false],
+  ] as const)(
+    "names tako_search in %s refusal guidance only when it can serve the lookup (%#)",
+    async (product, registeredTools, namesSearch) => {
+      vi.mocked(djangoGet).mockResolvedValue({
+        run_id: "r1",
+        status: "completed",
+        created_at: CREATED_AT,
+        result: { answer: null, cards: [], citations: [], refusal_code: "rejected_input_classifier" },
+      });
+
+      const out = await runAgentCall(
+        { ...ctx, registeredTools },
+        product,
+        { run_id: `${product}_run_r1` },
+        startBody,
+      );
+
+      expect(out.guidance).toContain("rejected_input_classifier");
+      expect(out.guidance?.includes("`tako_search`")).toBe(namesSearch);
+    },
+  );
+
   it("resumes a finished run without opening a stream", async () => {
     vi.mocked(djangoGet).mockResolvedValue({
       run_id: "r1",
@@ -281,6 +313,27 @@ describe("runAgentCall", () => {
     expect(err.modelGuidance).toBeUndefined();
   });
 
+  it.each([
+    new DjangoTimeoutError({ path: "/api/v1/agent/answer/runs", method: "POST", timeoutMs: 30_000 }),
+    httpError(408, ""),
+    httpError(502, ""),
+    httpError(503, ""),
+    httpError(504, ""),
+  ])("asks before retrying a start that may have created a run (%#)", async (original) => {
+    const err = await startError("answer", original);
+
+    expect(err).toBe(original);
+    expect(err.modelGuidance).toBe(
+      "Tako didn't confirm that the run started, but it may have. Calling again with `query` can start and bill a second run, so ask the user before you retry.",
+    );
+  });
+
+  it("leaves a start 429 to the shared retry guidance", async () => {
+    const err = await startError("answer", httpError(429, ""));
+
+    expect(err.modelGuidance).toBeUndefined();
+  });
+
   it("maps a busy-thread 409 conflict to resume guidance", async () => {
     const err = await startError(
       "answer",
@@ -320,6 +373,36 @@ describe("runAgentCall", () => {
     expect(err.message).toContain("answer_run_r1");
     expect(err.message).toContain("don't start a new run");
     expect(err.cause).toBe(original);
+  });
+
+  it("doesn't tell the model to resume a run whose result fails its contract", async () => {
+    vi.mocked(djangoPost).mockResolvedValue({ run_id: "r1", thread_id: "t1", created_at: CREATED_AT });
+    const drift = new AgentWireDriftError("answer");
+    vi.mocked(waitForRun).mockRejectedValue(drift);
+
+    const err = await runAgentCall(ctx, "answer", { query: "q" }, startBody).catch((e: unknown) => e);
+
+    expect(err).toBe(drift);
+    expect((err as Error).message).not.toContain("Call this tool again");
+  });
+
+  it("tells the model a resume of a drifted finished run returns the same error", async () => {
+    vi.mocked(djangoGet).mockResolvedValue({
+      run_id: "r1",
+      thread_id: "t1",
+      status: "completed",
+      created_at: CREATED_AT,
+      result: { answer: 42, cards: [], citations: [] },
+    });
+
+    const err = await runAgentCall(ctx, "answer", { run_id: "answer_run_r1" }, startBody).catch(
+      (e: unknown) => e,
+    );
+
+    expect(err).toBeInstanceOf(AgentWireDriftError);
+    expect((err as Error).message).toBe(
+      "Tako returned a `tako_agent` run that this tool can't read. Calling again with the same `run_id` returns this error again, so tell the user the run's result isn't available.",
+    );
   });
 
   it("maps effort_mismatch to the brief's copy", async () => {

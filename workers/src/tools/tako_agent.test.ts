@@ -95,9 +95,8 @@ describe("tako_agent", () => {
 
     expect(tool.name).toBe("tako_agent");
     expect(vi.mocked(djangoPost).mock.calls[0]![2]).toBe("/api/v1/agent/answer/runs");
-    expect(vi.mocked(djangoPost).mock.calls[0]![3]).toMatchObject({
+    expect(vi.mocked(djangoPost).mock.calls[0]![3]).toEqual({
       query: "analyze X",
-      effort: "medium",
       source_indexes: ["data", "web"],
     });
     expect(out.status).toBe("completed");
@@ -281,11 +280,12 @@ describe("tako_agent input schema", () => {
 });
 
 describe("tako_agent contract guards", () => {
-  it("omits source_indexes when the caller omits sources, so a follow-up keeps the thread's sources", () => {
+  it("omits source_indexes and effort on a follow-up, so it keeps the thread's pins", () => {
     const body = buildAgentBody(
       tool.inputSchema.parse({ query: "and in 2024?", thread_id: "6f1c1d2e-3a4b-4c5d-8e9f-0a1b2c3d4e5f" }),
     );
     expect(body).not.toHaveProperty("source_indexes");
+    expect(body).not.toHaveProperty("effort");
     expect(body.thread_id).toBe("6f1c1d2e-3a4b-4c5d-8e9f-0a1b2c3d4e5f");
   });
 

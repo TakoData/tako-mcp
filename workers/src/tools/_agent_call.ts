@@ -1,6 +1,12 @@
 import { z } from "zod";
 
-import { DjangoError, DjangoHttpError, DjangoNotFoundError, djangoPost } from "../django.js";
+import {
+  DjangoError,
+  DjangoHttpError,
+  DjangoNotFoundError,
+  DjangoTimeoutError,
+  djangoPost,
+} from "../django.js";
 import {
   AGENT_TOOL_NAME,
   AgentInputError,
@@ -13,6 +19,7 @@ import {
 import { type AgentRunOutput, projectAgentRun, projectRunningRun } from "./_agent_run.js";
 import {
   AGENT_CALL_WINDOW_MS,
+  AgentWireDriftError,
   elapsedS,
   isTerminal,
   parseRun,
@@ -59,8 +66,14 @@ export const AGENT_CALL_WINDOW_FIXED_INPUT: FixedInput = {
   scope: "worker",
 };
 
+const LOOKUP_TOOL = "tako_search";
 const REQUEST_TIMEOUT_MS = 30_000;
 const REQUEST_MARGIN_MS = 1_000;
+
+const UNCONFIRMED_START_STATUS = new Set([408, 502, 503, 504]);
+
+const UNCONFIRMED_START_GUIDANCE =
+  "Tako didn't confirm that the run started, but it may have. Calling again with `query` can start and bill a second run, so ask the user before you retry.";
 
 const RUN_NOT_FOUND_GUIDANCE =
   "No run with that `run_id` for this account. Start a new run with `query`.";
@@ -113,8 +126,9 @@ function conflictGuidance(
  * Maps a 404 to thread-not-found when the request sent a `thread_id`, or to
  * "unavailable" for the company product when it didn't. Maps a 409 by its
  * `code`; a `thread_product_mismatch` names the other agent tool only when
- * `registeredTools` holds it. Leaves every other error, and a 409 whose body
- * doesn't parse, unchanged. Returns `err`.
+ * `registeredTools` holds it. Maps a timeout, a 408, or a 502, 503, or 504,
+ * after which the run may exist, to ask-before-retry. Leaves every other
+ * error, and a 409 whose body doesn't parse, unchanged. Returns `err`.
  */
 export function mapStartError(
   err: DjangoError,
@@ -128,6 +142,13 @@ export function mapStartError(
     } else if (product === "company") {
       err.modelGuidance = "The company agent isn't available for this account.";
     }
+    return err;
+  }
+  if (
+    err instanceof DjangoTimeoutError ||
+    (err.status !== undefined && UNCONFIRMED_START_STATUS.has(err.status))
+  ) {
+    err.modelGuidance = UNCONFIRMED_START_GUIDANCE;
     return err;
   }
   if (err instanceof DjangoHttpError && err.status === 409) {
@@ -167,14 +188,23 @@ function createdAtMs(createdAt: string | undefined): number {
   return Number.isNaN(parsed) ? Date.now() : parsed;
 }
 
+function refusalLookupTool(ctx: ToolContext, product: AgentProduct): string | undefined {
+  return product === "answer" && ctx.registeredTools?.has(LOOKUP_TOOL) === true
+    ? LOOKUP_TOOL
+    : undefined;
+}
+
 function projectOutcome(
+  ctx: ToolContext,
   product: AgentProduct,
   backendRunId: string,
   outcome: WaitOutcome,
   startedAtMs: number,
 ): AgentRunOutput {
   const publicRunId = toPublicRunId(product, backendRunId);
-  if (outcome.kind === "terminal") return projectAgentRun(outcome.run, publicRunId);
+  if (outcome.kind === "terminal") {
+    return projectAgentRun(outcome.run, publicRunId, refusalLookupTool(ctx, product));
+  }
   const args: Parameters<typeof projectRunningRun>[0] = {
     toolName: AGENT_TOOL_NAME[product],
     publicRunId,
@@ -198,7 +228,7 @@ async function startRun(
       caller: ctx.caller,
     });
   } catch (err) {
-    if (err instanceof DjangoNotFoundError || err instanceof DjangoHttpError) {
+    if (err instanceof DjangoError) {
       mapStartError(err, product, input.thread_id !== undefined, ctx.registeredTools);
     }
     throw err;
@@ -214,8 +244,9 @@ async function startRun(
       createdAtMs: startedAtMs,
       ...(ctx.signal === undefined ? {} : { signal: ctx.signal }),
     });
-    return projectOutcome(product, backendRunId, outcome, startedAtMs);
+    return projectOutcome(ctx, product, backendRunId, outcome, startedAtMs);
   } catch (err) {
+    if (err instanceof AgentWireDriftError) throw err;
     const guidance = waitFailedGuidance(toPublicRunId(product, backendRunId));
     if (err instanceof DjangoError) {
       err.modelGuidance = guidance;
@@ -235,7 +266,11 @@ async function resumeRun(
   try {
     const wire = await readRun(ctx, product, backendRunId, requestTimeoutMs(deadline));
     if (isTerminal(wire.status)) {
-      return projectAgentRun(parseRun(product, backendRunId, wire), publicRunId);
+      return projectAgentRun(
+        parseRun(product, backendRunId, wire),
+        publicRunId,
+        refusalLookupTool(ctx, product),
+      );
     }
     const startedAtMs = createdAtMs(wire.created_at);
     const outcome = await waitForRun(ctx, product, backendRunId, {
@@ -243,7 +278,7 @@ async function resumeRun(
       createdAtMs: startedAtMs,
       ...(ctx.signal === undefined ? {} : { signal: ctx.signal }),
     });
-    return projectOutcome(product, backendRunId, outcome, startedAtMs);
+    return projectOutcome(ctx, product, backendRunId, outcome, startedAtMs);
   } catch (err) {
     if (err instanceof DjangoNotFoundError || err instanceof DjangoHttpError) {
       mapResumeError(err);

@@ -28,9 +28,12 @@
  *     Those two fields alone were 81% of that run's card payload.
  *   - `cards[].content{}`: nulls plus `export_pricing`; `total_rows` is lifted
  *     out of it.
- *   - `citations[].source_name`, `.excerpt`, `.publish_date`, `.content`: the
- *     generated contract states the Answer Agent "populates source_index and
- *     leaves the rest null", and both live runs confirm it.
+ *   - `citations[].source_name`, `.excerpt`, `.content`: the generated
+ *     contract states the Answer Agent "populates source_index and leaves the
+ *     rest null". The Company Agent fills `excerpt` on web citations, and
+ *     `tako_contents` fetches the page it came from.
+ *     `.publish_date` is kept as `published`, the name `tako_search` uses,
+ *     because the Company Agent fills it on web citations.
  *   - `result.request_id`: a correlation id with no model reader.
  *     `waitForRun` logs `run_id` when the run ends, which is where a
  *     support question gets answered.
@@ -189,6 +192,7 @@ export const projectedCitationShape = z.looseObject({
   index: z.number().describe("The number an [n] marker joins to; sparse."),
   title: z.string(),
   url: z.string().optional(),
+  published: z.string().optional(),
   source_index: z
     .enum(["data", "web"])
     .optional()
@@ -198,6 +202,7 @@ export type ProjectedCitation = {
   index: number;
   title: string;
   url?: string;
+  published?: string;
   source_index?: "data" | "web";
 };
 
@@ -259,10 +264,16 @@ export type AgentRunOutput = {
  * state was "Agent run completed with no answer text", and `refusal_code`
  * never reached either channel to say why.
  *
- * Two sentences, verdict then one action, per the spec's guidance rule.
+ * Two sentences, verdict then one action, per the spec's guidance rule. The
+ * action names `lookupTool` only when the caller passes one, so the text never
+ * points at a tool the connection doesn't register.
  */
-export function refusalGuidance(code: string): string {
-  return `Tako rejected this query before the agent ran (${code}), so nothing was researched. Rephrase it as a question about specific entities and metrics, or call \`tako_search\` for a direct lookup.`;
+export function refusalGuidance(code: string, lookupTool?: string): string {
+  const action =
+    lookupTool === undefined
+      ? "Rephrase it as a question about specific entities and metrics."
+      : `Rephrase it as a question about specific entities and metrics, or call \`${lookupTool}\` for a direct lookup.`;
+  return `Tako rejected this query before the agent ran (${code}), so nothing was researched. ${action}`;
 }
 
 /** The wire fields the projection reads. A superset arrives; nothing else is kept. */
@@ -359,6 +370,8 @@ export function projectCitation(citation: unknown): ProjectedCitation | undefine
   const out: ProjectedCitation = { index: rec.index, title };
   const url = nonEmpty(rec.url);
   if (url !== undefined) out.url = url;
+  const published = dateOnly(rec.publish_date);
+  if (published !== undefined) out.published = published;
   if (rec.source_index === "data" || rec.source_index === "web") {
     out.source_index = rec.source_index;
   }
@@ -405,8 +418,15 @@ export function noteMap(
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
-/** Project a terminal agent run into the shape both channels carry. */
-export function projectAgentRun(run: AgentRunWireLike, publicRunId: string): AgentRunOutput {
+/**
+ * Project a terminal agent run into the shape both channels carry. A refused
+ * run's guidance names `lookupTool` when the caller passes one.
+ */
+export function projectAgentRun(
+  run: AgentRunWireLike,
+  publicRunId: string,
+  lookupTool?: string,
+): AgentRunOutput {
   const result = run.result;
   const out: AgentRunOutput = {
     status: run.status === "failed" ? "failed" : "completed",
@@ -418,7 +438,7 @@ export function projectAgentRun(run: AgentRunWireLike, publicRunId: string): Age
   const answer = nonEmpty(result?.answer);
   if (answer !== undefined) out.answer = answer;
   const refusal = nonEmpty(result?.refusal_code);
-  if (refusal !== undefined) out.guidance = refusalGuidance(refusal);
+  if (refusal !== undefined) out.guidance = refusalGuidance(refusal, lookupTool);
   if (Array.isArray(result?.cards)) {
     out.cards = result.cards
       .map(projectAgentCard)

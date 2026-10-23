@@ -851,9 +851,10 @@ function renderAgentCard(c: ProjectedAgentCard): string {
 }
 
 function renderCitation(c: ProjectedCitation): string {
+  const published = c.published !== undefined ? `, ${c.published}` : "";
   const url = c.url !== undefined ? ` — ${c.url}` : "";
   const corpus = c.source_index !== undefined ? ` (${c.source_index})` : "";
-  return `[${c.index}] ${oneLine(c.title)}${url}${corpus}`;
+  return `[${c.index}] ${oneLine(c.title)}${published}${url}${corpus}`;
 }
 
 /** An agent run as markdown: the answer, the cards it built, the indexed

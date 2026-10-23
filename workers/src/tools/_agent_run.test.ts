@@ -198,6 +198,26 @@ describe("projectCitation", () => {
     });
   });
 
+  it("keeps a company web citation's publish date as `published` and drops its excerpt", () => {
+    expect(
+      projectCitation({
+        index: 3,
+        title: "10-K filing",
+        url: "https://example.com/10k",
+        source_name: "SEC",
+        source_index: "web",
+        excerpt: "Revenue grew 12%.",
+        publish_date: "2026-02-14T00:00:00Z",
+      }),
+    ).toEqual({
+      index: 3,
+      title: "10-K filing",
+      url: "https://example.com/10k",
+      published: "2026-02-14",
+      source_index: "web",
+    });
+  });
+
   it("preserves sparse indices, because the answer's [n] markers join to them", () => {
     const out = projectAgentRun({
       result: { citations: [{ index: 1, title: "a" }, { index: 12, title: "b" }] },

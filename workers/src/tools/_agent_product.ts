@@ -57,9 +57,9 @@ function malformedRunIdMessage(product: AgentProduct): string {
 }
 
 function invalidRunIdMessage(product: AgentProduct, publicRunId: unknown): string {
-  return typeof publicRunId === "string" && publicRunId.startsWith(RUN_ID_PREFIX[product])
-    ? malformedRunIdMessage(product)
-    : wrongPrefixMessage(product);
+  return typeof publicRunId === "string" && publicRunId.startsWith(RUN_ID_PREFIX[OTHER_PRODUCT[product]])
+    ? wrongPrefixMessage(product)
+    : malformedRunIdMessage(product);
 }
 
 export function toBackendRunId(

@@ -527,6 +527,7 @@ describe("renderAgentRunMarkdown", () => {
     ],
     citations: [
       { index: 1, title: "Source doc", url: "https://example.com/doc", source_index: "web" as const },
+      { index: 2, title: "Filing", url: "https://example.com/10k", published: "2026-02-14", source_index: "web" as const },
     ],
     definitions: { cohort: "companies matching the criteria" },
     thread_id: "th-1",
@@ -543,6 +544,7 @@ describe("renderAgentRunMarkdown", () => {
     // "refreshed", the same word renderProjectedCard uses for last_updated.
     expect(md).toContain("- source: S&P Global · refreshed 2026-08-26");
     expect(md).toContain("[1] Source doc — https://example.com/doc (web)");
+    expect(md).toContain("[2] Filing, 2026-02-14 — https://example.com/10k (web)");
     expect(md).toContain("- cohort: companies matching the criteria");
     expect(md).toContain("thread_id: th-1");
     expect(md).toContain("usage: $0.09");
