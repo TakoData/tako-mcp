@@ -15,9 +15,6 @@ How to do it:
 - If the question is **broad or multi-part**, decompose it into narrow single
   entity + metric searches and fire `tako_search` for each concurrently, then synthesize
   the results yourself. One entity, one metric per call.
-- If you are unsure the curated graph covers the metric, call `tako_available_data` first.
-  It is free and returns the exact metric name to use. A miss there is not a dead end: the
-  web half of the same search still applies.
 - If `tako_search` comes back with zero data cards and a `guidance` field, follow it:
   the free coverage check, ONE retry on the exact name it returns, then stop and answer
   from the web results already in the response. Do not rephrase and retry blind.

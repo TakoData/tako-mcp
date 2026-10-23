@@ -1,6 +1,6 @@
 {
   "name": "tako",
-  "description": "Tako's proprietary knowledge graph as MCP tools — live financial, macroeconomic, and company data as interactive, citation-backed charts — plus bundled research skills.",
+  "description": "Tako's proprietary knowledge graph as MCP tools — live financial, macroeconomic, and company data as interactive, citation-backed charts — plus a bundled lookup skill.",
   "version": "1.4.5",
   "author": {
     "name": "Tako",

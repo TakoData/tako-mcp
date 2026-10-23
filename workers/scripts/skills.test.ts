@@ -58,8 +58,8 @@ function skillDirNames(): string[] {
 // The ONE sanctioned difference between a SKILL.md and its README copy. The
 // README block is step 2 of a numbered install flow, so it points back at the
 // server the reader just added; the installed file has no such context and
-// names the server instead. Both spellings appear exactly three times, once
-// per skill. Any OTHER difference is drift, and the parity test says so.
+// names the server instead. Each spelling appears once. Any OTHER difference
+// is drift, and the parity test says so.
 const README_CONTEXT = "Tako MCP server installed in Step 1.";
 const SKILL_CONTEXT = "Tako MCP server (server name `tako`).";
 
@@ -76,12 +76,8 @@ function frontmatterOf(markdown: string): string {
 describe("bundled plugin skills", () => {
   const names = skillDirNames();
 
-  it("ships the three research skills", () => {
-    expect(names).toEqual([
-      "tako-financial-research",
-      "tako-macroeconomics",
-      "tako-web-traffic",
-    ]);
+  it("ships the tako-search skill", () => {
+    expect(names).toEqual(["tako-search"]);
   });
 
   for (const name of names) {

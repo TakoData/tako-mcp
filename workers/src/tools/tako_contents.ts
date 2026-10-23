@@ -172,9 +172,9 @@ function wholePageNoteAfter(err: unknown): string | undefined {
 // owns tool routing, and `_search_results.ts`'s zero-card guidance already
 // names this tool only when the connection can actually call it.
 const DESCRIPTION = [
-  `Fetch the full content behind a url: a web page's text, or an exportable Tako card's data rows. Batch up to ${MAX_CONTENTS_URLS} urls in one call — each one is billed and fails on its own.`,
+  `Fetch the full content behind a url: a web page's text, or an exportable Tako card's data rows. Batch up to ${MAX_CONTENTS_URLS} urls in one call — each fails on its own.`,
   "",
-  "Fetch only cards that `tako_search` marked `exportable: true`. Rows bill per 1,000 delivered, so set `max_rows` when the recent rows are enough. A website-traffic or SEO card also bills a per-unit data minimum that `max_rows` doesn't bound. If a page is long, such as a filing or an annual report, set `query` to a question to get back only the passages that answer it.",
+  "Fetch only cards that `tako_search` marked `exportable: true`. Set `max_rows` when the recent rows are enough. If a page is long, such as a filing or an annual report, set `query` to a question to get back only the passages that answer it.",
   "",
   // `Best for:` last, the shape the other four default tools use (AGENTS.md's
   // tool-description rule; compare `tako_search`).
@@ -215,7 +215,7 @@ const inputSchema = z.object({
         // The count and the cap live in the schema (`min`/`max` above) and the
         // batch instruction lives in the description. What only this line can
         // say is why batching pays.
-        "The urls to fetch: a Tako card url or a web result url. One call for 8 urls costs the same as 8 separate calls and saves 7 round trips.",
+        "The urls to fetch: a Tako card url or a web result url. One call for 8 urls saves 7 round trips.",
       ),
     { field: "tako_contents.urls" },
   ),
@@ -230,7 +230,7 @@ const inputSchema = z.object({
     .lte(MAX_CONTENTS_ROWS)
     .optional()
     .describe(
-      "Tako cards only: how many rows to return. Omit it for the whole card, up to 2,000 rows. Every row delivered is billed, so lower it when the recent rows are enough.",
+      "Tako cards only: how many rows to return. Omit it for the whole card, up to 2,000 rows. Charges scale with rows returned, so lower it when the recent rows are enough.",
     ),
   // Kept `.optional()` with NO zod default so `fetchOne` can tell "caller asked
   // for this cap" from "caller said nothing" — only the second is split across

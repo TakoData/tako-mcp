@@ -479,18 +479,14 @@ const LLMS_FULL_PATH = resolve(REPO_ROOT, "llms-full.txt");
 // right check for an index: every tool has to be named somewhere in it.
 const LLMS_PATH = resolve(REPO_ROOT, "llms.txt");
 // Checked for pin-form drift only (its contents are hand-written prose, and it
-// embeds the bundled skills' recovery protocols verbatim).
+// embeds the bundled skill verbatim).
 const README_PATH = resolve(REPO_ROOT, "README.md");
-// The bundled skills are model-facing prose that advises pinning, and NEITHER
-// existing guard could see them: `_pin_form.test.ts` walks tool descriptions,
-// and this function was only given llms-full.txt and README. That is the same
-// gap that let the broken form survive in llms-full.txt, so close it by
-// enumeration rather than waiting for the next survivor.
-const SKILL_PATHS = [
-  resolve(REPO_ROOT, "skills", "tako-financial-research", "SKILL.md"),
-  resolve(REPO_ROOT, "skills", "tako-macroeconomics", "SKILL.md"),
-  resolve(REPO_ROOT, "skills", "tako-web-traffic", "SKILL.md"),
-];
+// The bundled skills are model-facing prose, and NEITHER existing guard could
+// see them: `_pin_form.test.ts` walks tool descriptions, and this function was
+// only given llms-full.txt and README. That is the same gap that let the broken
+// form survive in llms-full.txt, so close it by enumeration rather than waiting
+// for the next survivor.
+const SKILL_PATHS = [resolve(REPO_ROOT, "skills", "tako-search", "SKILL.md")];
 const SUBMISSION_PATH = resolve(REPO_ROOT, "chatgpt-app-submission.json");
 const SNAPSHOT_PATH = resolve(REPO_ROOT, "chatgpt-app-snapshot.json");
 const TOOLS_DOC_PATH = resolve(REPO_ROOT, "docs", "TOOLS.md");
@@ -1113,7 +1109,7 @@ export function buildToolsDoc(input: ToolsDocInput): string {
     "",
     "## Choosing tools with `?tools=`",
     "",
-    "On `/mcp`, `?tools=` on the connection URL is an allowlist that **replaces** the default listing: `?tools=search,contents` lists exactly those two. Tokens are tool names; the `tako_` prefix is optional. Unknown tokens are dropped, and a param that names nothing recognizable yields the defaults, so a typo never breaks a connection. If you list tools, include the defaults you rely on — descriptions assume `tako_search`, `tako_available_data`, and `tako_contents` are present, and a `tako_available_data` result hands back a `next_call` handle naming whichever search tool the connection registers — `tako_search`, else `tako_search_advanced`, else no handle at all. `/mcp/chatgpt` ignores the param: its listing is fixed at submission.",
+    "On `/mcp`, `?tools=` on the connection URL is an allowlist that **replaces** the default listing: `?tools=search,contents` lists exactly those two. Tokens are tool names; the `tako_` prefix is optional. Unknown tokens are dropped, and a param that names nothing recognizable yields the defaults, so a typo never breaks a connection. If you list tools, include the defaults you rely on — descriptions assume `tako_search`, `tako_available_data`, and `tako_contents` are present, and a `tako_available_data` result hands back a `next_call` handle naming whichever search tool the connection registers — `tako_search`, else `tako_search_advanced`, else no handle at all. `/mcp/chatgpt` ignores the param: its listing is fixed.",
     "",
   );
 
@@ -1484,8 +1480,8 @@ export function buildChatgptSnapshot(
     // The OUTPUT schema is surface-specific now (`outputSchemaBySurface`), so
     // without this digest the one part of the ChatGPT contract that only
     // ChatGPT reads — the six widget fields its bundle takes from
-    // `window.openai.toolOutput` — could change with no snapshot diff and no
-    // resubmission prompt. Hashed in its WIRE form and key-sorted, for the
+    // `window.openai.toolOutput` — could change with no snapshot diff.
+    // Hashed in its WIRE form and key-sorted, for the
     // same two reasons the input digest documents.
     const outputSchema = outputSchemaForSurface(tool, "chatgpt");
     snapshot.tools[tool.name] = {
@@ -1493,8 +1489,8 @@ export function buildChatgptSnapshot(
       // Key-SORTED before hashing: `z.toJSONSchema` emits keys in whatever
       // order the zod version happens to build them, so hashing the raw
       // stringify makes a zod upgrade flip all five digests at once and
-      // report "input_schema changed since the accepted snapshot" — a
-      // resubmission order for text nobody edited. Sorting makes the digest
+      // report "input_schema changed since the accepted snapshot" for text
+      // nobody edited. Sorting makes the digest
       // depend on the schema's content, which is what OpenAI reviewed.
       input_schema_sha256: sha256(stableStringify(z.toJSONSchema(tool.inputSchema, { io: "input" }))),
       ...(outputSchema !== undefined
@@ -1545,7 +1541,7 @@ export function assertChatgptSnapshot(
     throw new Error(
       `chatgpt-app-snapshot.json drift — a reviewed ChatGPT tool changed:\n  ${problems.join(
         "\n  ",
-      )}\nOpenAI rescans /mcp/chatgpt daily and updates each tool after its automated checks pass, so this change reaches ChatGPT users with the next production deploy. If the change is intended, accept it: npm run registry:gen -- --accept-chatgpt-snapshot`,
+      )}\nOpenAI rescans /mcp/chatgpt daily and updates each tool after its automated checks pass, so this change reaches ChatGPT users with the next production deploy. If the change is intended, accept it: npm run registry:gen -- --accept-chatgpt-snapshot. Keep a changed input schema compatible with the old one: ChatGPT keeps the earlier definition until the new one passes its checks.`,
     );
   }
 }
@@ -1846,10 +1842,7 @@ async function main(): Promise<void> {
   //     regex separates from instructions, so only the unambiguous rule runs
   //     there. See pinFormProblem.
   //
-  //     The bundled skills carry the SAME descriptive `sources` sentence README
-  //     is exempted for, so they join at `requireStrict: false` too. Verified:
-  //     all three are clean under the unambiguous rule, and each trips the
-  //     strict rule on that one sentence alone.
+  //     The bundled skills join at `requireStrict: false`, the rule README gets.
   // Derived, never listed: a tool accepts a pin iff its published input schema
   // carries `node_ids` anywhere (nested counts — see the function's doc comment).
   const pinCapableTools = new Set(
@@ -1881,10 +1874,10 @@ async function main(): Promise<void> {
     readFileSync(SUBMISSION_PATH, "utf8"),
   );
 
-  // 4b. ChatGPT description/schema snapshot: OpenAI serves the text it
-  //     reviewed, so editing a listed tool's description or input schema
-  //     silently desynchronizes the app from this server until a
-  //     resubmission. The parity check above cannot see either field.
+  // 4b. ChatGPT description/schema snapshot: OpenAI picks up an edited
+  //     description or schema from its daily scan of /mcp/chatgpt, so an
+  //     unaccepted edit would reach ChatGPT users unnoticed. The parity
+  //     check above cannot see either field.
   const liveSnapshot = buildChatgptSnapshot(modules.map((m) => m.tool));
   if (acceptSnapshot && !checkMode) {
     writeFileSync(SNAPSHOT_PATH, liveSnapshot);

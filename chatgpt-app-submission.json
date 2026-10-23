@@ -112,8 +112,8 @@
       "description": "Retrieve a company metric as structured data with a chart.",
       "user_prompt": "Using Tako, show me NVIDIA's quarterly revenue.",
       "file_attachment_urls": null,
-      "tools_triggered": "tako_available_data, tako_search",
-      "expected_output": "Resolves the metric name with tako_available_data, then tako_search returns NVIDIA quarterly revenue with recent values, source attribution, and an inline chart card.",
+      "tools_triggered": "tako_search",
+      "expected_output": "tako_search returns NVIDIA quarterly revenue with recent values, source attribution, and an inline chart card.",
       "expected_output_url": null
     },
     {
@@ -125,7 +125,7 @@
       "expected_output_url": null
     },
     {
-      "description": "Check which structured metrics are available before running a priced search.",
+      "description": "Check which structured metrics Tako has on a company.",
       "user_prompt": "What proprietary structured data does Tako have for Tesla?",
       "file_attachment_urls": null,
       "tools_triggered": "tako_available_data",

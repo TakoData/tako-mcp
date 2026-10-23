@@ -40,7 +40,7 @@ const WORKFLOW = resolve(REPO_ROOT, ".github", "workflows", "workers-ci.yml");
  * from the workflow and this test fails.
  */
 const OTHER_GUARD_INPUTS: readonly string[] = [
-  "skills/tako-macroeconomics/SKILL.md", // scripts/skills.test.ts
+  "skills/tako-search/SKILL.md", // scripts/skills.test.ts
   ".claude-plugin/plugin.json",
   ".claude-plugin/marketplace.json",
   "version.txt",

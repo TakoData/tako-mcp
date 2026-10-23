@@ -729,9 +729,9 @@ describe("worker routing", () => {
     ).toEqual(["tako_contents", "tako_search"]);
   });
 
-  it("POST /mcp/chatgpt ignores ?tools= — its listing is fixed at submission", async () => {
-    // Spec D2: OpenAI snapshots the listing at submission, so the surface is
-    // constant per request. Naming other tools changes nothing.
+  it("POST /mcp/chatgpt ignores ?tools= — its listing is fixed", async () => {
+    // Spec D2: OpenAI's scan reads one listing for every user, so the surface
+    // is constant per request. Naming other tools changes nothing.
     const expected = [
       "tako_agent",
       "tako_available_data",

@@ -7,7 +7,10 @@ trig-macro-compare	skill	sonnet	Compare inflation in Japan and Germany over the 
 trig-macro-demographics	skill	sonnet	What's the population of Tokyo?
 trig-traffic-brand	skill	sonnet	How much traffic does Netflix get?
 trig-traffic-compare	skill	sonnet	Which gets more visitors, youtube.com or tiktok.com?
-trig-traffic-app	skill	sonnet	How many monthly active users does the Spotify app have?
+trig-web-app-users	skill	sonnet	How many monthly active users does the Spotify app have?
+trig-web-news	skill	sonnet	What did the Fed chair say at the most recent press conference?
+trig-web-release	skill	sonnet	When does the next iPhone go on sale?
+trig-web-policy	skill	sonnet	What are the main obligations in the EU AI Act for general-purpose models?
 trig-neg-creative	skill	sonnet	Write a limerick about spreadsheets
 trig-neg-concept	skill	sonnet	Explain in general terms how a consumer price index is constructed
 trig-neg-calendar	skill	sonnet	Schedule a meeting with my team tomorrow at 10
@@ -27,3 +30,15 @@ haiku-fin-indirect	skill	haiku	How is Apple doing financially these days?
 haiku-traffic-brand	skill	haiku	How much traffic does Netflix get?
 haiku-macro-direct	skill	haiku	What's the US unemployment rate right now?
 haiku-neg-concept	skill	haiku	Explain in general terms how a consumer price index is constructed
+haiku-out-F1-margin	skill	haiku	What is Apple's gross margin? Cite your source.
+haiku-out-F1-margin	noskill	haiku	What is Apple's gross margin? Cite your source.
+haiku-out-F2-toyota	skill	haiku	What is Toyota's annual revenue?
+haiku-out-F2-toyota	noskill	haiku	What is Toyota's annual revenue?
+haiku-out-M1-pce	skill	haiku	What is US core PCE inflation right now?
+haiku-out-M1-pce	noskill	haiku	What is US core PCE inflation right now?
+haiku-out-M2-fedfunds	skill	haiku	What is the current US federal funds rate?
+haiku-out-M2-fedfunds	noskill	haiku	What is the current US federal funds rate?
+haiku-out-T1-netflix	skill	haiku	How much web traffic does Netflix get per month?
+haiku-out-T1-netflix	noskill	haiku	How much web traffic does Netflix get per month?
+haiku-out-T2-compare	skill	haiku	Compare youtube.com and netflix.com traffic
+haiku-out-T2-compare	noskill	haiku	Compare youtube.com and netflix.com traffic

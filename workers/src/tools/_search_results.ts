@@ -1485,13 +1485,10 @@ export function buildDataGapGuidance(
  * not being covered, and every retry is a priced call the model burns on a
  * loop that never converges.
  *
- * This protocol is mirrored in the three bundled skills' SKILL.md files
- * under skills/ and their embedded copies in README.md, each as the
- * "Zero cards?" workflow step. What must stay consistent is the
- * RECIPE — free tako_available_data check → ONE retry on the exact metric
- * NAME → stop and answer from the web results — not the phrasing;
- * pin an invariant here rather than a quoted sentence, so a reworded skill
- * does not silently make this comment a lie. Update all four copies together.
+ * The bundled skill doesn't repeat this protocol: on a miss it tells the
+ * model to answer from the web results, so this guidance is the only place
+ * the RECIPE lives — free tako_available_data check → ONE retry on the exact
+ * metric NAME → stop and answer from the web results.
  *
  * NOTHING HERE PINS ANY MORE, and the skills never did. This guidance used to
  * interpolate {@link PINNED_RETRY}; after the D4 split `tako_search` takes no
@@ -1503,14 +1500,6 @@ export function buildDataGapGuidance(
  * every guidance branch was cut to two sentences, and
  * `tako_search_advanced`'s `data.node_ids` describe carries the short form.
  * Do not route it back here.
- *
- * The web-axis carve-out is deliberately NOT mirrored into those three:
- * they are data-domain skills (equity research, macro indicators, site
- * traffic) whose questions are metric lookups by construction, so the
- * data-axis recipe is the whole story there. The carve-out matters for the
- * TOOL guidance, which serves arbitrary questions — including ones with no
- * data answer at all. Absence from the skills is the intended state, not
- * drift.
  */
 /**
  * The recovery protocol a zero-card search ships in its own result.
@@ -1543,8 +1532,8 @@ function buildZeroResultGuidance(
   // Every branch is exactly TWO sentences: the verdict (which corpora this
   // response is evidence about) and the one next action (spec:
   // 2026-08-26-model-facing-surface-redesign-design.md, "guidance" decision).
-  // Static lessons — query shape, domains-not-brands, the coverage-check-first
-  // recipe — live in the tool description and are NOT repeated here.
+  // Static lessons — query shape, domains-not-brands — live in the tool
+  // description and are NOT repeated here.
   //
   // THREE STATES PER TOOL, not two, and tier is only one of them. This
   // branched on `tier === "free"` alone, which is the wrong predicate: a

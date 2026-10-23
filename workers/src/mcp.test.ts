@@ -1708,7 +1708,7 @@ describe.each(DEFAULT_ROUTING_TOOLS_BY_SURFACE)("$surface default instructions",
   // Tako. Cheap to delete as "filler" during a trim; the most expensive line
   // here to lose.
   it("keeps the domain list that makes the server discoverable", () => {
-    for (const domain of ["finance", "economics", "website/app traffic", "elections"]) {
+    for (const domain of ["finance", "economics", "website traffic", "elections"]) {
       expect(instructions).toContain(domain);
     }
   });
@@ -1943,7 +1943,7 @@ describe("object-level schema checks reach the wire", () => {
  * `tool.outputSchema` left all 1267 tests green while stripping the six
  * widget fields out of the `structuredContent` ChatGPT's bundle reads via
  * `window.openai.toolOutput` — a silently broken chart on the one surface
- * that costs an app resubmission to fix.
+ * where a fix waits for a production release and OpenAI's next scan.
  *
  * `tools/list` over a real server, not the module constant, because the SDK
  * republishes the schema and the surface is chosen inside `registerTool`.
