@@ -179,7 +179,9 @@ describe("plugin manifests", () => {
       ),
     ) as { mcpServers?: Record<string, { type?: string; url?: string }> };
     expect(plugin.mcpServers?.tako?.type).toBe("http");
-    expect(plugin.mcpServers?.tako?.url).toBe("https://mcp.tako.com/mcp");
+    expect(plugin.mcpServers?.tako?.url).toBe(
+      "https://mcp.tako.com/mcp?tools=search,available_data,contents,graph_related,agent,company_agent",
+    );
   });
 
   it("declares the plugin in the marketplace manifest", () => {

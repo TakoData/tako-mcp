@@ -314,7 +314,7 @@ claude mcp add tako --transport http "https://mcp.tako.com/mcp?tools=search,avai
 ```
 
 - **Claude.ai, Claude Desktop, ChatGPT developer-mode connectors:** put the param on the URL you paste. OAuth is unaffected (the server canonicalizes the resource, query string included).
-- **Claude Code plugin:** the plugin pins the default surface (its URL isn't user-editable). For a different set, add the server yourself with `claude mcp add` as above, and keep only one Tako connection active so you don't get two copies of every tool.
+- **Claude Code plugin and Gemini CLI extension:** each pins the default surface plus `tako_agent` and `tako_company_agent` (`?tools=search,available_data,contents,graph_related,agent,company_agent`), and its URL isn't user-editable. For a different set, add the server yourself with `claude mcp add` as above, and keep only one Tako connection active so you don't get two copies of every tool.
 - **`/mcp/chatgpt` ignores `?tools=`**: its listing is fixed — `tako_search`, `tako_available_data`, `tako_contents`, `tako_visualize`, `tako_graph_related`, `tako_agent`, `tako_company_agent`.
 
 <details>
@@ -364,7 +364,7 @@ Step 1: Install or update Tako MCP
 
 If Tako MCP already exists in your config, update it to this endpoint. Run this in your terminal:
 
-claude mcp add tako-mcp --transport http "https://mcp.tako.com/mcp" --header "Authorization: Bearer $TAKO_API_TOKEN"
+claude mcp add tako-mcp --transport http "https://mcp.tako.com/mcp?tools=search,available_data,contents,graph_related,agent,company_agent" --header "Authorization: Bearer $TAKO_API_TOKEN"
 
 
 Step 2: Add this Claude skill

@@ -21,7 +21,7 @@
   "mcpServers": {
     "tako": {
       "type": "http",
-      "url": "https://mcp.tako.com/mcp"
+      "url": "https://mcp.tako.com/mcp?tools=search,available_data,contents,graph_related,agent,company_agent"
     }
   }
 }

@@ -127,7 +127,7 @@ describe("gemini extension manifest", () => {
 
   it("points its MCP server at the production endpoint", () => {
     expect(manifest().mcpServers?.tako?.httpUrl).toBe(
-      "https://mcp.tako.com/mcp",
+      "https://mcp.tako.com/mcp?tools=search,available_data,contents,graph_related,agent,company_agent",
     );
   });
 
