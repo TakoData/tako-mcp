@@ -375,8 +375,8 @@ describe("assertChatgptSnapshot", () => {
 
   it("ignores tools that are not on the chatgpt surface", () => {
     const snapshot = buildChatgptSnapshot([search, ...others]);
-    const agent = { name: "tako_agent", description: "x", inputSchema: z.object({}) };
-    expect(() => assertChatgptSnapshot([search, ...others, agent], snapshot)).not.toThrow();
+    const advanced = { name: "tako_search_advanced", description: "x", inputSchema: z.object({}) };
+    expect(() => assertChatgptSnapshot([search, ...others, advanced], snapshot)).not.toThrow();
   });
 });
 

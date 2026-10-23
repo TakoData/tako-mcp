@@ -38,7 +38,9 @@ Tako searches the web and a proprietary knowledge graph of live structured data 
 
 Default listing:
 
+- `tako_agent`
 - `tako_available_data`
+- `tako_company_agent`
 - `tako_contents`
 - `tako_graph_related`
 - `tako_search`
@@ -58,7 +60,7 @@ Tako searches the web and a proprietary knowledge graph of live structured data 
 
 **Tako: Answer Agent**
 
-- Listed by default on: none (opt-in on `/mcp`)
+- Listed by default on: `/mcp/chatgpt`
 - Runs anonymously (on `/mcp`): no (answers with sign-in instructions)
 
 Description:
@@ -869,7 +871,7 @@ tako_search: Carnival, Inc. Revenues
 
 **Tako: Company Agent**
 
-- Listed by default on: none (opt-in on `/mcp`)
+- Listed by default on: `/mcp/chatgpt`
 - Runs anonymously (on `/mcp`): no (answers with sign-in instructions)
 
 Description:

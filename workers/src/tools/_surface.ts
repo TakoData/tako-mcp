@@ -81,6 +81,8 @@ export const FREE_TIER_TOOL_NAMES: ReadonlySet<string> = new Set([
  */
 export const CHATGPT_TOOL_NAMES: ReadonlySet<string> = new Set([
   "tako_search",
+  "tako_agent",
+  "tako_company_agent",
   "tako_available_data",
   "tako_contents",
   "tako_visualize",

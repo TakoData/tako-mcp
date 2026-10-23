@@ -208,8 +208,7 @@ export type ProjectedCitation = {
 
 /** Advertised structuredContent for `tako_agent`: the projected run. One
  *  shape, both surfaces — this tool mounts no widget, so there are no
- *  per-surface widget fields to declare (it is also off the chatgpt surface,
- *  `CHATGPT_TOOL_NAMES` in `_surface.ts`).
+ *  per-surface widget fields to declare.
  *
  *  Declared HERE, beside `projectAgentRun`, not in `_render_markdown.ts`: the
  *  advertised shape and the projection that fills it drift the moment they

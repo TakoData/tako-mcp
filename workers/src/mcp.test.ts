@@ -41,6 +41,7 @@ import { TOOL_REGISTRY } from "./tools/_registry.js";
 import { projectRunningRun } from "./tools/_agent_run.js";
 import { PROGRESS_MIN_INTERVAL_MS } from "./tools/_agent_wait.js";
 import takoAgent from "./tools/tako_agent.js";
+import takoCompanyAgent from "./tools/tako_company_agent.js";
 import {
   CHATGPT_CLOSED_WORLD_TOOLS,
   toolAnnotationsForSurface,
@@ -108,7 +109,7 @@ describe("toolAnnotationsForSurface", () => {
         name,
       ).toBe(true);
     }
-    for (const name of ["tako_visualize", "tako_agent"]) {
+    for (const name of ["tako_visualize", "tako_agent", "tako_company_agent"]) {
       expect(
         toolAnnotationsForSurface(
           TOOL_REGISTRY.find((tool) => tool.name === name)!,
@@ -901,9 +902,11 @@ describe("free-tier tool surface", () => {
     ).resolves.toEqual(expected);
   });
 
-  it("the chatgpt surface serves the fixed five-tool set", async () => {
+  it("the chatgpt surface serves the fixed seven-tool set", async () => {
     await expect(listToolNames({ surface: "chatgpt" })).resolves.toEqual([
+      "tako_agent",
       "tako_available_data",
+      "tako_company_agent",
       "tako_contents",
       "tako_graph_related",
       "tako_search",
@@ -2294,6 +2297,22 @@ describe("agent tool calls over SSE", () => {
     await vi.waitFor(() => expect(closeSpy).toHaveBeenCalledTimes(1));
   });
 
+  it("answers an agent tools/call on /mcp/chatgpt over text/event-stream", async () => {
+    const COMPANY_RUNNING = projectRunningRun({
+      toolName: "tako_company_agent",
+      publicRunId: "company_run_abc",
+      elapsedS: 45,
+    });
+    vi.spyOn(takoCompanyAgent, "handler").mockResolvedValue(COMPANY_RUNNING);
+
+    const res = await worker.fetch(mcpPost("/mcp/chatgpt", toolsCall("tako_company_agent")), env);
+
+    expect(res.headers.get("content-type")).toContain("text/event-stream");
+    const messages = sseMessages(await res.text());
+    expect(messages.map((m) => m.method ?? `result:${String(m.id)}`)).toEqual(["result:1"]);
+    expect(messages[0]!.result?.structuredContent).toEqual(COMPANY_RUNNING);
+  });
+
   it("relays a backend status event from a real agent run as a progress notification", async () => {
     vi.useFakeTimers();
     try {
@@ -2432,8 +2451,8 @@ describe("agent tool calls over SSE", () => {
   });
 
   it("keeps JSON for an agent tool the connection didn't register", async () => {
-    const chatgpt = await worker.fetch(
-      mcpPost("/mcp/chatgpt", toolsCall("tako_agent", { progressToken: "p1" })),
+    const agentNotOptedIn = await worker.fetch(
+      mcpPost("/mcp?tools=search", toolsCall("tako_agent", { progressToken: "p1" })),
       env,
     );
     const companyNotOptedIn = await worker.fetch(
@@ -2441,7 +2460,7 @@ describe("agent tool calls over SSE", () => {
       env,
     );
 
-    for (const res of [chatgpt, companyNotOptedIn]) {
+    for (const res of [agentNotOptedIn, companyNotOptedIn]) {
       expect(res.headers.get("content-type")).toContain("application/json");
       const body = (await res.json()) as { result?: { isError?: unknown } };
       expect(body.result?.isError).toBe(true);

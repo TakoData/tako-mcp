@@ -8,8 +8,8 @@
  * or `status: "running"` with a `company_run_` `run_id`. Send that `run_id`
  * instead of `query` to keep waiting. The Worker never cancels a run.
  *
- * This is opt-in on the generic surface only: name `company_agent` in
- * `?tools=`. It is off the chatgpt surface (`CHATGPT_TOOL_NAMES` in
+ * On the generic surface this is opt-in: name `company_agent` in `?tools=`.
+ * The chatgpt surface always lists it (`CHATGPT_TOOL_NAMES` in
  * `_surface.ts`).
  */
 import { z } from "zod";
