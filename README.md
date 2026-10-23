@@ -7,7 +7,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
 [![Benchmarks: +21% on VerticalRTK](https://img.shields.io/badge/Benchmarks-%2B21%25_on_VerticalRTK-6E56CF?style=flat-square)](https://tako.com/blog/evaluating-a-new-kind-of-search-api/)
 
-Tako MCP gives your agent industry-leading live web search plus licensed data that the open web does not have. That includes company financials, macroeconomic indicators, web and app traffic, sports, US government spending, and more.
+Tako MCP gives your agent industry-leading live web search plus licensed data that the open web does not have. That includes company financials, macroeconomic indicators, website traffic, sports, US government spending, and more.
 
 **[Full Documentation](https://docs.tako.com/documentation/integrations/mcp-server)** · **[Get your API key](https://tako.com/console/api-keys)** · **[MCP Registry](https://registry.modelcontextprotocol.io)**
 
@@ -37,7 +37,7 @@ Paste the URL. Sign in when your client prompts you — a per-host key is minted
 [![Install in VS Code](https://img.shields.io/badge/VS_Code-Install_Tako-0098FF?style=flat-square&logo=visualstudiocode&logoColor=white)](https://insiders.vscode.dev/redirect/mcp/install?name=tako&config=%7B%22type%22%3A%22http%22%2C%22url%22%3A%22https%3A%2F%2Fmcp.tako.com%2Fmcp%22%7D)
 [![Install in VS Code Insiders](https://img.shields.io/badge/VS_Code_Insiders-Install_Tako-24bfa5?style=flat-square&logo=visualstudiocode&logoColor=white)](https://insiders.vscode.dev/redirect/mcp/install?name=tako&config=%7B%22type%22%3A%22http%22%2C%22url%22%3A%22https%3A%2F%2Fmcp.tako.com%2Fmcp%22%7D&quality=insiders)
 
-Claude Code installs with one command — the plugin brings the MCP connection plus Tako's bundled [research skills](#agent-skills):
+Claude Code installs with one command — the plugin brings the MCP connection plus Tako's bundled [lookup skill](#agent-skills):
 
 ```bash
 claude plugin marketplace add TakoData/tako-mcp && claude plugin install tako@tako
@@ -56,7 +56,7 @@ Pick your client below.
 <details>
 <summary><b>Claude Code</b></summary>
 
-**Plugin (recommended)** — installs the MCP connection plus Tako's bundled [research skills](#agent-skills) in one step, and works immediately on the free tier — no API key to mint or manage:
+**Plugin (recommended)** — installs the MCP connection plus Tako's bundled [lookup skill](#agent-skills) in one step, and works immediately on the free tier — no API key to mint or manage:
 
 ```bash
 claude plugin marketplace add TakoData/tako-mcp
@@ -138,7 +138,7 @@ Add to `.vscode/mcp.json` (workspace) or your user `mcp.json` — VS Code prompt
 gemini extensions install https://github.com/TakoData/tako-mcp
 ```
 
-That installs the MCP connection, Tako's bundled [research skills](#agent-skills), and three commands:
+That installs the MCP connection, Tako's bundled [lookup skill](#agent-skills), and three commands:
 
 | Command | What it does |
 | --- | --- |
@@ -291,7 +291,7 @@ The full reference — every description and parameter exactly as the model sees
 | ---- | ------------- |
 | `tako_search` | **Find the data.** Fast search over Tako's curated graph and the live web. Four parameters — `query`, `sources`, `country_code`, `locale` — and no defaults of its own, so an omitted field takes the API's. Cards carry headline values, node ids and chart links; `tako_contents` reads the rows. The top result renders inline as a chart with an **Open in Tako** link. Parallelize broad questions into narrow single entity+metric searches. |
 | `tako_available_data` | **Find what structured data exists** on an entity or metric in one free call — the exact metric name to search on, an `id` for graph traversal, and a ready-to-run `next_call`. Ambiguous names come back as candidates with a `kind`; `metric` doubles as the substring browse filter; `limit` widens the candidate list. |
-| `tako_contents` | Fetch what's behind result URLs (1-10 per call): a card's rows (billed per 1k rows) or a web page's text — set `query` to a question to get only the passages that answer it. Requires a signed-in connection. |
+| `tako_contents` | Fetch what's behind result URLs (1-10 per call): a card's rows or a web page's text — set `query` to a question to get only the passages that answer it. Requires a signed-in connection. |
 | `tako_graph_related` | Explore a graph node: a map (each relation's key, total, first three names) or one paged relation — metrics, the entities a metric covers, competitors (`rel:competes_with`), memberships, sources. `q` is a substring filter. Free. |
 
 **Anonymous connections (no credentials):** the tool list is the same — it never changes with auth state. `tako_search` runs anonymously (rate-limited, on shared capacity); the others answer with sign-in instructions.
@@ -315,7 +315,7 @@ claude mcp add tako --transport http "https://mcp.tako.com/mcp?tools=search,avai
 
 - **Claude.ai, Claude Desktop, ChatGPT developer-mode connectors:** put the param on the URL you paste. OAuth is unaffected (the server canonicalizes the resource, query string included).
 - **Claude Code plugin:** the plugin pins the default surface (its URL isn't user-editable). For a different set, add the server yourself with `claude mcp add` as above, and keep only one Tako connection active so you don't get two copies of every tool.
-- **`/mcp/chatgpt` ignores `?tools=`**: its listing is fixed at submission — `tako_search`, `tako_available_data`, `tako_contents`, `tako_visualize`, `tako_graph_related`, `tako_agent`, `tako_company_agent`.
+- **`/mcp/chatgpt` ignores `?tools=`**: its listing is fixed — `tako_search`, `tako_available_data`, `tako_contents`, `tako_visualize`, `tako_graph_related`, `tako_agent`, `tako_company_agent`.
 
 <details>
 <summary><b>Getting values vs. getting pointers</b></summary>
@@ -325,12 +325,12 @@ Two tools, one step apart — `tako_search` finds, `tako_contents` fetches:
 | You want… | Call | What you get back |
 |---|---|---|
 | **To see what exists** — recon, fan-outs, a chart to embed | `tako_search` | Cards with headline values, node ids, and chart links, plus web results. Cheap; safe to parallelize widely. |
-| **The values themselves** — rows to compute over or quote | `tako_contents` on the card's url | Up to 2,000 rows of an `exportable: true` card, billed per 1k delivered. |
+| **The values themselves** — rows to compute over or quote | `tako_contents` on the card's url | Up to 2,000 rows of an `exportable: true` card. |
 | **A web page's text** | `tako_contents` on the web result's url | The page's extracted text (set `query` to a question to get only the passages that answer it). |
 | **More search options** — per-source counts, graph pins, domain filters, `effort: deep` | `tako_search_advanced` (opt-in, `?tools=search_advanced`) | The same structured payload as `tako_search`. No inline chart render — the response still carries `embed_url`. |
 
 - **Broad or multi-part questions → parallel narrow searches.** Decompose into single entity+metric queries fired concurrently — e.g. *"US CPI inflation"*, *"US core CPI inflation"*, *"US PCE inflation"* — then synthesize yourself.
-- **Unsure what Tako covers → `tako_available_data` first.** It is free, returns the metric's exact name to search on, and a miss there still leaves web search.
+- **Questions about what Tako covers → `tako_available_data`.** It returns the metric's exact name, and a miss there still leaves web search.
 </details>
 
 <details>

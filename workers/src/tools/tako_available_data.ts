@@ -117,7 +117,7 @@ const DESCRIPTION = [
   "",
   "Best for: questions about what Tako covers. Put a company, person, or place in `q` to list the metrics tracked on it; put a metric in `q` to list the entities it covers. Add `metric` when you know the measure — you get the resolved pair and a ready-to-run `next_call`.",
   "",
-  "A name here means the graph tracks it, not that a card exists. If the follow-up search comes back empty, say Tako has no card for it rather than rephrasing the query. Hand a node id to `tako_graph_related` to see what else connects to it.",
+  "Search on the canonical names it returns, not your own phrasing — `tako_search` matches the graph's names, not yours. A name here means the graph tracks it, not that a card exists. If the follow-up search comes back empty, say Tako has no card for it rather than rephrasing the query. Hand a node id to `tako_graph_related` to see what else connects to it.",
 ].join("\n");
 
 const inputSchema = z.object({

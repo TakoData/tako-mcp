@@ -215,7 +215,7 @@ const inputSchema = z.object({
         // The count and the cap live in the schema (`min`/`max` above) and the
         // batch instruction lives in the description. What only this line can
         // say is why batching pays.
-        "The urls to fetch: a Tako card url or a web result url. One call for 8 urls costs the same as 8 separate calls and saves 7 round trips.",
+        "The urls to fetch: a Tako card url or a web result url. One call for 8 urls saves 7 round trips.",
       ),
     { field: "tako_contents.urls" },
   ),

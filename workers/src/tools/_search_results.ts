@@ -1500,14 +1500,6 @@ export function buildDataGapGuidance(
  * every guidance branch was cut to two sentences, and
  * `tako_search_advanced`'s `data.node_ids` describe carries the short form.
  * Do not route it back here.
- *
- * The web-axis carve-out is deliberately NOT mirrored into those three:
- * they are data-domain skills (equity research, macro indicators, site
- * traffic) whose questions are metric lookups by construction, so the
- * data-axis recipe is the whole story there. The carve-out matters for the
- * TOOL guidance, which serves arbitrary questions — including ones with no
- * data answer at all. Absence from the skills is the intended state, not
- * drift.
  */
 /**
  * The recovery protocol a zero-card search ships in its own result.
@@ -1540,8 +1532,8 @@ function buildZeroResultGuidance(
   // Every branch is exactly TWO sentences: the verdict (which corpora this
   // response is evidence about) and the one next action (spec:
   // 2026-08-26-model-facing-surface-redesign-design.md, "guidance" decision).
-  // Static lessons — query shape, domains-not-brands, the coverage-check-first
-  // recipe — live in the tool description and are NOT repeated here.
+  // Static lessons — query shape, domains-not-brands — live in the tool
+  // description and are NOT repeated here.
   //
   // THREE STATES PER TOOL, not two, and tier is only one of them. This
   // branched on `tier === "free"` alone, which is the wrong predicate: a

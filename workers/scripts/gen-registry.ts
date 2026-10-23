@@ -479,13 +479,13 @@ const LLMS_FULL_PATH = resolve(REPO_ROOT, "llms-full.txt");
 // right check for an index: every tool has to be named somewhere in it.
 const LLMS_PATH = resolve(REPO_ROOT, "llms.txt");
 // Checked for pin-form drift only (its contents are hand-written prose, and it
-// embeds the bundled skills' recovery protocols verbatim).
+// embeds the bundled skill verbatim).
 const README_PATH = resolve(REPO_ROOT, "README.md");
-// The bundled skills are model-facing prose that advises pinning, and NEITHER
-// existing guard could see them: `_pin_form.test.ts` walks tool descriptions,
-// and this function was only given llms-full.txt and README. That is the same
-// gap that let the broken form survive in llms-full.txt, so close it by
-// enumeration rather than waiting for the next survivor.
+// The bundled skills are model-facing prose, and NEITHER existing guard could
+// see them: `_pin_form.test.ts` walks tool descriptions, and this function was
+// only given llms-full.txt and README. That is the same gap that let the broken
+// form survive in llms-full.txt, so close it by enumeration rather than waiting
+// for the next survivor.
 const SKILL_PATHS = [resolve(REPO_ROOT, "skills", "tako-search", "SKILL.md")];
 const SUBMISSION_PATH = resolve(REPO_ROOT, "chatgpt-app-submission.json");
 const SNAPSHOT_PATH = resolve(REPO_ROOT, "chatgpt-app-snapshot.json");
@@ -1109,7 +1109,7 @@ export function buildToolsDoc(input: ToolsDocInput): string {
     "",
     "## Choosing tools with `?tools=`",
     "",
-    "On `/mcp`, `?tools=` on the connection URL is an allowlist that **replaces** the default listing: `?tools=search,contents` lists exactly those two. Tokens are tool names; the `tako_` prefix is optional. Unknown tokens are dropped, and a param that names nothing recognizable yields the defaults, so a typo never breaks a connection. If you list tools, include the defaults you rely on — descriptions assume `tako_search`, `tako_available_data`, and `tako_contents` are present, and a `tako_available_data` result hands back a `next_call` handle naming whichever search tool the connection registers — `tako_search`, else `tako_search_advanced`, else no handle at all. `/mcp/chatgpt` ignores the param: its listing is fixed at submission.",
+    "On `/mcp`, `?tools=` on the connection URL is an allowlist that **replaces** the default listing: `?tools=search,contents` lists exactly those two. Tokens are tool names; the `tako_` prefix is optional. Unknown tokens are dropped, and a param that names nothing recognizable yields the defaults, so a typo never breaks a connection. If you list tools, include the defaults you rely on — descriptions assume `tako_search`, `tako_available_data`, and `tako_contents` are present, and a `tako_available_data` result hands back a `next_call` handle naming whichever search tool the connection registers — `tako_search`, else `tako_search_advanced`, else no handle at all. `/mcp/chatgpt` ignores the param: its listing is fixed.",
     "",
   );
 
@@ -1842,10 +1842,7 @@ async function main(): Promise<void> {
   //     regex separates from instructions, so only the unambiguous rule runs
   //     there. See pinFormProblem.
   //
-  //     The bundled skills carry the SAME descriptive `sources` sentence README
-  //     is exempted for, so they join at `requireStrict: false` too. Verified:
-  //     all three are clean under the unambiguous rule, and each trips the
-  //     strict rule on that one sentence alone.
+  //     The bundled skills join at `requireStrict: false`, the rule README gets.
   // Derived, never listed: a tool accepts a pin iff its published input schema
   // carries `node_ids` anywhere (nested counts — see the function's doc comment).
   const pinCapableTools = new Set(

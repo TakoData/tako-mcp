@@ -26,11 +26,15 @@ nothing to regenerate).
 
 ## What to assert
 
-Trigger rows (`trig-*`, `haiku-*`): `skills=` names `tako-search`, or is empty for
-a `neg` row. `trig-traffic-brand` ("traffic does Netflix get") must query
-`netflix.com`, not "Netflix".
+Trigger rows (`trig-*`, and `haiku-*` other than `haiku-out-*`): `skills=` names `tako-search`, or is empty for
+a `neg` row. The `trig-web-*` rows are lookups with no data card, and they should
+trigger too: `tako-search` is a general lookup skill. `trig-traffic-brand`
+("traffic does Netflix get") must query `netflix.com`, not "Netflix".
 
-Output rows (`out-*`), skill arm vs noskill arm on the same prompt:
+Output rows (`out-*` on Sonnet, `haiku-out-*` on Haiku), skill arm vs noskill
+arm on the same prompt. `tako-search` no longer spells out these traps; it keeps
+the entity, metric, and unit check. The rows stay as a regression net. If the
+skill arm fails a trap on either model, add that one check back to the skill.
 
 | id | trap | assert on the skill arm |
 | --- | --- | --- |
@@ -52,6 +56,8 @@ baseline never did, and it used the skill's query shapes (the exact
 comparison). The six correctness assertions passed in both arms that day: the
 baseline model avoided every trap unaided. Keep them; they are the regression
 net for a weaker model or a ranking change, not proof the skill is needed.
+`tako-search` keeps the output template and the domain query shape, but not the
+"Core PCE Price Index (% Change)" name.
 
 ## Recording results
 

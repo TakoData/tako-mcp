@@ -1,7 +1,8 @@
 # Writing for models
 
 Tako reaches a model through four kinds of text: the bundled skill, the server
-instructions, the tool descriptions, and the tool results. Each has one job.
+instructions, the tool descriptions, and the tool results. Hand-written copies
+restate them for other hosts and readers. Each has one job.
 Read this before you change any of them, and measure a change to the skill or
 the descriptions before you ship it.
 
@@ -13,6 +14,7 @@ the descriptions before you ship it.
 | Server instructions | `workers/src/instructions.ts` | Whenever the host puts them in context; not every host does | Describe the server for hosts without the skill |
 | Tool descriptions | `workers/src/tools/*.ts`, rendered in `docs/TOOLS.md` | When the model plans a call | Say how to call the tool and how to read its result |
 | Results | The tool's output and `guidance` | After a call | Report what this call found and what it cost |
+| Hand-written copies | `docs/gemini/GEMINI.md`, `commands/*.toml`, `llms-full.txt`, `agent.json`, `README.md`, and the test cases in `chatgpt-app-submission.json` | The Gemini context file in every Gemini session; the rest when an agent or a reviewer opens them | Restate the skill and the descriptions. No check compares their advice with the descriptions, so update them in the same change |
 
 The skill reaches only hosts that install the plugin: the Claude plugin, the
 Gemini extension, and the ChatGPT plugin package. A host connected to bare
@@ -83,9 +85,9 @@ same domains raised it to 24 of 26.
   Firecrawl, Brave, Perplexity, SerpAPI, Apify, Bright Data, and others. Prompt
   wording that discourages tool calls also suppresses the calls a task needs
   (When2Tool, https://arxiv.org/abs/2605.09252).
-- **Allow one neutral clause where the model's choice changes the charge.**
-  Today that's the `max_rows` parameter on `tako_contents`: "Charges scale with
-  rows returned, so lower it when the recent rows are enough." Apify, Firecrawl,
+- **Allow a neutral clause on a parameter whose value changes the charge.** For
+  example, `max_rows` on `tako_contents` says "Charges scale with rows returned,
+  so lower it when the recent rows are enough." Apify, Firecrawl,
   and Bright Data do the same on their budget parameters.
 - **Report the actual charge in the result.** `tako_search` returns
   `usage.total_cost_usd`, and `tako_contents` returns a `cost` on each item.

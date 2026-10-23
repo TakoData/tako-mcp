@@ -8,7 +8,7 @@ This page is rendered from the same objects the server publishes on `tools/list`
 
 ## Choosing tools with `?tools=`
 
-On `/mcp`, `?tools=` on the connection URL is an allowlist that **replaces** the default listing: `?tools=search,contents` lists exactly those two. Tokens are tool names; the `tako_` prefix is optional. Unknown tokens are dropped, and a param that names nothing recognizable yields the defaults, so a typo never breaks a connection. If you list tools, include the defaults you rely on — descriptions assume `tako_search`, `tako_available_data`, and `tako_contents` are present, and a `tako_available_data` result hands back a `next_call` handle naming whichever search tool the connection registers — `tako_search`, else `tako_search_advanced`, else no handle at all. `/mcp/chatgpt` ignores the param: its listing is fixed at submission.
+On `/mcp`, `?tools=` on the connection URL is an allowlist that **replaces** the default listing: `?tools=search,contents` lists exactly those two. Tokens are tool names; the `tako_` prefix is optional. Unknown tokens are dropped, and a param that names nothing recognizable yields the defaults, so a typo never breaks a connection. If you list tools, include the defaults you rely on — descriptions assume `tako_search`, `tako_available_data`, and `tako_contents` are present, and a `tako_available_data` result hands back a `next_call` handle naming whichever search tool the connection registers — `tako_search`, else `tako_search_advanced`, else no handle at all. `/mcp/chatgpt` ignores the param: its listing is fixed.
 
 ## `/mcp` — the generic surface, every client
 
@@ -425,7 +425,7 @@ Find what data Tako holds on an entity or a metric, and the canonical name it ho
 
 Best for: questions about what Tako covers. Put a company, person, or place in `q` to list the metrics tracked on it; put a metric in `q` to list the entities it covers. Add `metric` when you know the measure — you get the resolved pair and a ready-to-run `next_call`.
 
-A name here means the graph tracks it, not that a card exists. If the follow-up search comes back empty, say Tako has no card for it rather than rephrasing the query. Hand a node id to `tako_graph_related` to see what else connects to it.
+Search on the canonical names it returns, not your own phrasing — `tako_search` matches the graph's names, not yours. A name here means the graph tracks it, not that a card exists. If the follow-up search comes back empty, say Tako has no card for it rather than rephrasing the query. Hand a node id to `tako_graph_related` to see what else connects to it.
 
 Parameters:
 
@@ -1217,7 +1217,7 @@ Parameters:
 
 | Name | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `urls` | array | yes |  | The urls to fetch: a Tako card url or a web result url. One call for 8 urls costs the same as 8 separate calls and saves 7 round trips. |
+| `urls` | array | yes |  | The urls to fetch: a Tako card url or a web result url. One call for 8 urls saves 7 round trips. |
 | `max_rows` | integer | no |  | Tako cards only: how many rows to return. Omit it for the whole card, up to 2,000 rows. Charges scale with rows returned, so lower it when the recent rows are enough. |
 | `max_chars` | integer | no |  | Web pages only: character cap on the extracted text. Inline fetches default to 100,000 per url, less across a batch. Raise it for a long document; `truncated` reports a cut. With `query`, it caps the passages instead: 100 to 20,000, and 4,000 by default. |
 | `query` | string | no |  | Web pages only: a question the passages should answer. The result holds those passages instead of the page. Omit it to get the whole page. |
@@ -1249,7 +1249,7 @@ Annotations:
         "type": "string",
         "minLength": 1
       },
-      "description": "The urls to fetch: a Tako card url or a web result url. One call for 8 urls costs the same as 8 separate calls and saves 7 round trips."
+      "description": "The urls to fetch: a Tako card url or a web result url. One call for 8 urls saves 7 round trips."
     },
     "max_rows": {
       "description": "Tako cards only: how many rows to return. Omit it for the whole card, up to 2,000 rows. Charges scale with rows returned, so lower it when the recent rows are enough.",

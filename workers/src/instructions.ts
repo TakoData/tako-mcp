@@ -138,7 +138,7 @@ import { GENERIC_DEFAULT_TOOL_NAMES } from "./tools/_surface.js";
  * and disagreed with the description every client reads, so they went too.
  *
  * And then a SECOND review round found the same lines still standing in
- * `README.md`, which embeds all three skills whole for manual claude.ai
+ * `README.md`, which embeds each bundled skill whole for manual claude.ai
  * upload. Do not read a count of surfaces here — an earlier version of this
  * comment claimed "three" and was wrong the moment it was written, because
  * the README copies were never in the count. The count is not the invariant
