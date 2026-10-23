@@ -1979,7 +1979,6 @@ const WIDGET_HTML = `<!doctype html>
   var carouselPrev = document.getElementById("tako-prev");
   var carouselNext = document.getElementById("tako-next");
   var carouselSlides = [];
-  var carouselNotifiedHeight = 0;
   var keepSingleFrameUntilSlideReveals = false;
 
   function renderCarousel(charts, fallbackHeight) {
@@ -2029,6 +2028,7 @@ const WIDGET_HTML = `<!doctype html>
     setIframeHeight(iframe, slideFitHeight(slide));
     slide.onLoad = function () {
       if (slide.settled || isStrayBlankLoad(iframe)) return;
+      if (!hasNaturalSize(chart)) return;
       settleSlide(slide);
       revealSlide(slide, slideFitHeight(slide));
     };
@@ -2047,6 +2047,13 @@ const WIDGET_HTML = `<!doctype html>
     } catch (e) {
       return null;
     }
+  }
+
+  function hasNaturalSize(chart) {
+    return (
+      typeof chart.image_natural_width === "number" &&
+      typeof chart.image_natural_height === "number"
+    );
   }
 
   function slideFitHeight(slide) {
@@ -2088,8 +2095,7 @@ const WIDGET_HTML = `<!doctype html>
     carouselSlides.forEach(function (s) {
       if (s.revealed && s.height > tallest) tallest = s.height;
     });
-    if (tallest > carouselNotifiedHeight) {
-      carouselNotifiedHeight = tallest;
+    if (tallest > highestNotifiedHeight) {
       notifyHeight(tallest);
       log("carousel resized", { height: tallest });
     }
@@ -2119,6 +2125,7 @@ const WIDGET_HTML = `<!doctype html>
       });
       img.addEventListener("error", function () {
         link.textContent = "Open interactive chart →";
+        revealSlide(slide, estimate);
       });
       img.src = slide.chart.image_url;
       link.appendChild(img);
@@ -2128,7 +2135,7 @@ const WIDGET_HTML = `<!doctype html>
       link.textContent = "Open interactive chart →";
     }
     slide.el.appendChild(link);
-    revealSlide(slide, estimate);
+    if (!slide.img || hasNaturalSize(slide.chart)) revealSlide(slide, estimate);
     log("carousel slide fell back to image", { reason: reason, src: slide.chart.embed_url });
   }
 
@@ -2166,7 +2173,6 @@ const WIDGET_HTML = `<!doctype html>
     keepSingleFrameUntilSlideReveals = singleFrameRevealed();
     if (!keepSingleFrameUntilSlideReveals) tearDownSingleFrame();
     persistWidgetState(singleFramePayload, chartList);
-    carouselNotifiedHeight = highestNotifiedHeight;
     renderCarousel(slideCharts, requestedHeight(singleFramePayload));
     log("upgraded single frame to carousel", { slides: slideCharts.length });
   }
@@ -3163,7 +3169,7 @@ const WIDGET_HTML = `<!doctype html>
       }
       return;
     }
-    if (msg.type === "tako-embed-height" && carouselSlides.length > 0) {
+    if (msg.type === "tako-embed-height" && carouselSlideFor(event.source)) {
       onCarouselEmbedHeight(event, msg.height);
       return;
     }

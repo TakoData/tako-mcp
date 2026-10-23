@@ -882,7 +882,8 @@ describe("ChatGPT carousel", () => {
     expect(Math.max(...heights)).toBeGreaterThan(1);
   });
 
-  it("sizes a slide without dimensions from the payload height", () => {
+  it("keeps a slide without dimensions veiled until its embed reports a height", () => {
+    const heights: number[] = [];
     const charts = [
       carouselChart(nth(CAROUSEL_PUB_IDS, 0)),
       carouselChart(nth(CAROUSEL_PUB_IDS, 1), false),
@@ -892,7 +893,9 @@ describe("ChatGPT carousel", () => {
         image_natural_height: 900,
       },
     ];
-    const m = mountCarousel(charts);
+    const m = mountCarousel(charts, {
+      notifyIntrinsicHeight: (h: number) => heights.push(h),
+    });
     carouselSlides(m).forEach((slide) =>
       Object.defineProperty(slide, "clientWidth", {
         configurable: true,
@@ -905,11 +908,40 @@ describe("ChatGPT carousel", () => {
       pinContentDocument(f, null);
       fireLoad(m, f);
     });
-    expect(frames.map((f) => f.getAttribute("height"))).toEqual([
-      String(Math.round((600 * 1100) / 2400)),
-      "720",
-      String(Math.round((600 * 900) / 1200)),
-    ]);
+    expect(frames.map((f) => f.classList.contains("veiled"))).toEqual([false, true, false]);
+    expect(Math.max(...heights)).toBe(Math.round((600 * 900) / 1200));
+    postEmbedHeight(m, nth(frames, 1).contentWindow!, 400);
+    expect(nth(frames, 1).classList.contains("veiled")).toBe(false);
+    expect(nth(frames, 1).getAttribute("height")).toBe("400");
+    expect(heights).not.toContain(720);
+  });
+
+  it("doesn't grow to the payload height when a slide without dimensions falls back", () => {
+    vi.useFakeTimers();
+    try {
+      const heights: number[] = [];
+      const charts = threeCharts(false);
+      const m = mountCarousel(charts, {
+        notifyIntrinsicHeight: (h: number) => heights.push(h),
+      });
+      vi.advanceTimersByTime(8000);
+      expectPngFallback(m, charts);
+      expect(heights).toEqual([1]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("follows a slide's later height report without shrinking the widget", () => {
+    const heights: number[] = [];
+    const m = mountCarousel(threeCharts(), {
+      notifyIntrinsicHeight: (h: number) => heights.push(h),
+    });
+    const first = nth(carouselFrames(m), 0);
+    postEmbedHeight(m, first.contentWindow!, 500);
+    postEmbedHeight(m, first.contentWindow!, 300);
+    expect(first.getAttribute("height")).toBe("300");
+    expect(heights).toEqual([1, 500]);
   });
 
   it("next scrolls the row by one slide", () => {
@@ -1016,6 +1048,23 @@ describe("ChatGPT carousel", () => {
     postEmbedHeight(m, nth(frames, 0).contentWindow!, 500);
     expect(renderedIframe(m)).toBe(false);
     expect(frame(m).classList.contains("hidden")).toBe(true);
+  });
+
+  it("resizes a kept single frame from its own height report during the upgrade", () => {
+    const heights: number[] = [];
+    const openai: Record<string, unknown> = {
+      toolOutput: PROD_STRUCTURED_CONTENT,
+      notifyIntrinsicHeight: (h: number) => heights.push(h),
+    };
+    const m = mountWidget(html(), openai);
+    fireFrameLoad(m);
+    deliverChartsLate(m, openai);
+    postEmbedHeight(m, frame(m).contentWindow!, 900);
+    expect(frame(m).getAttribute("height")).toBe("900");
+    expect(nth(heights, heights.length - 1)).toBe(900);
+    postEmbedHeight(m, nth(carouselFrames(m), 0).contentWindow!, 800);
+    expect(frame(m).classList.contains("hidden")).toBe(true);
+    expect(nth(heights, heights.length - 1)).toBe(900);
   });
 
   it("never shrinks the widget when it upgrades to the carousel", () => {

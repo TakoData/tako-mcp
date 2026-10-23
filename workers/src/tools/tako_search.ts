@@ -24,7 +24,6 @@ import {
   buildChartAppUiResourceFromOutputPubId,
   buildChartExtraMeta,
   fetchPngContentBlock,
-  fetchPngDimensions,
 } from "./_chart_widget.js";
 import { looseArray } from "./_loose_array.js";
 import {
@@ -152,17 +151,17 @@ export function buildSearchBody(input: Input, tier: Tier): z.input<typeof Search
 
 type ChartMeta = CardChart & { image_natural_width?: number; image_natural_height?: number };
 
-async function fetchChartsMeta(charts: readonly CardChart[]): Promise<ChartMeta[]> {
-  return Promise.all(
-    charts.map(async (chart) => {
-      const dims = await fetchPngDimensions(chart.image_url);
-      if (dims === undefined) return { ...chart };
-      return {
-        ...chart,
-        image_natural_width: dims.naturalWidth,
-        image_natural_height: dims.naturalHeight,
-      };
-    }),
+function withTopChartDims(
+  charts: readonly CardChart[],
+  topPubId: string | undefined,
+  topMeta: Record<string, unknown> | undefined,
+): ChartMeta[] {
+  const width = topMeta?.image_natural_width;
+  const height = topMeta?.image_natural_height;
+  return charts.map((chart) =>
+    chart.pub_id === topPubId && typeof width === "number" && typeof height === "number"
+      ? { ...chart, image_natural_width: width, image_natural_height: height }
+      : { ...chart },
   );
 }
 
@@ -250,24 +249,9 @@ const tako_search = {
       origin: ctx.origin,
       pubId: o.pub_id,
     };
-    if (ctx.surface !== "chatgpt" || charts.length < 2) {
-      return buildChartExtraMeta(o.image_url, metaOpts);
-    }
-    const [probeMeta, chartsMeta] = await Promise.all([
-      buildChartExtraMeta(undefined, metaOpts),
-      fetchChartsMeta(charts),
-    ]);
-    const top = chartsMeta[0];
-    return {
-      ...probeMeta,
-      ...(top?.image_natural_width !== undefined && top.image_natural_height !== undefined
-        ? {
-            image_natural_width: top.image_natural_width,
-            image_natural_height: top.image_natural_height,
-          }
-        : {}),
-      charts: chartsMeta,
-    };
+    const topMeta = await buildChartExtraMeta(o.image_url, metaOpts);
+    if (ctx.surface !== "chatgpt" || charts.length < 2) return topMeta;
+    return { ...topMeta, charts: withTopChartDims(charts, o.pub_id, topMeta) };
   },
   async extraContentBlocks(output, _ctx): Promise<ToolContentBlock[]> {
     void _ctx;

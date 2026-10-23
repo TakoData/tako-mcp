@@ -608,12 +608,8 @@ describe("chart render gates per surface", () => {
     });
   }
 
-  it("the chatgpt surface returns every card's chart", async () => {
-    const fetchMock = mockFetchSequence([
-      twoCardSearchResponse(),
-      realPngResponse(),
-      realPngResponse(),
-    ]);
+  it("the chatgpt surface returns every card's chart and reads only the top chart's PNG", async () => {
+    const fetchMock = mockFetchSequence([twoCardSearchResponse(), realPngResponse()]);
 
     const result = await callSearch("chatgpt");
 
@@ -622,9 +618,10 @@ describe("chart render gates per surface", () => {
       | { pub_id: string; image_natural_width?: number }[]
       | undefined;
     expect(charts?.map((c) => c.pub_id)).toEqual(["c1", "c2"]);
-    expect(fetchMock).toHaveBeenCalledTimes(3);
-    expect(result._meta?.image_natural_width).toBe(charts?.[0]?.image_natural_width);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(result._meta?.image_natural_width).toEqual(expect.any(Number));
+    expect(charts?.[0]?.image_natural_width).toBe(result._meta?.image_natural_width);
+    expect(charts?.[1]?.image_natural_width).toBeUndefined();
   });
 
   it("the generic surface doesn't return charts", async () => {
