@@ -90,7 +90,7 @@
             "description": "The urls to fetch: a Tako card url or a web result url. One call for 8 urls saves 7 round trips."
           },
           "max_rows": {
-            "description": "Tako cards only: how many rows to return. Omit it to get up to 2,000 rows. With `delivery: \"link\"`, you can raise it to 100,000. Every row delivered is billed, so lower it when the recent rows are enough.",
+            "description": "Tako cards only: how many rows to return. Omit it to get up to 2,000 rows. With `delivery: \"link\"`, you can raise it to 100,000. Charges scale with rows returned, so lower it when the recent rows are enough.",
             "type": "integer",
             "minimum": 1,
             "maximum": 100000

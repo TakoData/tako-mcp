@@ -1218,7 +1218,7 @@ Parameters:
 | Name | Type | Required | Default | Description |
 |---|---|---|---|---|
 | `urls` | array | yes |  | The urls to fetch: a Tako card url or a web result url. One call for 8 urls saves 7 round trips. |
-| `max_rows` | integer | no |  | Tako cards only: how many rows to return. Omit it to get up to 2,000 rows. With `delivery: "link"`, you can raise it to 100,000. Every row delivered is billed, so lower it when the recent rows are enough. |
+| `max_rows` | integer | no |  | Tako cards only: how many rows to return. Omit it to get up to 2,000 rows. With `delivery: "link"`, you can raise it to 100,000. Charges scale with rows returned, so lower it when the recent rows are enough. |
 | `max_chars` | integer | no |  | Web pages only: character cap on the extracted text. Inline fetches default to 100,000 per url, less across a batch. Raise it for a long document; `truncated` reports a cut. With `query`, it caps the passages instead: 100 to 20,000, and 4,000 by default. |
 | `query` | string | no |  | Web pages only: a question the passages should answer. The result holds those passages instead of the page. Omit it to get the whole page. |
 | `delivery` | string ("inline" \\| "link") | no |  | Tako cards only. `inline` returns the data in the result. `link` returns a download link: a CSV file, or a JSON file with `format: "card"`. It expires in 5 minutes. Use `link` when you can run shell commands and want to analyze the data in code. If the download fails, call again without `delivery`. Web pages ignore it. |
@@ -1254,7 +1254,7 @@ Annotations:
       "description": "The urls to fetch: a Tako card url or a web result url. One call for 8 urls saves 7 round trips."
     },
     "max_rows": {
-      "description": "Tako cards only: how many rows to return. Omit it to get up to 2,000 rows. With `delivery: \"link\"`, you can raise it to 100,000. Every row delivered is billed, so lower it when the recent rows are enough.",
+      "description": "Tako cards only: how many rows to return. Omit it to get up to 2,000 rows. With `delivery: \"link\"`, you can raise it to 100,000. Charges scale with rows returned, so lower it when the recent rows are enough.",
       "type": "integer",
       "minimum": 1,
       "maximum": 100000
@@ -1311,10 +1311,10 @@ Annotations:
         "type": "string",
         "minLength": 1
       },
-      "description": "The urls to fetch: a Tako card url or a web result url. One call for 8 urls costs the same as 8 separate calls and saves 7 round trips."
+      "description": "The urls to fetch: a Tako card url or a web result url. One call for 8 urls saves 7 round trips."
     },
     "max_rows": {
-      "description": "Tako cards only: how many rows to return. Omit it for the whole card, up to 2,000 rows. Every row delivered is billed, so lower it when the recent rows are enough.",
+      "description": "Tako cards only: how many rows to return. Omit it for the whole card, up to 2,000 rows. Charges scale with rows returned, so lower it when the recent rows are enough.",
       "type": "integer",
       "minimum": 1,
       "maximum": 2000

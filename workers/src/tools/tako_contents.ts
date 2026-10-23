@@ -275,7 +275,7 @@ const inputSchema = chatgptInputSchema
       .lte(MAX_LINK_ROWS)
       .optional()
       .describe(
-        'Tako cards only: how many rows to return. Omit it to get up to 2,000 rows. With `delivery: "link"`, you can raise it to 100,000. Every row delivered is billed, so lower it when the recent rows are enough.',
+        'Tako cards only: how many rows to return. Omit it to get up to 2,000 rows. With `delivery: "link"`, you can raise it to 100,000. Charges scale with rows returned, so lower it when the recent rows are enough.',
       ),
   })
   .superRefine((input, refinement) => {
