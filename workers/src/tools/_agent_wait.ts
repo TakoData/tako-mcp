@@ -343,7 +343,7 @@ export async function waitForRun(
           }
           case "tool_call": {
             const message = nonEmpty(block.status_message);
-            if (message !== undefined && block.done === false) progress.update(message);
+            if (message !== undefined) progress.update(message);
             break;
           }
           case "agent_result":

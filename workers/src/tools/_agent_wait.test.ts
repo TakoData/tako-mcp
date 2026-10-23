@@ -193,11 +193,11 @@ describe("waitForRun", () => {
     await pending;
   });
 
-  it("relays only open tool calls with a status_message and ignores backend heartbeats", async () => {
+  it("relays every tool call with a status_message, open or done, and ignores backend heartbeats", async () => {
     stubStream(
       scriptedStream([
         { atMs: 0, text: frame({ kind: "tool_call", id: "c1", tool: "x", status_message: "Reading filings", done: false }) },
-        { atMs: 2_000, text: frame({ kind: "tool_call", id: "c1", tool: "x", status_message: "Finished filings", done: true }) },
+        { atMs: 2_000, text: frame({ kind: "tool_call", id: "c3", tool: "x", status_message: "Finding total assets metrics", done: true }) },
         { atMs: 3_000, text: frame({ kind: "tool_call", id: "c2", tool: "x", status_message: null, done: false }) },
         { atMs: 4_000, text: frame({ kind: "heartbeat" }) },
         { atMs: 5_000, text: frame({ kind: "reasoning", text: "thinking" }) },
@@ -213,7 +213,7 @@ describe("waitForRun", () => {
     });
     await vi.advanceTimersByTimeAsync(10_000);
 
-    expect(progressMessages(ctx)).toEqual(["Reading filings"]);
+    expect(progressMessages(ctx)).toEqual(["Reading filings", "Finding total assets metrics"]);
     controller.abort();
     await pending;
   });
