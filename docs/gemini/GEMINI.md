@@ -32,6 +32,8 @@ because the same call already searched the web for it.
 
 Start an agent only when the user asks for Tako's agent or for deep, multi-step research with Tako. Otherwise, use `tako_search`. Both agents plan their own steps. While a run's `status` is `running`, call the same tool again with its `run_id` and no `query`.
 
+To analyze rows in code, set `delivery: "link"` on `tako_contents`, download the file in your shell, and read only the result; the link expires 5 minutes after the call.
+
 `tako_search` hands you the evidence; you write the conclusion. (`include_answer: true` on the
 opt-in `tako_search_advanced` returns a prose answer instead — name `search_advanced` in the
 `?tools=` allowlist — and it is not recommended: your model already synthesizes.)
