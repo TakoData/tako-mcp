@@ -178,10 +178,13 @@ const answerFoldFields = {
 
 export const searchSlimOutputShape = z.looseObject(searchCoreFields);
 
+const { guidance: _keylessGuidance, ...searchOAuthFields } = searchCoreFields;
+
 /** chatgpt-surface variant: adds the widget fields `window.openai.toolOutput`
- *  reads (the widget ignores `cards`/`web_results`). */
+ *  reads (the widget ignores `cards`/`web_results`), and drops `guidance`,
+ *  whose one source is a keyless caller and `/mcp/chatgpt` requires OAuth. */
 export const searchChatgptOutputShape = z.looseObject({
-  ...searchCoreFields,
+  ...searchOAuthFields,
   ...autoChainShape,
 });
 
@@ -478,8 +481,8 @@ function renderNameMap(title: string, map: Record<string, string>): string {
 export function renderSearchMarkdown(o: SearchOutput): string {
   const blocks: string[] = [];
   // The answer leads. A verdict ahead of it reads as "this answer failed"
-  // rather than "the data index has a gap" — the guidance is about the data
-  // cards, and the prose above it may be a complete, correct web-grounded answer.
+  // rather than "the pinned filter matched no card" — the guidance is about the
+  // data cards, and the prose above it may be a complete, correct web-grounded answer.
   if (o.answer !== undefined) blocks.push(o.answer);
   if (o.guidance !== undefined) blocks.push(`> ${o.guidance}`);
   if (o.structured_output_error !== undefined) {

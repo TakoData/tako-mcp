@@ -2185,10 +2185,6 @@ The chart-widget fields are declared only here; the widget reads them from `wind
       ],
       "description": "Cost-plus usage for this request (null when not metered)."
     },
-    "guidance": {
-      "description": "How a keyless caller unlocks a placeholder card.",
-      "type": "string"
-    },
     "metric_definitions": {
       "description": "What each metric means (unit, basis, caveats), keyed by metric name, deduped across cards.",
       "type": "object",

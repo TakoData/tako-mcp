@@ -148,13 +148,14 @@ import { GENERIC_DEFAULT_TOOL_NAMES } from "./tools/_surface.js";
  *
  * REMOVED DELIBERATELY, not by oversight: the closing hedge "Use a built-in
  * web search when the query is clearly outside Tako's coverage, or Tako
- * returned nothing relevant." The zero-result `guidance` on each tool now
- * says when to pivot off Tako, at the moment it applies and with the actual
- * result in hand, which is strictly better placement than a standing caveat
- * every request pays for. Note the tension this leaves: the paragraph's claim
- * is now unhedged, and the original worry was that over-broad claims erode a
- * model's trust in the whole surface. Watch routing on questions Tako cannot
- * serve; if misrouting shows up, this hedge is the first thing to restore.
+ * returned nothing relevant." A search with no card returns its
+ * `web_results` beside an empty `cards` list, and the `tako-search` skill's
+ * step 4 says to answer from them. TAKO-5260 removed the zero-card `guidance`
+ * that also said so, so a bare `/mcp` host without the skill gets no pivot
+ * cue from this server. Note the tension this leaves: the paragraph's claim is unhedged, and
+ * the original worry was that over-broad claims erode a model's trust in the
+ * whole surface. Watch routing on questions Tako cannot serve; if misrouting
+ * shows up, this hedge is the first thing to restore.
  */
 const SHARED_INSTRUCTION_PARAGRAPHS = [
   "Tako searches the web and a proprietary knowledge graph of live structured data in the same call. Default sources are data + web, so one call answers a question that mixes a figure with context. Coverage includes finance, markets, company KPIs, economics, website traffic, sports, weather, elections, prediction markets, demographics, energy, real estate, health, and more.",

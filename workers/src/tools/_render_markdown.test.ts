@@ -25,7 +25,7 @@ import {
 } from "./_render_markdown.js";
 import { projectAgentRun, projectRunningRun, refusalGuidance } from "./_agent_run.js";
 import { projectRelated } from "./_graph.js";
-import { buildSearchOutput } from "./_search_results.js";
+import { buildSearchOutput, STRICT_PIN_GUIDANCE } from "./_search_results.js";
 import { buildVisualizeOutput } from "./tako_visualize.js";
 import {
   buildMatch,
@@ -124,10 +124,8 @@ describe("renderSearchMarkdown — the COMPLETE text channel", () => {
   });
 
   it("leads with guidance on a zero-card response and still shows the empty count", () => {
-    const md = renderSearchMarkdown(
-      searchOutput({ cards: [], guidance: "No data cards: the data graph does not cover this query." }),
-    );
-    expect(md.startsWith("> No data cards")).toBe(true);
+    const md = renderSearchMarkdown(searchOutput({ cards: [], guidance: STRICT_PIN_GUIDANCE }));
+    expect(md.startsWith(`> ${STRICT_PIN_GUIDANCE}`)).toBe(true);
     expect(md).toContain("## Data cards (0)");
   });
 
@@ -338,15 +336,13 @@ describe("renderSearchMarkdown with an answer (include_answer path)", () => {
     expect(md).toContain("### Tesla Revenue");
   });
 
-  it("renders the data-gap guidance as a blockquote after the answer", () => {
+  it("renders the strict-pin guidance as a blockquote after the answer", () => {
     // Order matters: the answer is what the model reads first, and a verdict
-    // ahead of it reads as "this answer failed" rather than "the data index has
-    // a gap".
-    const md = renderSearchMarkdown(
-      withAnswer({ cards: [], guidance: "Data-coverage note: ZERO curated data cards." }),
-    );
+    // ahead of it reads as "this answer failed" rather than "the pinned filter
+    // matched no card".
+    const md = renderSearchMarkdown(withAnswer({ cards: [], guidance: STRICT_PIN_GUIDANCE }));
     expect(md.indexOf("Tesla's")).toBe(0);
-    expect(md).toContain("> Data-coverage note: ZERO curated data cards.");
+    expect(md).toContain(`> ${STRICT_PIN_GUIDANCE}`);
   });
 
   it("names a structured-output failure so the model knows the field is absent on purpose", () => {

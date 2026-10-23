@@ -83,16 +83,19 @@ same domains raised it to 24 of 26.
 
 ## Results report what came back
 
-- **Let an empty result speak for itself.** A search with no card returns an
-  empty `cards` list beside its `web_results`, and nothing else. Zero-card
-  `guidance` that told the model to call `tako_available_data` and retry once
-  was removed in TAKO-5260: nobody had measured whether it helped, and MCP
-  traffic is too low to measure it from production logs. The skill and the
-  `tako_available_data` description already cover a miss.
-- **Add `guidance` only for a fact the model can't see in the result.** Today
-  that's two cases: a `strict: true` pin that returned no cards, where zero
-  cards says something about the filter and not about coverage, and a
-  placeholder card a keyless caller can unlock by signing in.
+- **Let an empty search result speak for itself.** A `tako_search` or
+  `tako_search_advanced` call with no card returns an empty `cards` list beside
+  its `web_results`, and nothing else. TAKO-5260 removed the zero-card
+  `guidance` that told the model to call `tako_available_data` and retry once:
+  nobody had measured whether it helped, and MCP traffic is too low to measure
+  it from production logs. The skill and the `tako_available_data` description
+  already cover a miss.
+- **On the search tools, add `guidance` only for a fact the model can't see in
+  the result.** `STRICT_PIN_GUIDANCE` covers a `strict: true` pin that returned
+  no cards, where zero cards says something about the filter and not about
+  coverage. `withheldDataGuidance` covers a placeholder card a keyless caller
+  can unlock by signing in. This rule doesn't cover the `tako_available_data`
+  verdicts; nobody has measured them either.
 
 ## Cost belongs in results, not descriptions
 

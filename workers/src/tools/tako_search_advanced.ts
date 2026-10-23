@@ -88,8 +88,9 @@ import type { ToolModule } from "./types.js";
 // `data.node_ids` and `data.strict`, whose describes are the surface a caller
 // reads while building the argument; the measured disagreement with the
 // backend's own "strong boost" wording is a code comment on those overrides;
-// the zero-card recovery is `guidance` on the result, which is where the model
-// reads it at the moment it applies; the highlights toggle is `web.highlights`.
+// a `strict: true` pin that returns no cards gets `guidance` on the result,
+// which is where the model reads it at the moment it applies; the highlights
+// toggle is `web.highlights`.
 const DESCRIPTION = [
   "Get one citation-backed answer (`include_answer: true`), or search Tako's data graph and the live web with the whole v3 request: per-source counts, inline card rows, graph pins, web domain and category filters, and the deep effort tier.",
   "",

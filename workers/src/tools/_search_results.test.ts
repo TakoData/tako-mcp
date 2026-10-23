@@ -199,8 +199,8 @@ describe("buildSearchOutput — zero-card guidance", () => {
 
   it("blames the FILTER, not coverage, when the request carried a strict pin", () => {
     // Reachable only from tako_search_advanced. Without this branch the model
-    // reads "the data is not covered, rewording will not change that" after a
-    // hard filter returned nothing — a coverage verdict the request cannot
+    // gets an empty `cards` list and no guidance after a hard filter returned
+    // nothing, and reads it as a coverage gap — a verdict the request cannot
     // support (KE-812: pinned handles returned FEWER cards on 11 of 20 pairs),
     // and one that contradicts that tool's own description.
     const g = buildSearchOutput([], [], "req", null, ENV, true, "authenticated", OPTS).guidance ?? "";
