@@ -383,11 +383,20 @@ Tako searches the live web and a knowledge graph of licensed and public data in 
 
 1. Search first. Call `tako_search` once per question, naming the entity and what you want: "Apple revenue", "Lakers last game score", "US CPI inflation", "EU AI Act timeline". For a comparison, name both entities in one query: "Nvidia vs AMD gross margin". Run independent searches in parallel.
 2. Query website traffic by domain: "netflix.com monthly visits", not "Netflix website visits".
-3. If a card comes back, check that it answers the question: the same entity, metric, and unit. For example, operating income isn't operating margin. Read the value from the card's `description`.
+3. If a card comes back, check that it answers the question: the same entity, metric, and unit. For example, operating income isn't operating margin. Read the value from the card's `description`. To compute something from the card's rows, such as a growth rate, an average, or a correlation, follow **Compute over a series**.
 4. If no card answers the question, answer from the web results. To read a page in full, pass its url to `tako_contents`.
 5. If a name is ambiguous, such as "Costco" or "Coca-Cola", and the question doesn't settle which entity, ask before quoting a number.
 
 If the user asks for Tako's agent and the `tako-agent` skill is installed, follow `tako-agent` instead.
+
+## Compute over a series
+
+Compute in code, never in your head: growth rates, averages, CAGR, correlations, and rankings. Report what the code prints. Only a card marked `exportable: true` has rows to fetch.
+
+1. **If you can run shell commands**, call `tako_contents` with `delivery: "link"`, then download the file right away: `curl -sfL -o <name>.csv "<url>"`. The link expires 5 minutes after the call. Analyze the file in a script and read only the result, so the rows never enter your context. If the result says `truncated`, call again with a higher `max_rows`, up to 100,000.
+2. **If the download fails**, your shell may have no network access. Call `tako_contents` again without `delivery`, with `max_rows` at 2,000 or less, and pass the inline rows to your code tool.
+3. **If you have no shell**, or `tako_contents` has no `delivery` input, fetch the rows inline and pass them to your code tool. With no code tool at all, show each step of the arithmetic so the user can check it.
+4. **If `tako_contents` has a `format` input**, set `format: "card"` for a card's own structure, such as a company card's tabs.
 
 ## Explore what Tako has
 
