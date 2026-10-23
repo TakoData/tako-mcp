@@ -18,6 +18,7 @@ import type { Env } from "./env.js";
 import { FREE_TIER_TOOL_NAMES, resolveToolSet } from "./tools/_surface.js";
 import {
   SERVER_INSTRUCTIONS,
+  serverInstructionsFor,
 } from "./instructions.js";
 import { GENERIC_SIGN_IN_HINT } from "./tools/_shared_prose.js";
 import {
@@ -1581,10 +1582,25 @@ describe("paymentRequiredToolResult", () => {
   });
 });
 
-describe("SERVER_INSTRUCTIONS", () => {
+const SHARED_DEFAULT_ROUTING_TOOLS = ["tako_search", "tako_available_data", "tako_contents"];
+
+const DEFAULT_ROUTING_TOOLS_BY_SURFACE: ReadonlyArray<{
+  surface: Surface;
+  routingTools: readonly string[];
+}> = [
+  { surface: "generic", routingTools: SHARED_DEFAULT_ROUTING_TOOLS },
+  {
+    surface: "chatgpt",
+    routingTools: [...SHARED_DEFAULT_ROUTING_TOOLS, "tako_agent", "tako_company_agent"],
+  },
+];
+
+describe.each(DEFAULT_ROUTING_TOOLS_BY_SURFACE)("$surface default instructions", ({ surface, routingTools }) => {
+  const instructions = serverInstructionsFor(resolveToolSet(surface, null));
+
   it("names every DEFAULT-surface tool an agent must choose between — and no opt-in tool", () => {
-    for (const tool of ["tako_search", "tako_available_data", "tako_contents"]) {
-      expect(SERVER_INSTRUCTIONS).toContain(tool);
+    for (const tool of routingTools) {
+      expect(instructions).toContain(tool);
     }
     // The "and no opt-in tool" half is NOT asserted here. Naming one name by
     // hand is the defect `tools/phantom_tool.test.ts` exists to remove; it
@@ -1599,7 +1615,7 @@ describe("SERVER_INSTRUCTIONS", () => {
     // them, so the anonymous text outlived the state it described and
     // suppressed the tool sign-in had just unlocked. The dispatch gate's
     // `authRequiredToolResult` is the one place this claim is allowed.
-    expect(SERVER_INSTRUCTIONS).not.toMatch(TIER_CLAIM);
+    expect(instructions).not.toMatch(TIER_CLAIM);
   });
 
   // The instructions sit ABOVE the tool descriptions in the host's system
@@ -1638,7 +1654,7 @@ describe("SERVER_INSTRUCTIONS", () => {
   //                     reads an obligation and then reads the tool denying it.
   //                     That is what this test exists to catch.
   it("does not oblige a free-tool call the tool's own description denies", () => {
-    const freeToolLine = SERVER_INSTRUCTIONS.split("\n").find((l) =>
+    const freeToolLine = instructions.split("\n").find((l) =>
       l.includes("`tako_available_data`"),
     );
     expect(freeToolLine).toBeDefined();
@@ -1681,9 +1697,9 @@ describe("SERVER_INSTRUCTIONS", () => {
   // them. `_pin_form.test.ts` still guarantees the form is stated correctly
   // everywhere it does belong.
   it("keeps per-tool call mechanics OUT — no pin recipe at server level", () => {
-    expect(SERVER_INSTRUCTIONS).not.toMatch(/strict/i);
-    expect(SERVER_INSTRUCTIONS).not.toMatch(/node[_ ]?ids?/i);
-    expect(SERVER_INSTRUCTIONS).not.toMatch(/METRIC node/i);
+    expect(instructions).not.toMatch(/strict/i);
+    expect(instructions).not.toMatch(/node[_ ]?ids?/i);
+    expect(instructions).not.toMatch(/METRIC node/i);
   });
 
   // The discovery trigger. On a host with several servers connected this is
@@ -1693,7 +1709,7 @@ describe("SERVER_INSTRUCTIONS", () => {
   // here to lose.
   it("keeps the domain list that makes the server discoverable", () => {
     for (const domain of ["finance", "economics", "website/app traffic", "elections"]) {
-      expect(SERVER_INSTRUCTIONS).toContain(domain);
+      expect(instructions).toContain(domain);
     }
   });
 
@@ -1707,8 +1723,8 @@ describe("SERVER_INSTRUCTIONS", () => {
   // trailing clause. Assert both jobs by MEANING, not by example strings —
   // the argument examples live in the tool's own description now.
   it("names both of tako_available_data's jobs — coverage AND name resolution", () => {
-    expect(SERVER_INSTRUCTIONS).toMatch(/what data Tako has/i);
-    expect(SERVER_INSTRUCTIONS).toMatch(/canonical name/i);
+    expect(instructions).toMatch(/what data Tako has/i);
+    expect(instructions).toMatch(/canonical name/i);
   });
 
   // Parameter-shaped guidance (argument examples, the q+metric split, response
@@ -1716,8 +1732,8 @@ describe("SERVER_INSTRUCTIONS", () => {
   // takes it, read at the moment it applies. Duplicating it here bought a
   // second copy the model pays for on every request, Tako-bound or not.
   it("carries no argument-level examples — those live in the descriptions", () => {
-    expect(SERVER_INSTRUCTIONS).not.toMatch(/`q="/);
-    expect(SERVER_INSTRUCTIONS).not.toMatch(/`metric="/);
+    expect(instructions).not.toMatch(/`q="/);
+    expect(instructions).not.toMatch(/`metric="/);
   });
 
   // Register check. "is free and does two jobs" spends the highest-value
@@ -1725,7 +1741,7 @@ describe("SERVER_INSTRUCTIONS", () => {
   // hosted MCP (836 chars across 2 tools, no instructions at all) never does
   // this: one imperative per line, no meta-commentary.
   it("states what to do, not what the tools 'do'", () => {
-    expect(SERVER_INSTRUCTIONS).not.toMatch(/does two jobs/i);
+    expect(instructions).not.toMatch(/does two jobs/i);
   });
 
   it("stays short enough to sit in a system prompt", () => {
@@ -1736,7 +1752,7 @@ describe("SERVER_INSTRUCTIONS", () => {
     // across 2 tools and no instructions at all (mcp.exa.ai, 2026-07-31).
     // Tako needs more than Exa (4+ tools, non-obvious routing, coverage a
     // model cannot guess) but the gap should be justified per sentence.
-    expect(SERVER_INSTRUCTIONS.length).toBeLessThan(1600);
+    expect(instructions.length).toBeLessThan(1600);
   });
 });
 

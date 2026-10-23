@@ -30,6 +30,8 @@
  * this text reaches every connection, including the ones that do not
  * register that tool.
  */
+import { GENERIC_DEFAULT_TOOL_NAMES } from "./tools/_surface.js";
+
 /**
  * Server-level usage guidance, returned as the MCP `instructions` field on
  * the `initialize` result. Claude hosts (claude.ai, Claude Desktop, Claude
@@ -174,11 +176,6 @@ const SHARED_INSTRUCTION_PARAGRAPHS = [
 type ToolSentence = {
   readonly tools: readonly string[];
   readonly text: string;
-  /**
-   * The sentence names opt-in tools, so the unfiltered string, which every
-   * default connection receives, leaves it out.
-   */
-  readonly optIn?: true;
 };
 
 const TOOL_SENTENCES: readonly ToolSentence[] = [
@@ -210,45 +207,35 @@ const TOOL_SENTENCES: readonly ToolSentence[] = [
   {
     tools: ["tako_agent", "tako_company_agent"],
     text: "Use `tako_company_agent` for a list of companies or people, such as a registry screen, and `tako_agent` for a ranking, trend, or aggregate of metrics.",
-    optIn: true,
   },
 ];
 
 /**
  * Assemble the instructions from the sentences whose tools survive.
  *
- * `registered === null` means "serve every sentence that isn't `optIn`" — the
- * value the exported constant below is built from, and what a caller that
- * cannot resolve a toolset gets. When no sentence survives, the shared paragraph stands alone:
- * it names no tool, so it is true on every surface.
+ * When no sentence survives, the shared paragraph stands alone: it names no
+ * tool, so it is true on every surface.
  */
 function assembleInstructions(
   sentences: readonly ToolSentence[],
-  registered: ReadonlySet<string> | null,
+  registered: ReadonlySet<string>,
 ): string {
-  const kept =
-    registered === null
-      ? sentences.filter((s) => s.optIn !== true)
-      : sentences.filter((s) => s.tools.every((name) => registered.has(name)));
+  const kept = sentences.filter((s) => s.tools.every((name) => registered.has(name)));
   const paragraph = kept.map((s) => s.text).join(" ");
   return paragraph === ""
     ? SHARED_INSTRUCTION_PARAGRAPHS.join("\n")
     : [...SHARED_INSTRUCTION_PARAGRAPHS, "", paragraph].join("\n");
 }
 
-export const SERVER_INSTRUCTIONS = assembleInstructions(TOOL_SENTENCES, null);
+export const SERVER_INSTRUCTIONS = assembleInstructions(TOOL_SENTENCES, GENERIC_DEFAULT_TOOL_NAMES);
 
 /**
  * The `initialize` instructions for a connection's resolved toolset.
  *
  * Pass the set `mcp.ts` actually registers (`resolveToolSet(...)`), so a
- * `?tools=` connection is never told about a tool it cannot call. Omitting it
- * serves every sentence, which is correct only when the caller knows the
- * default listing is in force. There is no tier parameter — see the module
- * comment for why there must not be one.
+ * `?tools=` connection is never told about a tool it cannot call. There is no
+ * tier parameter — see the module comment for why there must not be one.
  */
-export function serverInstructionsFor(
-  registered: ReadonlySet<string> | null = null,
-): string {
+export function serverInstructionsFor(registered: ReadonlySet<string>): string {
   return assembleInstructions(TOOL_SENTENCES, registered);
 }
