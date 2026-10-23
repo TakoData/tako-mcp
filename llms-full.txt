@@ -27,7 +27,7 @@ Tools are discovered at runtime via `tools/list`. There is no per-call `api_toke
 Two tools, one step apart — `tako_search` locates, `tako_contents` reads:
 
 - **Recon and fan-outs**: `tako_search`. Cards carry headline values, node ids, and chart links. Cheap; fire many narrow one-entity+one-metric queries in parallel and assemble the result yourself. Every card renders as a chart on the ChatGPT app, and the first card's chart renders elsewhere.
-- **The values themselves**: `tako_contents` on an `exportable: true` card's url — the card's rows, up to 2,000.
+- **The values themselves**: `tako_contents` on an `exportable: true` card's url — the card's rows, up to 2,000 inline. To analyze rows in code, set `delivery: "link"` and download the CSV before the link expires. `/mcp/chatgpt` returns rows inline only.
 - **A web page's text**: `tako_contents` on the web result's url.
 
 Never send a broad or multi-part question as one call — split it into narrow entity+metric searches (e.g. "US CPI inflation", "US core CPI inflation", "US PCE inflation", "US core PCE inflation"). For open-ended, multi-step research use `tako_agent` (opt-in).
@@ -69,6 +69,8 @@ Fetch the full content behind a url: a web page's extracted text, or an exportab
 Precondition (Tako cards): a card marked `exportable: false` is usually license-gated and returns no rows on any path, so read its headline value from the card's `description` instead. Call only on `exportable: true` cards, and even then a rare card still 403s, because the export gate is stricter than the flag — read the headline rather than retrying. Web urls always work.
 
 Results ride in `results`, positionally aligned with the urls you passed, failures included. Each entry carries `url` and `cost`, plus exactly one of `rows` (a card's data as `{columns, rows, total_rows}`, with positional cells and `null` for a missing value), `text` (a web page), or `error`. `truncated` reports a cut payload, and `note` says whether `text` holds the passages for `query` or the whole page. Root `usage.total_cost_usd` is the call's total.
+
+With `delivery: "link"`, a card's entry carries `download` (`url`, `expires_at`, `file_format`, `total_rows`) instead of inline data. With `format: "card"`, it carries `card`, the card's own structure. To analyze rows in code, use `delivery: "link"` and download the file right away. `/mcp/chatgpt` takes four inputs and returns rows inline only.
 
 Parameters:
 - `urls` (array of string, 1-10, required): The result urls to fetch — a Tako card's `url`, web-result urls, or a mix. Each is fetched independently, and one url failing doesn't fail the others (its entry carries an `error` instead of a payload).
