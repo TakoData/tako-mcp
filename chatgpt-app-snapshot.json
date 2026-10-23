@@ -1,5 +1,5 @@
 {
-  "note": "The description, input schema and chatgpt-surface output schema of every tool on the fixed /mcp/chatgpt surface, as last ACCEPTED here. OpenAI snapshots that text at submission and does not update it live, so this file equals OpenAI's copy only after a resubmission — between submissions it is what we intend to submit next. registry:check fails on any drift. Accept a deliberate change with: npm run registry:gen -- --accept-chatgpt-snapshot",
+  "note": "The description, input schema and chatgpt-surface output schema of every tool on the fixed /mcp/chatgpt surface, as last ACCEPTED here. OpenAI rescans /mcp/chatgpt daily and updates each tool after its automated checks pass, so an accepted change reaches ChatGPT users with the next production deploy. registry:check fails on any drift. Accept a deliberate change with: npm run registry:gen -- --accept-chatgpt-snapshot",
   "tools": {
     "tako_agent": {
       "description_sha256": "aeb9deea1082ef92ca783bd5bbc6ee8c637022699d9c998ad7c928a8114adb8b",

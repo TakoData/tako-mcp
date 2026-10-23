@@ -46,9 +46,9 @@ export interface ToolContext {
    * timeout indefinitely as long as it keeps emitting progress.
    *
    * Only a tool that declares `streamsProgress` delivers progress: `mcp.ts`
-   * answers its calls over SSE on the generic surface. Every other request gets a buffered JSON
-   * response, where the transport drops request-scoped notifications, so
-   * progress from any other tool reaches no client.
+   * answers its calls over SSE on the generic surface. Every other request
+   * gets a buffered JSON response, where the transport drops request-scoped
+   * notifications, so progress from any other tool reaches no client.
    *
    * No-op when the request did not carry a progressToken (the client
    * isn't asking for progress, so we don't send any). No-op when the

@@ -364,7 +364,7 @@ describe("assertChatgptSnapshot", () => {
     const snapshot = buildChatgptSnapshot([search, ...others]);
     const edited = { ...search, description: "Search, now with more words." };
     expect(() => assertChatgptSnapshot([edited, ...others], snapshot)).toThrow(
-      /tako_search.*description.*resubmit/is,
+      /tako_search.*description.*production deploy/is,
     );
   });
 

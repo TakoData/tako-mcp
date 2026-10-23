@@ -1470,7 +1470,7 @@ interface ChatgptSnapshot {
 }
 
 const SNAPSHOT_NOTE =
-  "The description, input schema and chatgpt-surface output schema of every tool on the fixed /mcp/chatgpt surface, as last ACCEPTED here. OpenAI snapshots that text at submission and does not update it live, so this file equals OpenAI's copy only after a resubmission — between submissions it is what we intend to submit next. registry:check fails on any drift. Accept a deliberate change with: npm run registry:gen -- --accept-chatgpt-snapshot";
+  "The description, input schema and chatgpt-surface output schema of every tool on the fixed /mcp/chatgpt surface, as last ACCEPTED here. OpenAI rescans /mcp/chatgpt daily and updates each tool after its automated checks pass, so an accepted change reaches ChatGPT users with the next production deploy. registry:check fails on any drift. Accept a deliberate change with: npm run registry:gen -- --accept-chatgpt-snapshot";
 
 /** The snapshot for the tools on the fixed chatgpt surface, serialized. */
 export function buildChatgptSnapshot(
@@ -1545,7 +1545,7 @@ export function assertChatgptSnapshot(
     throw new Error(
       `chatgpt-app-snapshot.json drift — a reviewed ChatGPT tool changed:\n  ${problems.join(
         "\n  ",
-      )}\nOpenAI's copy is fixed at whatever was last SUBMITTED, so a change here reaches ChatGPT users only at the next resubmission. If the change is intended, accept it: npm run registry:gen -- --accept-chatgpt-snapshot — and make sure the app is resubmitted before this text is relied on. Do NOT resubmit just to clear this check: an intermediate PR may deliberately change a reviewed tool ahead of one later submission.`,
+      )}\nOpenAI rescans /mcp/chatgpt daily and updates each tool after its automated checks pass, so this change reaches ChatGPT users with the next production deploy. If the change is intended, accept it: npm run registry:gen -- --accept-chatgpt-snapshot`,
     );
   }
 }

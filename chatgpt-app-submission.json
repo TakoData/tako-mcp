@@ -165,11 +165,11 @@
       "expected_output_url": null
     },
     {
-      "description": "Find the companies a named person is an officer of, with a run that outlasts one call.",
-      "user_prompt": "Using Tako's company agent at high effort, which UK companies is James Dyson a director of?",
+      "description": "Find a company's directors, with a run that outlasts one call.",
+      "user_prompt": "Using Tako's company agent at high effort, who are the current directors of Dyson Technology Limited?",
       "file_attachment_urls": null,
       "tools_triggered": "tako_company_agent",
-      "expected_output": "tako_company_agent starts a high-effort run and returns status running with a run_id; the model calls again with that run_id until the run finishes. If the model ends its turn first, it tells the user the run is still going, and when the user asks it to check again, it resumes the same run_id without starting a new run. The answer lists the companies from the public company registry where the person is an officer or director, with citations, and links the card's Tako page.",
+      "expected_output": "tako_company_agent starts a high-effort run and returns status running with a run_id; the model calls again with that run_id until the run finishes. If the model ends its turn first, it tells the user the run is still going, and when the user asks it to check again, it resumes the same run_id without starting a new run. The answer lists the company's current directors from the public company registry, with citations, and links the card's Tako page.",
       "expected_output_url": null
     },
     {

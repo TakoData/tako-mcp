@@ -738,9 +738,8 @@ function registerTool(
       //
       // Progress reaches the client only on an agent tool call on the
       // generic surface, which `handleMcpRequest` answers over SSE. Every
-      // other request gets a
-      // buffered JSON response, and the transport drops request-scoped
-      // notifications there.
+      // other request gets a buffered JSON response, and the transport
+      // drops request-scoped notifications there.
       const progressToken = (extra._meta as { progressToken?: string | number } | undefined)
         ?.progressToken;
       // Diagnostic only: `wrangler tail` shows which clients ask for
@@ -1485,9 +1484,9 @@ export function freeTierHiddenToolResponse(
  * A call to a tool that declares `streamsProgress` (`streamingToolCallName`),
  * on a generic connection that registers that tool, gets an SSE response, so
  * its `notifications/progress` reach the client. The chatgpt surface stays
- * buffered: ChatGPT sends no `progressToken` and renders no progress. Every other request runs with `enableJsonResponse: true`: one
- * buffered JSON-RPC body, in which the transport drops every request-scoped
- * notification.
+ * buffered: ChatGPT sends no `progressToken` and renders no progress. Every
+ * other request runs with `enableJsonResponse: true`: one buffered JSON-RPC
+ * body, in which the transport drops every request-scoped notification.
  */
 export async function handleMcpRequest(
   request: Request,
