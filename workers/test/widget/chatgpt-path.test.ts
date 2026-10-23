@@ -669,14 +669,19 @@ describe("ChatGPT carousel", () => {
     );
   }
 
-  function postEmbedHeight(m: Mounted, source: Window, height: number): void {
+  function postEmbedHeight(
+    m: Mounted,
+    source: Window,
+    height: number,
+    origin = "https://tako.com",
+  ): void {
     const WidgetMessageEvent = (
       m.widgetWin as unknown as { MessageEvent: typeof MessageEvent }
     ).MessageEvent;
     m.widgetWin.dispatchEvent(
       new WidgetMessageEvent("message", {
         data: { type: "tako-embed-height", height },
-        origin: "https://tako.com",
+        origin,
         source: source as unknown as MessageEventSource,
       }),
     );
@@ -775,6 +780,36 @@ describe("ChatGPT carousel", () => {
     carouselFrames(m).forEach((f) =>
       expect(f.classList.contains("veiled")).toBe(true),
     );
+  });
+
+  it("ignores a slide's height report from another origin", () => {
+    const heights: number[] = [];
+    const m = mountCarousel(threeCharts(), {
+      notifyIntrinsicHeight: (h: number) => heights.push(h),
+    });
+    const first = nth(carouselFrames(m), 0);
+    postEmbedHeight(m, first.contentWindow!, 500, "https://evil.example");
+    expect(heights).toEqual([1]);
+    expect(first.classList.contains("veiled")).toBe(true);
+  });
+
+  it("paints the host backdrop behind every slide on a dark ChatGPT", () => {
+    const m = mountCarousel(threeCharts(), { theme: "dark" });
+    const frames = carouselFrames(m);
+    expect(frames).toHaveLength(3);
+    frames.forEach((f) => {
+      expect(f.style.background).toBe("rgb(18, 18, 18)");
+      expect(f.style.borderRadius).not.toBe("");
+    });
+  });
+
+  it("paints the host backdrop behind a slide's PNG fallback", () => {
+    const m = mountCarousel(threeCharts(), { theme: "dark" });
+    fireFrameSrcViolation(m);
+    carouselSlides(m).forEach((slide) => {
+      const image = slide.querySelector("a > img") as HTMLImageElement;
+      expect(image.style.background).toBe("rgb(18, 18, 18)");
+    });
   });
 
   function pinContentDocument(f: HTMLIFrameElement, doc: unknown): void {
@@ -966,6 +1001,21 @@ describe("ChatGPT carousel", () => {
     expect(carouselFrames(m)).toHaveLength(0);
     expect(renderedIframe(m)).toBe(true);
     expect(frame(m).classList.contains("hidden")).toBe(false);
+  });
+
+  it("keeps a revealed single frame on screen until a slide reveals", () => {
+    const openai: Record<string, unknown> = { toolOutput: PROD_STRUCTURED_CONTENT };
+    const m = mountWidget(html(), openai);
+    fireFrameLoad(m);
+    expect(renderedIframe(m)).toBe(true);
+    deliverChartsLate(m, openai);
+    const frames = carouselFrames(m);
+    expect(frames).toHaveLength(3);
+    expect(renderedIframe(m)).toBe(true);
+    expect(frame(m).classList.contains("hidden")).toBe(false);
+    postEmbedHeight(m, nth(frames, 0).contentWindow!, 500);
+    expect(renderedIframe(m)).toBe(false);
+    expect(frame(m).classList.contains("hidden")).toBe(true);
   });
 
   it("never shrinks the widget when it upgrades to the carousel", () => {

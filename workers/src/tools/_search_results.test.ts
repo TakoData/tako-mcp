@@ -1537,6 +1537,23 @@ describe("cardCharts", () => {
     expect(out.image_url).toBe(out.charts?.[0]?.image_url);
   });
 
+  it("renders no chart when search's first card has no card_id", () => {
+    const out = buildSearchOutput(
+      [{ card_id: null }, { card_id: "b" }],
+      [],
+      "req-chartless-first",
+      null,
+      ENV,
+      ["data"],
+      false,
+      "authenticated",
+      OPTS,
+    );
+    expect(out.pub_id).toBeUndefined();
+    expect(out.embed_url).toBeUndefined();
+    expect(out.charts).toBeUndefined();
+  });
+
   it("a zero-card result carries no charts", () => {
     const out = buildSearchOutput([], [], "req-none", null, ENV, ["data"], false, "authenticated", OPTS);
     expect(out.charts).toBeUndefined();

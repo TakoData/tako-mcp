@@ -942,8 +942,8 @@ describe("worker routing", () => {
     // Promises the inline chart render. It must NOT reference
     // `tako_search_advanced` — opt-in since spec D1, so naming it would route
     // models to a tool the default connection has not registered.
-    expect(claudeDesc).toContain("render every card as a chart, in search's order");
-    expect(claudeDesc).toContain("other hosts show the first card's chart");
+    expect(claudeDesc).toContain("The first card's chart renders inline");
+    expect(claudeDesc).toContain("some hosts also show every other card's chart, in search's order");
     expect(claudeDesc).not.toContain("tako_search_advanced");
 
     // No residue from the removed legacy deep/async machinery.

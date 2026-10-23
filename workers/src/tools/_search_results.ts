@@ -4,7 +4,7 @@
  * TakoCard + WebResult schemas mirror the backend
  * `app/backend/knowledge/api/ga/v3/search/types.py`. Auto-chain widget
  * fields (pub_id, embed_url, …) are lifted to the output root by
- * `buildSearchOutput` so the chart widget renders the top card inline.
+ * `buildSearchOutput`, and `charts` lists every card's chart for the widget.
  *
  * `_`-prefixed so the registry codegen (`gen-registry.ts`) skips it.
  */
@@ -1717,8 +1717,6 @@ export function buildSearchOutput(
  * identically whichever produced it. They diverged before this existed: search
  * lifted these fields and answer did not, so an answer's cited card came back as
  * text with no chart even though the card ids were right there in the output.
- *
- * The top-level fields describe the first chart; `charts` lists every card's chart.
  */
 export function topCardChartFields(
   // `card_id` is nullable on the wire (`takoCardSchema`), so accept null here
@@ -1737,7 +1735,7 @@ export function topCardChartFields(
   // are built from restores it, and lets the answer path's hooks read
   // `output.image_url` off a typed value instead of casting.
 ): TopCardChartFields | undefined {
-  const first = cardCharts(cards, env)[0];
+  const first = cardCharts(cards.slice(0, 1), env)[0];
   if (first === undefined) return undefined;
   return {
     ...first,

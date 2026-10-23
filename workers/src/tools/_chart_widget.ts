@@ -821,7 +821,7 @@ const WIDGET_HTML = `<!doctype html>
   // PNG would let a background embed resize the widget under a chart the
   // user is looking at.
   function armEmbedOrigin(url) {
-    try { embedOrigin = new URL(url).origin; } catch (e) { embedOrigin = null; }
+    embedOrigin = originOf(url);
   }
 
   // The host's declared theme, or null when it does not say.
@@ -1119,16 +1119,12 @@ const WIDGET_HTML = `<!doctype html>
       // decides the committed-iframe branch, so this cannot disagree with the
       // path actually taken.
       var chatgpt = hasOpenAiRuntime();
-      if (frame) {
-        frame.style.background = backdrop || "";
-        // Clip only on ChatGPT: a square backdrop behind a rounded card leaves
-        // a crescent at each corner, which is the reported ring there.
-        frame.style.borderRadius = chatgpt && backdrop ? CARD_CORNER_RADIUS : "";
-      }
-      if (image) {
-        image.style.background = backdrop || "";
-        image.style.borderRadius = chatgpt && backdrop ? CARD_CORNER_RADIUS : "";
-      }
+      paintChartSurface(frame, backdrop, chatgpt);
+      paintChartSurface(image, backdrop, chatgpt);
+      carouselSlides.forEach(function (s) {
+        paintChartSurface(s.iframe, backdrop, chatgpt);
+        paintChartSurface(s.img, backdrop, chatgpt);
+      });
       // Tier 1 — the host's exact surface, so painting the whole canvas is safe:
       // it becomes indistinguishable from the host's own page.
       // Tier 1 — the host's exact surface. RETAINED for every host except
@@ -1166,6 +1162,14 @@ const WIDGET_HTML = `<!doctype html>
       var t2 = hostTheme();
       if (t2 !== null) root.style.colorScheme = t2;
     } catch (e) { /* pre-body or hostile host — cosmetic, never fatal */ }
+  }
+
+  function paintChartSurface(el, backdrop, chatgpt) {
+    if (!el) return;
+    el.style.background = backdrop || "";
+    // Clip only on ChatGPT: a square backdrop behind a rounded card leaves
+    // a crescent at each corner, which is the reported ring there.
+    el.style.borderRadius = chatgpt && backdrop ? CARD_CORNER_RADIUS : "";
   }
 
   // Suppress the embed page's analytics for any load THIS widget performs.
@@ -1976,6 +1980,7 @@ const WIDGET_HTML = `<!doctype html>
   var carouselNext = document.getElementById("tako-next");
   var carouselSlides = [];
   var carouselNotifiedHeight = 0;
+  var keepSingleFrameUntilSlideReveals = false;
 
   function renderCarousel(charts, fallbackHeight) {
     if (carouselSlides.length > 0) return true;
@@ -1988,6 +1993,7 @@ const WIDGET_HTML = `<!doctype html>
     window.addEventListener("resize", updateCarouselNav);
     carouselPrev.addEventListener("click", function () { scrollCarousel(-1); });
     carouselNext.addEventListener("click", function () { scrollCarousel(1); });
+    applyHostSurface();
     placeholder.classList.add("hidden");
     rendered = true;
     updateCarouselNav();
@@ -2011,6 +2017,7 @@ const WIDGET_HTML = `<!doctype html>
       title: iframe.getAttribute("title"),
       el: el,
       iframe: iframe,
+      img: null,
       origin: originOf(src),
       fallbackHeight: fallbackHeight,
       height: 0,
@@ -2063,6 +2070,10 @@ const WIDGET_HTML = `<!doctype html>
   }
 
   function revealSlide(slide, h) {
+    if (keepSingleFrameUntilSlideReveals) {
+      keepSingleFrameUntilSlideReveals = false;
+      tearDownSingleFrame();
+    }
     slide.height = h;
     slide.revealed = true;
     if (slide.iframe) {
@@ -2111,6 +2122,8 @@ const WIDGET_HTML = `<!doctype html>
       });
       img.src = slide.chart.image_url;
       link.appendChild(img);
+      slide.img = img;
+      applyHostSurface();
     } else {
       link.textContent = "Open interactive chart →";
     }
@@ -2150,11 +2163,16 @@ const WIDGET_HTML = `<!doctype html>
     var chartList = pickChartList(singleFramePayload, meta);
     var slideCharts = carouselCharts(chartList);
     if (slideCharts.length < 2) return;
-    tearDownSingleFrame();
+    keepSingleFrameUntilSlideReveals = singleFrameRevealed();
+    if (!keepSingleFrameUntilSlideReveals) tearDownSingleFrame();
     persistWidgetState(singleFramePayload, chartList);
     carouselNotifiedHeight = highestNotifiedHeight;
     renderCarousel(slideCharts, requestedHeight(singleFramePayload));
     log("upgraded single frame to carousel", { slides: slideCharts.length });
+  }
+
+  function singleFrameRevealed() {
+    return !frame.classList.contains("hidden") && !frame.classList.contains("veiled");
   }
 
   function tearDownSingleFrame() {

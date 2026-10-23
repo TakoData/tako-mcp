@@ -13,9 +13,7 @@
  * card's `card_id` into top-level widget fields (`pub_id`, `embed_url`,
  * `image_url`, …), which is the single chart that renders on generic
  * `/mcp`. On `/mcp/chatgpt`, `_meta.charts` carries a chart for every
- * card, and the widget renders two or more as a carousel. `_meta.charts`
- * reaches the widget, not the tool result the model reads; the widget
- * mirrors it into widget state. `buildChartUrls` only needs a
+ * card, and the widget renders two or more as a carousel. `buildChartUrls` only needs a
  * `card_id`, which v3 TakoCards carry directly.
  */
 import { z } from "zod";
@@ -40,7 +38,7 @@ import type { CardChart, SearchOutput } from "./_search_results.js";
 import type { AppUiResource, ToolContentBlock, ToolContext, ToolModule } from "./types.js";
 
 const DESCRIPTION = [
-  "Search Tako's data graph and the live web in one call: many results at once, as structured cards plus web results. Hosts that show widgets render every card as a chart, in search's order; other hosts show the first card's chart.",
+  "Search Tako's data graph and the live web in one call: many results at once, as structured cards plus web results. The first card's chart renders inline; some hosts also show every other card's chart, in search's order.",
   "",
   "It finds results; `tako_contents` fetches what's behind them. Each card carries a headline value, node ids, and a url — pass the url to `tako_contents` for rows (`exportable: true` cards) or a web result's full page text. When `exportable` is false the rows are locked — read the headline value from the card's `description`.",
   "",
@@ -152,7 +150,9 @@ export function buildSearchBody(input: Input, tier: Tier): z.input<typeof Search
 }
 
 
-async function fetchChartsMeta(charts: readonly CardChart[]): Promise<Record<string, unknown>[]> {
+type ChartMeta = CardChart & { image_natural_width?: number; image_natural_height?: number };
+
+async function fetchChartsMeta(charts: readonly CardChart[]): Promise<ChartMeta[]> {
   return Promise.all(
     charts.map(async (chart) => {
       const dims = await fetchPngDimensions(chart.image_url);
@@ -244,19 +244,30 @@ const tako_search = {
     // schema now, so the loose base Output no longer types them.
     const o = output as SearchOutput;
     const charts = o.charts ?? [];
-    const [meta, chartsMeta] = await Promise.all([
-      buildChartExtraMeta(o.image_url, {
-        bakeImage: ctx.surface !== "chatgpt",
-        env: ctx.env,
-        origin: ctx.origin,
-        pubId: o.pub_id,
-      }),
-      ctx.surface === "chatgpt" && charts.length >= 2
-        ? fetchChartsMeta(charts)
-        : undefined,
+    const metaOpts = {
+      bakeImage: ctx.surface !== "chatgpt",
+      env: ctx.env,
+      origin: ctx.origin,
+      pubId: o.pub_id,
+    };
+    if (ctx.surface !== "chatgpt" || charts.length < 2) {
+      return buildChartExtraMeta(o.image_url, metaOpts);
+    }
+    const [probeMeta, chartsMeta] = await Promise.all([
+      buildChartExtraMeta(undefined, metaOpts),
+      fetchChartsMeta(charts),
     ]);
-    if (chartsMeta === undefined) return meta;
-    return { ...meta, charts: chartsMeta };
+    const top = chartsMeta[0];
+    return {
+      ...probeMeta,
+      ...(top?.image_natural_width !== undefined && top.image_natural_height !== undefined
+        ? {
+            image_natural_width: top.image_natural_width,
+            image_natural_height: top.image_natural_height,
+          }
+        : {}),
+      charts: chartsMeta,
+    };
   },
   async extraContentBlocks(output, _ctx): Promise<ToolContentBlock[]> {
     void _ctx;
