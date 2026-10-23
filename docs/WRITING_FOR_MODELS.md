@@ -39,6 +39,11 @@ covers.
 - **Put the workflow in the body.** The body loads only after the model opens
   the skill, so it doesn't change triggering. Use it for query shapes, the
   card checks, and the report template.
+- **Trigger an agent on an explicit ask.** An agent run costs more than a
+  search, so a lookup that starts one is the failure to avoid. A description
+  that names the shape of a research question also matches lookups that
+  resemble it, such as one entity's change over time. `tako-agent` fires only
+  when the user asks for Tako's agent or for deep research with Tako.
 
 ### Evidence
 
@@ -57,6 +62,26 @@ production-ready data manager spec family, asked twice. The three-skill arm
 ran a day after the others. Its one no-lookup trigger was "Explain the
 difference between CPI and PCE inflation.", and the general-search arm's was
 "What does it mean when the yield curve inverts?".
+
+Codex over-trigger runs on 2026-10-23 (TAKO-5267) measured how often a lookup
+starts an agent once the plugin lists `tako_agent` and `tako_company_agent`.
+Each arm ran 68 lookups and 15 no-lookup tasks, twice each, against a stub
+that served the arm's captured listing:
+
+| Arm | Lookups that start an agent first | Lookups that start with `tako_search` | No-lookup tasks that call Tako |
+|---|---|---|---|
+| Plugin today: four tools, `tako-search` | 0 of 136 | 55 of 136 | 0 of 30 |
+| Six tools, `tako-search` only | 3 of 136 | 64 of 136 | not run |
+| Six tools, `tako-agent` triggered by the shape of the question | 8 of 136 | 52 of 136 | 0 of 30 |
+| Same, without "periods" and "growth rates", and handing one entity's change over time to `tako-search` | 4 of 136 | 56 of 136 | 0 of 30 |
+| Six tools, `tako-agent` triggered by an explicit ask (shipped) | 3 of 136 | 67 of 136 | 1 of 30 |
+
+The gate was at most 1 in 20 lookups. Most of the shape-triggered agent calls
+came on lookups about one entity's change over time. The listing alone starts
+an agent on some registry and change-over-time lookups, from the agent tool
+descriptions, and no skill wording removes those calls. That run used
+`gpt-6-luna` on Codex 0.164.0. It didn't measure how often a research question
+reaches an agent.
 
 An earlier run on `gpt-6-astra` (Codex 0.155.1) tested the tool description
 instead. Rewriting the `tako_search` description to list its domains and
