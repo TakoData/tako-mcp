@@ -25,6 +25,7 @@ import { AnswerAgentRunRequest } from "../generated/schemas.js";
 import {
   AGENT_CALL_WINDOW_FIXED_INPUT,
   AGENT_CALL_WINDOW_SENTENCE,
+  AGENT_CARD_LINK_SENTENCE,
   agentQueryInput,
   agentThreadIdInput,
   runAgentCall,
@@ -41,7 +42,7 @@ const DESCRIPTION = [
   "",
   "Best for metric-driven research: ranking or screening by financial or economic metrics, multi-step aggregation, multi-hop reasoning. Also the fallback when `tako_search` finds nothing. Not for a known value or a two-entity comparison — `tako_search` answers those in one round trip.",
   "",
-  AGENT_CALL_WINDOW_SENTENCE,
+  `${AGENT_CALL_WINDOW_SENTENCE} ${AGENT_CARD_LINK_SENTENCE}`,
 ].join("\n");
 
 export const inputSchema = z.object({

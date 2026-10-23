@@ -41,6 +41,9 @@ export type AgentCallInput = {
 /** The description line both agent tools end with. */
 export const AGENT_CALL_WINDOW_SENTENCE = `A call returns within ${AGENT_CALL_WINDOW_MS / 1000} s. If \`status\` is \`running\`, call again with \`run_id\`; don't start a new run.`;
 
+/** The description sentence that keeps each card's Tako page link in the model's reply. */
+export const AGENT_CARD_LINK_SENTENCE = "In your reply, link each card's `url`; the full list or chart lives on that page.";
+
 /** The `query` input both agent tools take. */
 export const agentQueryInput = z
   .string()

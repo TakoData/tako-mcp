@@ -39,7 +39,7 @@
   "tools": [
     {
       "name": "tako_agent",
-      "description": "Run Tako's Answer Agent on a question that needs research rather than a lookup. It plans, queries the data graph and the web over several steps, and returns a written `answer` with numbered citations plus the chart `cards` it built.\n\nBest for metric-driven research: ranking or screening by financial or economic metrics, multi-step aggregation, multi-hop reasoning. Also the fallback when `tako_search` finds nothing. Not for a known value or a two-entity comparison — `tako_search` answers those in one round trip.\n\nA call returns within 45 s. If `status` is `running`, call again with `run_id`; don't start a new run.",
+      "description": "Run Tako's Answer Agent on a question that needs research rather than a lookup. It plans, queries the data graph and the web over several steps, and returns a written `answer` with numbered citations plus the chart `cards` it built.\n\nBest for metric-driven research: ranking or screening by financial or economic metrics, multi-step aggregation, multi-hop reasoning. Also the fallback when `tako_search` finds nothing. Not for a known value or a two-entity comparison — `tako_search` answers those in one round trip.\n\nA call returns within 45 s. If `status` is `running`, call again with `run_id`; don't start a new run. In your reply, link each card's `url`; the full list or chart lives on that page.",
       "parameters": {
         "query": {
           "type": "string",
@@ -119,7 +119,7 @@
     },
     {
       "name": "tako_company_agent",
-      "description": "Run Tako's Company Agent on a question about which companies or people match registry facts. It searches the company registry and the web over several steps, and returns a written `answer` with numbered citations plus any list `cards` it built.\n\nBest for: screening companies by status, incorporation date, registered location, or industry; resolving named companies; finding a company's officers and directors. At `medium` and `high` effort it can also filter by financial metrics such as revenue or headcount.\n\nA call returns within 45 s. If `status` is `running`, call again with `run_id`; don't start a new run.",
+      "description": "Run Tako's Company Agent on a question about which companies or people match registry facts. It searches the company registry and the web over several steps, and returns a written `answer` with numbered citations plus any list `cards` it built.\n\nBest for: screening companies by status, incorporation date, registered location, or industry; resolving named companies; finding a company's officers and directors. At `medium` and `high` effort it can also filter by financial metrics such as revenue or headcount.\n\nA call returns within 45 s. If `status` is `running`, call again with `run_id`; don't start a new run. In your reply, link each card's `url`; the full list or chart lives on that page.",
       "parameters": {
         "query": {
           "type": "string",

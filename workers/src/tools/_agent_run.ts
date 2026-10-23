@@ -477,7 +477,7 @@ export function runningMessage(
   progress?: string,
 ): string {
   const state = progress === undefined ? `${elapsedS} s` : `${elapsedS} s; latest step: ${progress}`;
-  return `The run is still working (${state}). Call \`${toolName}\` again with run_id=\`${publicRunId}\` to keep waiting. Don't start a new run for the same question.`;
+  return `The run is still working (${state}). Call \`${toolName}\` again with run_id=\`${publicRunId}\` to keep waiting. Don't start a new run for the same question. If you end your turn before it finishes, tell the user it's still running and that they can ask you to check again; then call again with the same run_id.`;
 }
 
 /** Project a run that is still working when the call's window ends. */
