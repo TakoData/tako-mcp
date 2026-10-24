@@ -1,5 +1,31 @@
 # Changelog
 
+## [1.5.0](https://github.com/TakoData/tako-mcp/compare/v1.4.5...v1.5.0) (2026-10-24)
+
+
+### Features
+
+* **agent:** add tako_company_agent and make agent runs resumable across tool calls ([#349](https://github.com/TakoData/tako-mcp/issues/349)) ([f679029](https://github.com/TakoData/tako-mcp/commit/f6790293fd11f045f67752c5bfa491248c259fe2))
+* **chatgpt:** list tako_agent and tako_company_agent on /mcp/chatgpt ([#350](https://github.com/TakoData/tako-mcp/issues/350)) ([7d65560](https://github.com/TakoData/tako-mcp/commit/7d65560dd9248962cdad8225498be7538e631618))
+* **contents:** let /mcp agents download a card's rows as a file or fetch its structure ([#358](https://github.com/TakoData/tako-mcp/issues/358)) ([525a218](https://github.com/TakoData/tako-mcp/commit/525a21895a5b866c919fe889eeaec80573c278ef))
+* **plugin:** add both Tako agents and a tako-agent skill to the Claude plugin and Gemini extension ([#359](https://github.com/TakoData/tako-mcp/issues/359)) ([b851106](https://github.com/TakoData/tako-mcp/commit/b851106b4511e0c7c11d1533e308b007ac03fb5a))
+* **search:** keep search's card order and show every card in a ChatGPT carousel ([#352](https://github.com/TakoData/tako-mcp/issues/352)) ([88df077](https://github.com/TakoData/tako-mcp/commit/88df077c3a844face2b0faa7ef724b0e72b89a05))
+* **skills:** replace the finance, macro, and traffic skills with one tako-search skill for any lookup ([#351](https://github.com/TakoData/tako-mcp/issues/351)) ([84a3f44](https://github.com/TakoData/tako-mcp/commit/84a3f44f224687afa9bd4f91c93028b749b78632))
+
+
+### Bug Fixes
+
+* **agent:** tell the model not to state figures while a run is still going ([#357](https://github.com/TakoData/tako-mcp/issues/357)) ([0dcd516](https://github.com/TakoData/tako-mcp/commit/0dcd516c3900a6630409d1d761a4c10b5f1a25b2))
+* **deps:** raise the vite override to ^6.4.4 to clear CVE-2026-112942 ([b90f11e](https://github.com/TakoData/tako-mcp/commit/b90f11e0368175b29ceb42d68d7a355bc696c42c))
+* **deps:** raise the vite override to ^6.4.4 to clear CVE-2026-112942 ([4b2c8c4](https://github.com/TakoData/tako-mcp/commit/4b2c8c4175b1ab9e9307e763447e3557a575faad))
+* **tako_search:** return guidance only for a strict-pin miss or a sign-in placeholder ([#355](https://github.com/TakoData/tako-mcp/issues/355)) ([38a2bfb](https://github.com/TakoData/tako-mcp/commit/38a2bfbe8b75db66e5c45a2c6d3fd9cb8abd9d17))
+* **widget:** ask ChatGPT to close the empty card when a search has no chart ([#353](https://github.com/TakoData/tako-mcp/issues/353)) ([2be6df4](https://github.com/TakoData/tako-mcp/commit/2be6df41c834641df5d24747ec20f6f7644a2fdb))
+
+
+### Chores
+
+* sync OpenAPI spec from monorepo ([#346](https://github.com/TakoData/tako-mcp/issues/346)) ([d81832a](https://github.com/TakoData/tako-mcp/commit/d81832aec1876346a2a217deac7f5c3ac179d29b))
+
 ## [1.4.5](https://github.com/TakoData/tako-mcp/compare/v1.4.4...v1.4.5) (2026-10-21)
 
 
