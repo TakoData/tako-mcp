@@ -5,7 +5,7 @@
   "contextFileName": "docs${/}gemini${/}GEMINI.md",
   "mcpServers": {
     "tako": {
-      "httpUrl": "https://mcp.tako.com/mcp"
+      "httpUrl": "https://mcp.tako.com/mcp?tools=search,available_data,contents,graph_related,agent,company_agent"
     }
   }
 }

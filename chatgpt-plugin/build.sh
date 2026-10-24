@@ -10,7 +10,8 @@ staging="$(mktemp -d)"
 trap 'rm -rf "$staging"' EXIT
 
 cp "$package_dir/plugin.json" "$staging/plugin.json"
-cp -R "$repo_root/skills" "$staging/skills"
+mkdir -p "$staging/skills"
+cp -R "$repo_root/skills/tako-search" "$staging/skills/tako-search"
 cp -R "$package_dir/assets" "$staging/assets"
 
 mkdir -p "$package_dir/dist"

@@ -479,14 +479,17 @@ const LLMS_FULL_PATH = resolve(REPO_ROOT, "llms-full.txt");
 // right check for an index: every tool has to be named somewhere in it.
 const LLMS_PATH = resolve(REPO_ROOT, "llms.txt");
 // Checked for pin-form drift only (its contents are hand-written prose, and it
-// embeds the bundled skill verbatim).
+// embeds the bundled skills verbatim).
 const README_PATH = resolve(REPO_ROOT, "README.md");
 // The bundled skills are model-facing prose, and NEITHER existing guard could
 // see them: `_pin_form.test.ts` walks tool descriptions, and this function was
 // only given llms-full.txt and README. That is the same gap that let the broken
 // form survive in llms-full.txt, so close it by enumeration rather than waiting
 // for the next survivor.
-const SKILL_PATHS = [resolve(REPO_ROOT, "skills", "tako-search", "SKILL.md")];
+const SKILL_PATHS = [
+  resolve(REPO_ROOT, "skills", "tako-agent", "SKILL.md"),
+  resolve(REPO_ROOT, "skills", "tako-search", "SKILL.md"),
+];
 const SUBMISSION_PATH = resolve(REPO_ROOT, "chatgpt-app-submission.json");
 const SNAPSHOT_PATH = resolve(REPO_ROOT, "chatgpt-app-snapshot.json");
 const TOOLS_DOC_PATH = resolve(REPO_ROOT, "docs", "TOOLS.md");

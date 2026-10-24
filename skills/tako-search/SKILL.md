@@ -16,6 +16,8 @@ Tako searches the live web and a knowledge graph of licensed and public data in 
 4. If no card answers the question, answer from the web results. To read a page in full, pass its url to `tako_contents`.
 5. If a name is ambiguous, such as "Costco" or "Coca-Cola", and the question doesn't settle which entity, ask before quoting a number.
 
+If the user asks for Tako's agent and the `tako-agent` skill is installed, follow `tako-agent` instead.
+
 ## Explore what Tako has
 
 For questions about coverage or relationships, such as "What does Tako track for Tesla?", "Who competes with Nvidia?", or "Which countries are in the G7?", resolve the entity with `tako_available_data`. Then call `tako_graph_related` on the node id it returns.

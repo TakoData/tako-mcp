@@ -47,6 +47,8 @@ import path from "node:path";
 import toml from "@iarna/toml";
 import { describe, expect, it } from "vitest";
 
+import { EXPECTED_PLUGIN_TOOL_URL, resolveToolUrl } from "./plugin-tool-url.js";
+
 /** Repo root. This file lives at `workers/scripts/`. */
 const REPO_ROOT = path.resolve(import.meta.dirname, "..", "..");
 const COMMANDS_DIR = path.join(REPO_ROOT, "commands");
@@ -126,8 +128,8 @@ describe("gemini extension manifest", () => {
   });
 
   it("points its MCP server at the production endpoint", () => {
-    expect(manifest().mcpServers?.tako?.httpUrl).toBe(
-      "https://mcp.tako.com/mcp",
+    expect(resolveToolUrl(manifest().mcpServers?.tako?.httpUrl ?? "")).toEqual(
+      EXPECTED_PLUGIN_TOOL_URL,
     );
   });
 
@@ -217,6 +219,6 @@ describe("gemini extension skills", () => {
       )
       .map((entry) => entry.name)
       .sort();
-    expect(discovered).toEqual(["tako-search"]);
+    expect(discovered).toEqual(["tako-agent", "tako-search"]);
   });
 });

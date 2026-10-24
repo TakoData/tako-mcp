@@ -37,7 +37,7 @@ Paste the URL. Sign in when your client prompts you — a per-host key is minted
 [![Install in VS Code](https://img.shields.io/badge/VS_Code-Install_Tako-0098FF?style=flat-square&logo=visualstudiocode&logoColor=white)](https://insiders.vscode.dev/redirect/mcp/install?name=tako&config=%7B%22type%22%3A%22http%22%2C%22url%22%3A%22https%3A%2F%2Fmcp.tako.com%2Fmcp%22%7D)
 [![Install in VS Code Insiders](https://img.shields.io/badge/VS_Code_Insiders-Install_Tako-24bfa5?style=flat-square&logo=visualstudiocode&logoColor=white)](https://insiders.vscode.dev/redirect/mcp/install?name=tako&config=%7B%22type%22%3A%22http%22%2C%22url%22%3A%22https%3A%2F%2Fmcp.tako.com%2Fmcp%22%7D&quality=insiders)
 
-Claude Code installs with one command — the plugin brings the MCP connection plus Tako's bundled [lookup skill](#agent-skills):
+Claude Code installs with one command — the plugin brings the MCP connection plus Tako's bundled [lookup and research skills](#agent-skills):
 
 ```bash
 claude plugin marketplace add TakoData/tako-mcp && claude plugin install tako@tako
@@ -56,7 +56,7 @@ Pick your client below.
 <details>
 <summary><b>Claude Code</b></summary>
 
-**Plugin (recommended)** — installs the MCP connection plus Tako's bundled [lookup skill](#agent-skills) in one step, and works immediately on the free tier — no API key to mint or manage:
+**Plugin (recommended)** — installs the MCP connection plus Tako's bundled [lookup and research skills](#agent-skills) in one step, and works immediately on the free tier — no API key to mint or manage:
 
 ```bash
 claude plugin marketplace add TakoData/tako-mcp
@@ -138,7 +138,7 @@ Add to `.vscode/mcp.json` (workspace) or your user `mcp.json` — VS Code prompt
 gemini extensions install https://github.com/TakoData/tako-mcp
 ```
 
-That installs the MCP connection, Tako's bundled [lookup skill](#agent-skills), and three commands:
+That installs the MCP connection, Tako's bundled [lookup and research skills](#agent-skills), and three commands:
 
 | Command | What it does |
 | --- | --- |
@@ -314,7 +314,7 @@ claude mcp add tako --transport http "https://mcp.tako.com/mcp?tools=search,avai
 ```
 
 - **Claude.ai, Claude Desktop, ChatGPT developer-mode connectors:** put the param on the URL you paste. OAuth is unaffected (the server canonicalizes the resource, query string included).
-- **Claude Code plugin:** the plugin pins the default surface (its URL isn't user-editable). For a different set, add the server yourself with `claude mcp add` as above, and keep only one Tako connection active so you don't get two copies of every tool.
+- **Claude Code plugin and Gemini CLI extension:** each pins the default surface plus `tako_agent` and `tako_company_agent` (`?tools=search,available_data,contents,graph_related,agent,company_agent`), and its URL isn't user-editable. For a different set, add the server yourself with `claude mcp add` as above, and keep only one Tako connection active so you don't get two copies of every tool. Claude Code stores a sign-in for each server URL, so after you update the Claude Code plugin from 1.4.5 or earlier, sign in again: run `/mcp`, select `tako`, and choose **Authenticate**.
 - **`/mcp/chatgpt` ignores `?tools=`**: its listing is fixed — `tako_search`, `tako_available_data`, `tako_contents`, `tako_visualize`, `tako_graph_related`, `tako_agent`, `tako_company_agent`.
 
 <details>
@@ -350,12 +350,12 @@ Two tools, one step apart — `tako_search` finds, `tako_contents` fetches:
 
 ## Agent Skills
 
-A ready-to-use skill for Claude Code. It teaches Claude when to look something up with Tako and how to report what it finds. Copy the block inside the dropdown and paste it into Claude Code — it sets up the connection and skill for you.
+Two ready-to-use skills for Claude Code. `tako-search` teaches Claude when to look something up with Tako and how to report what it finds. `tako-agent` teaches Claude to start one of Tako's research agents when you ask for one, which agent to call, and how to wait for its answer. Copy the block inside each dropdown and paste it into Claude Code — it sets up the connection and the skill for you. Both blocks set up the same connection, so you can install either one or both.
 
 The `tako-search` skill replaces the `tako-financial-research`, `tako-macroeconomics`, and `tako-web-traffic` skills. If you called one of them by name, such as `/tako:tako-financial-research`, call `/tako:tako-search` instead.
 
 <details>
-<summary><b>Tako</b></summary>
+<summary><b>Tako search</b></summary>
 
 Copy the block below and paste it into Claude Code. It will set up the MCP connection and skill for you.
 
@@ -364,7 +364,7 @@ Step 1: Install or update Tako MCP
 
 If Tako MCP already exists in your config, update it to this endpoint. Run this in your terminal:
 
-claude mcp add tako-mcp --transport http "https://mcp.tako.com/mcp" --header "Authorization: Bearer $TAKO_API_TOKEN"
+claude mcp add tako-mcp --transport http "https://mcp.tako.com/mcp?tools=search,available_data,contents,graph_related,agent,company_agent" --header "Authorization: Bearer $TAKO_API_TOKEN"
 
 
 Step 2: Add this Claude skill
@@ -387,6 +387,8 @@ Tako searches the live web and a knowledge graph of licensed and public data in 
 4. If no card answers the question, answer from the web results. To read a page in full, pass its url to `tako_contents`.
 5. If a name is ambiguous, such as "Costco" or "Coca-Cola", and the question doesn't settle which entity, ask before quoting a number.
 
+If the user asks for Tako's agent and the `tako-agent` skill is installed, follow `tako-agent` instead.
+
 ## Explore what Tako has
 
 For questions about coverage or relationships, such as "What does Tako track for Tesla?", "Who competes with Nvidia?", or "Which countries are in the G7?", resolve the entity with `tako_available_data`. Then call `tako_graph_related` on the node id it returns.
@@ -397,6 +399,64 @@ For questions about coverage or relationships, such as "What does Tako track for
 - Name the source: the card's `source`, or the web page you used.
 - Link the card you used: `[Open in Tako](url)`.
 - If the series ended well before today, give its as-of date from `coverage_end`.
+
+Step 3: Ask the user to restart Claude Code
+
+Ask the user to restart Claude Code so the config change takes effect.
+````
+
+</details>
+
+<details>
+<summary><b>Tako agents</b></summary>
+
+Copy the block below and paste it into Claude Code. It will set up the MCP connection and skill for you.
+
+````
+Step 1: Install or update Tako MCP
+
+If Tako MCP already exists in your config, update it to this endpoint. Run this in your terminal:
+
+claude mcp add tako-mcp --transport http "https://mcp.tako.com/mcp?tools=search,available_data,contents,graph_related,agent,company_agent" --header "Authorization: Bearer $TAKO_API_TOKEN"
+
+
+Step 2: Add this Claude skill
+
+---
+name: tako-agent
+description: >-
+  Use when the user explicitly asks for Tako's research agent or for deep, multi-step research with Tako, such as "use the Tako agent to…", "have Tako research…", or "use Tako to build a list of companies that…". Tako's agents plan the steps, search the web and licensed data, and return a cited answer with charts or lists. For any other question, use tako-search, even one that needs a ranking or a calculation.
+---
+
+# Tako agents
+
+Tako's agents run multi-step research. An agent plans its own steps, searches the web and Tako's licensed data, computes what the question asks for, and returns a cited answer with charts or lists. All tools below live on the Tako MCP server installed in Step 1.
+
+## When to use an agent
+
+Start an agent only when the user asks for one: they name Tako's agent, ask for deep or multi-step research with Tako, or ask Tako to build a list of companies or people. Otherwise, use `tako-search`, even when the question needs a ranking, a trend, or a calculation. Don't start an agent for a task that needs no data, such as writing, editing, or explaining a concept.
+
+## Choose the agent
+
+- Use `tako_company_agent` to find which companies or people match a set of facts: a screen by location, industry, status, founding date, funding, or size; officers, directors, or owners; or companies filtered by a financial metric, such as "UK software companies with more than £10 million in revenue".
+- Use `tako_agent` for a ranking, trend, total, or calculation, including companies ranked by a metric: "the 10 largest UK software companies by revenue", countries ranked by GDP, a growth rate across several periods, or a figure computed from several metrics.
+
+## Run an agent
+
+1. Send the user's question in `query`, one question per call. The agent plans its own steps, so don't split the question.
+2. If `status` is `running`, call the same tool again with that `run_id` and no `query`. Don't start a new run for the same question.
+3. If a call fails before it returns a `run_id`, follow its guidance. If the guidance says the run may have started, ask the user before you retry.
+4. For a follow-up in the same conversation, pass the `thread_id` from the earlier run with the new `query`.
+
+## Effort
+
+`tako_company_agent` takes `effort`. Leave it unset for the default, `medium`. Use `high` only when the user asks for a thorough answer. Don't use `low` when the question filters by a financial metric such as revenue or headcount, because `low` can't. A thread keeps its effort, so omit `effort` on a follow-up.
+
+## Report
+
+- Lead with the agent's answer in a few lines, and keep its numbered citations.
+- Link each card the agent returns: `[Open in Tako](url)`. The full chart or list lives on that page.
+- If the agent says it couldn't answer part of the question, say so.
 
 Step 3: Ask the user to restart Claude Code
 

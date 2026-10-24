@@ -43,6 +43,8 @@ import path from "node:path";
 import yaml from "js-yaml";
 import { describe, expect, it } from "vitest";
 
+import { EXPECTED_PLUGIN_TOOL_URL, resolveToolUrl } from "./plugin-tool-url.js";
+
 /** Repo root — this file lives at `workers/scripts/`. */
 const REPO_ROOT = path.resolve(import.meta.dirname, "..", "..");
 const SKILLS_DIR = path.join(REPO_ROOT, "skills");
@@ -76,8 +78,8 @@ function frontmatterOf(markdown: string): string {
 describe("bundled plugin skills", () => {
   const names = skillDirNames();
 
-  it("ships the tako-search skill", () => {
-    expect(names).toEqual(["tako-search"]);
+  it("ships the tako-agent and tako-search skills", () => {
+    expect(names).toEqual(["tako-agent", "tako-search"]);
   });
 
   for (const name of names) {
@@ -179,7 +181,26 @@ describe("plugin manifests", () => {
       ),
     ) as { mcpServers?: Record<string, { type?: string; url?: string }> };
     expect(plugin.mcpServers?.tako?.type).toBe("http");
-    expect(plugin.mcpServers?.tako?.url).toBe("https://mcp.tako.com/mcp");
+    expect(resolveToolUrl(plugin.mcpServers?.tako?.url ?? "")).toEqual(
+      EXPECTED_PLUGIN_TOOL_URL,
+    );
+  });
+
+  it("installs the plugin's endpoint in every README block", () => {
+    const plugin = JSON.parse(
+      fs.readFileSync(
+        path.join(REPO_ROOT, ".claude-plugin", "plugin.json"),
+        "utf8",
+      ),
+    ) as { mcpServers?: Record<string, { url?: string }> };
+    const readme = fs.readFileSync(path.join(REPO_ROOT, "README.md"), "utf8");
+    const installUrls = [
+      ...readme.matchAll(/claude mcp add tako-mcp --transport http "([^"]+)"/g),
+    ].map((match) => match[1]);
+    expect(installUrls.length).toBeGreaterThan(0);
+    for (const url of installUrls) {
+      expect(url).toBe(plugin.mcpServers?.tako?.url);
+    }
   });
 
   it("declares the plugin in the marketplace manifest", () => {
