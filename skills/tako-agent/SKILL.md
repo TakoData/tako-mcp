@@ -14,19 +14,19 @@ Start an agent only when the user asks for one: they name Tako's agent, ask for 
 
 ## Choose the agent
 
-- Use `tako_company_agent` when the answer is a list of companies or people: a screen by location, industry, status, founding date, funding, or size; officers, directors, or owners; or companies ranked or filtered by a financial metric, such as "the 10 largest UK software companies by revenue".
-- Use `tako_agent` for a ranking, trend, total, or calculation whose answer isn't a list of companies or people: countries ranked by GDP, a growth rate across several periods, or a figure computed from several metrics.
+- Use `tako_company_agent` to find which companies or people match a set of facts: a screen by location, industry, status, founding date, funding, or size; officers, directors, or owners; or companies filtered by a financial metric, such as "UK software companies with more than £10 million in revenue".
+- Use `tako_agent` for a ranking, trend, total, or calculation, including companies ranked by a metric: "the 10 largest UK software companies by revenue", countries ranked by GDP, a growth rate across several periods, or a figure computed from several metrics.
 
 ## Run an agent
 
 1. Send the user's question in `query`, one question per call. The agent plans its own steps, so don't split the question.
 2. If `status` is `running`, call the same tool again with that `run_id` and no `query`. Don't start a new run for the same question.
-3. If a call fails before it returns a `run_id`, ask the user before you start another run.
+3. If a call fails before it returns a `run_id`, follow its guidance. If the guidance says the run may have started, ask the user before you retry.
 4. For a follow-up in the same conversation, pass the `thread_id` from the earlier run with the new `query`.
 
 ## Effort
 
-`tako_company_agent` takes `effort`. Leave it unset for the default, `medium`. Use `high` only when the user asks for a thorough answer. Don't use `low` when the question filters or ranks by a financial metric such as revenue or headcount, because `low` can't. A thread keeps its effort, so omit `effort` on a follow-up.
+`tako_company_agent` takes `effort`. Leave it unset for the default, `medium`. Use `high` only when the user asks for a thorough answer. Don't use `low` when the question filters by a financial metric such as revenue or headcount, because `low` can't. A thread keeps its effort, so omit `effort` on a follow-up.
 
 ## Report
 

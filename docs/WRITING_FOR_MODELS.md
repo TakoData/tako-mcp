@@ -1,6 +1,6 @@
 # Writing for models
 
-Tako reaches a model through four kinds of text: the bundled skill, the server
+Tako reaches a model through four kinds of text: the bundled skills, the server
 instructions, the tool descriptions, and the tool results. Hand-written copies
 restate them for other hosts and readers. Each has one job.
 Read this before you change any of them, and measure a change to the skill or
@@ -17,7 +17,9 @@ the descriptions before you ship it.
 | Hand-written copies | `docs/gemini/GEMINI.md`, `commands/*.toml`, `llms-full.txt`, `agent.json`, `README.md`, and the test cases in `chatgpt-app-submission.json` | The Gemini context file in every Gemini session; the rest when an agent or a reviewer opens them | Restate the skill and the descriptions. No check compares their advice with the descriptions, so update them in the same change |
 
 The skills reach only hosts that install the plugin: the Claude plugin, the
-Gemini extension, and the ChatGPT plugin package. A host connected to bare
+Gemini extension, and the ChatGPT plugin package. The ChatGPT package ships
+only `tako-search`, because no eval has measured `tako-agent` there yet
+(`chatgpt-plugin/build.sh`). A host connected to bare
 `/mcp` sees only the instructions, the descriptions, and the results, so each
 tool description must still stand on its own.
 
@@ -70,14 +72,18 @@ that served the arm's captured listing:
 
 | Arm | Lookups that start an agent first | Lookups that start with `tako_search` | No-lookup tasks that call Tako |
 |---|---|---|---|
-| Plugin today: four tools, `tako-search` | 0 of 136 | 55 of 136 | 0 of 30 |
+| Plugin before TAKO-5267: four tools, `tako-search` | 0 of 136 | 55 of 136 | 0 of 30 |
 | Six tools, `tako-search` only | 3 of 136 | 64 of 136 | not run |
 | Six tools, `tako-agent` triggered by the shape of the question | 8 of 136 | 52 of 136 | 0 of 30 |
 | Same, without "periods" and "growth rates", and handing one entity's change over time to `tako-search` | 4 of 136 | 56 of 136 | 0 of 30 |
 | Six tools, `tako-agent` triggered by an explicit ask (shipped) | 3 of 136 | 67 of 136 | 1 of 30 |
 
-The gate was at most 1 in 20 lookups. Most of the shape-triggered agent calls
-came on lookups about one entity's change over time. The listing alone starts
+The gate was at most 1 in 20 lookups, and two arms passed it. The revised
+shape-triggered arm passed only after its wording was tuned to the prompts
+that failed, which is the word-list fix this doc warns against. The shipped
+arm triggers on an explicit ask, so it doesn't depend on that wording. Most
+of the shape-triggered agent calls came on lookups about one entity's change
+over time. The listing alone starts
 an agent on some registry and change-over-time lookups, from the agent tool
 descriptions, and no skill wording removes those calls. That run used
 `gpt-6-luna` on Codex 0.164.0. It didn't measure how often a research question

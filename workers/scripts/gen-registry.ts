@@ -479,7 +479,7 @@ const LLMS_FULL_PATH = resolve(REPO_ROOT, "llms-full.txt");
 // right check for an index: every tool has to be named somewhere in it.
 const LLMS_PATH = resolve(REPO_ROOT, "llms.txt");
 // Checked for pin-form drift only (its contents are hand-written prose, and it
-// embeds the bundled skill verbatim).
+// embeds the bundled skills verbatim).
 const README_PATH = resolve(REPO_ROOT, "README.md");
 // The bundled skills are model-facing prose, and NEITHER existing guard could
 // see them: `_pin_form.test.ts` walks tool descriptions, and this function was
