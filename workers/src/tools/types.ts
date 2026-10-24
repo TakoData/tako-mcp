@@ -380,7 +380,7 @@ export interface ToolModule<
    * of plumbing no `/mcp` client reads.
    */
   outputSchemaBySurface?: { chatgpt?: z.ZodType };
-  inputSchemaBySurface?: { chatgpt?: z.ZodObject<z.ZodRawShape> };
+  inputSchemaBySurface?: { chatgpt?: z.ZodType<z.output<InputSchema>> & z.ZodObject<z.ZodRawShape> };
   annotations: ToolAnnotations;
   /**
    * Optional per-surface annotation overrides, merged over

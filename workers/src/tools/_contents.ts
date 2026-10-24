@@ -13,9 +13,12 @@
  * carry the payload; `renderContentsText` is the other half.
  *
  * One payload shape, not three. Unless the caller asks for a link or a card,
- * the tool requests `json_compact` and projects it, so `content_format` is gone from the input and `data` /
- * `records` / `dataset` / `format` are gone from the output. CSV lost the
- * decision on nulls: a sparse comparison card — every "X vs Y" card is one —
+ * the tool requests `json_compact` and projects it, so `content_format` is
+ * gone from the input and `data` / `records` / `dataset` / `format` are gone
+ * from the output. A link delivers CSV, because code reads it with a CSV
+ * parser that keeps a blank field as missing. Inline rows are read by a model,
+ * and there CSV lost the decision on nulls: a sparse comparison card — every
+ * "X vs Y" card is one —
  * serializes as `2026-01-25 00:00:00+00:00,74.9967,` with a trailing bare
  * comma for the missing series, which is the most misparsed construct in the
  * format. Positional JSON writes `null`. Measured cost of the switch, same 6

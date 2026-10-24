@@ -822,7 +822,7 @@ describe("tako_contents delivery and format", () => {
     expect(parsed).not.toHaveProperty("delivery");
     expect(parsed).not.toHaveProperty("format");
     vi.mocked(djangoPost).mockResolvedValue(card());
-    await tool.handler(parsed as Parameters<typeof tool.handler>[0], ctx);
+    await tool.handler(parsed, ctx);
     expect(sentBody(0).mode).toBe("inline");
     expect(sentBody(0).content_format).toBe("json_compact");
   });
@@ -839,8 +839,13 @@ describe("tako_contents links and card structure", () => {
     contents: [{ cost: 0.01, source_url: cardUrl, ...item }],
     request_id: "r",
   });
-  const http422 = () =>
-    new DjangoHttpError({ path: "/api/v1/contents/", method: "POST", status: 422, body: "" });
+  const http422 = (error_type = "UNSUPPORTED_CONTENT_FORMAT") =>
+    new DjangoHttpError({
+      path: "/api/v1/contents/",
+      method: "POST",
+      status: 422,
+      body: JSON.stringify({ error_message: "No card_json for this card.", error_type }),
+    });
 
   it("link mode returns a download with its expiry", async () => {
     vi.mocked(djangoPost).mockResolvedValue(
@@ -875,23 +880,42 @@ describe("tako_contents links and card structure", () => {
     expect(out.results[0]!.card).toEqual(card_data);
   });
 
-  it("card falls back to rows on 422", async () => {
+  it("card falls back to inline rows on an unsupported-format 422", async () => {
     vi.mocked(djangoPost)
       .mockRejectedValueOnce(http422())
       .mockResolvedValueOnce(card());
-    const out = await tool.handler(
-      tool.inputSchema.parse({ urls: [cardUrl], format: "card", delivery: "link" }),
-      ctx,
-    );
+    const out = await tool.handler(tool.inputSchema.parse({ urls: [cardUrl], format: "card" }), ctx);
     const calls = vi.mocked(djangoPost).mock.calls;
     expect(calls).toHaveLength(2);
-    const first = calls[0]![3] as { mode: string; content_format: string };
-    const second = calls[1]![3] as { mode: string; content_format: string };
-    expect(first.content_format).toBe("card_json");
-    expect(second.content_format).toBe("csv");
-    expect(second.mode).toBe(first.mode);
+    expect(calls[0]![3]).toMatchObject({ mode: "inline", content_format: "card_json" });
+    expect(calls[1]![3]).toMatchObject({ mode: "inline", content_format: "json_compact" });
     expect(out.results[0]!.note).toBe(CARD_FALLBACK_NOTE);
-    expect(out.results[0]!.rows).toBeDefined();
+    expect(out.results[0]!.rows?.rows.length).toBeGreaterThan(0);
+  });
+
+  it("a placeholder-card 422 on card format is not retried", async () => {
+    vi.mocked(djangoPost).mockRejectedValue(http422("PLACEHOLDER_CARD"));
+    await expect(
+      tool.handler(tool.inputSchema.parse({ urls: [cardUrl], format: "card" }), ctx),
+    ).rejects.toBeInstanceOf(DjangoHttpError);
+    expect(vi.mocked(djangoPost)).toHaveBeenCalledTimes(1);
+  });
+
+  it("a second 422 on the rows fallback surfaces as the url's error", async () => {
+    vi.mocked(djangoPost).mockImplementation(async (...args: unknown[]) => {
+      const body = args[3] as { url: string; content_format: string };
+      if (body.url === cardUrl || body.content_format === "card_json") throw http422();
+      return card();
+    });
+    const out = await tool.handler(
+      tool.inputSchema.parse({ urls: [cardUrl, "https://tako.com/card/def"], format: "card" }),
+      ctx,
+    );
+    const failed = out.results.find((r) => r.url === cardUrl)!;
+    expect(failed.error).toContain("422");
+    expect(failed.cost).toBe(0);
+    expect(out.results.find((r) => r.url !== cardUrl)!.note).toBe(CARD_FALLBACK_NOTE);
+    expect(vi.mocked(djangoPost)).toHaveBeenCalledTimes(4);
   });
 
   it("card with link delivery falls back to a CSV download on 422", async () => {

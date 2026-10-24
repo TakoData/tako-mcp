@@ -178,7 +178,7 @@
         },
         "delivery": {
           "type": "string",
-          "description": "Tako cards only. `inline` returns the data in the result. `link` returns a download link: a CSV file, or a JSON file with `format: \"card\"`. It expires in 5 minutes. Use `link` when you can run shell commands and want to analyze the data in code. If the download fails, call again without `delivery`. Web pages ignore it.",
+          "description": "Tako cards only. `inline` returns the data in the result. `link` returns a download link: a CSV file, or a JSON file with `format: \"card\"`. It expires in 5 minutes. Use `link` when you can run shell commands and want to analyze the data in code. If the download fails, call again inline with `max_rows` at 2,000 or less.",
           "enum": [
             "inline",
             "link"

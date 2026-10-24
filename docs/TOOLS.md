@@ -1221,13 +1221,13 @@ Parameters:
 | `max_rows` | integer | no |  | Tako cards only: how many rows to return. Omit it to get up to 2,000 rows. With `delivery: "link"`, you can raise it to 100,000. Charges scale with rows returned, so lower it when the recent rows are enough. |
 | `max_chars` | integer | no |  | Web pages only: character cap on the extracted text. Inline fetches default to 100,000 per url, less across a batch. Raise it for a long document; `truncated` reports a cut. With `query`, it caps the passages instead: 100 to 20,000, and 4,000 by default. |
 | `query` | string | no |  | Web pages only: a question the passages should answer. The result holds those passages instead of the page. Omit it to get the whole page. |
-| `delivery` | string ("inline" \\| "link") | no |  | Tako cards only. `inline` returns the data in the result. `link` returns a download link: a CSV file, or a JSON file with `format: "card"`. It expires in 5 minutes. Use `link` when you can run shell commands and want to analyze the data in code. If the download fails, call again without `delivery`. Web pages ignore it. |
+| `delivery` | string ("inline" \\| "link") | no |  | Tako cards only. `inline` returns the data in the result. `link` returns a download link: a CSV file, or a JSON file with `format: "card"`. It expires in 5 minutes. Use `link` when you can run shell commands and want to analyze the data in code. If the download fails, call again inline with `max_rows` at 2,000 or less. |
 | `format` | string ("rows" \\| "card") | no |  | Tako cards only. `rows` returns the card's data as one table. `card` returns the card's own structure, such as a company card's tabs or a game's box score. A card type without its own structure returns `rows`. Web pages ignore it. |
 
 Fixed request inputs (the caller cannot change these):
 
 - `mode (when delivery is omitted)` = `"inline"` — The data comes back in the response. On /mcp, set `delivery: "link"` to get a download link for a Tako card.
-- `content_format (when format is omitted)` = `"json_compact"` — One row serialization, projected to `rows`. CSV writes a missing cell as an empty field; positional JSON writes null.
+- `content_format (when delivery and format are omitted)` = `"json_compact"` — One row serialization, projected to `rows`. CSV writes a missing cell as an empty field; positional JSON writes null.
 - `max_chars (when omitted)` = `min(100000, 250000 / batch size)` — Per-url character cap for web text. With `query`, the passages use the API's highlights budget instead: 4,000 characters.
 - `query` = `(sent as highlights.query)` — Web urls only. The tool drops a `query` with no letter or digit and sends no `highlights` for a Tako url. If the API can't return passages, the tool returns the whole page.
 
@@ -1271,7 +1271,7 @@ Annotations:
       "minLength": 1
     },
     "delivery": {
-      "description": "Tako cards only. `inline` returns the data in the result. `link` returns a download link: a CSV file, or a JSON file with `format: \"card\"`. It expires in 5 minutes. Use `link` when you can run shell commands and want to analyze the data in code. If the download fails, call again without `delivery`. Web pages ignore it.",
+      "description": "Tako cards only. `inline` returns the data in the result. `link` returns a download link: a CSV file, or a JSON file with `format: \"card\"`. It expires in 5 minutes. Use `link` when you can run shell commands and want to analyze the data in code. If the download fails, call again inline with `max_rows` at 2,000 or less.",
       "type": "string",
       "enum": [
         "inline",

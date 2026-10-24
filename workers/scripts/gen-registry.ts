@@ -614,13 +614,6 @@ export function diffRegistryParameters(
 // char of description+params is paid on every request on every host.
 // ---------------------------------------------------------------------------
 
-function declaresExtraTopLevelFields(schema: z.ZodType, baseline: z.ZodType): boolean {
-  const keysOf = (candidate: z.ZodType) =>
-    Object.keys((publishedOutputJsonSchema(candidate) as { properties?: Record<string, unknown> }).properties ?? {});
-  const baselineKeys = new Set(keysOf(baseline));
-  return keysOf(schema).some((key) => !baselineKeys.has(key));
-}
-
 export const DESCRIPTION_MAX_CHARS = 1_000;
 export const DESCRIPTION_MAX_LINES = 6;
 // 320, raised from 200 on the pilot's review round. The per-param cap is a
@@ -720,7 +713,9 @@ export function assertProseBudget(
   // Narrowed to the fields this reads, like every sibling assert helper: the
   // gate is testable with a plain literal instead of a cast of a whole
   // ToolModule, and the signature states what it actually inspects.
-  modules: ReadonlyArray<Pick<ToolModule, "name" | "description" | "outputSchema" | "outputSchemaBySurface">>,
+  modules: ReadonlyArray<
+    Pick<ToolModule, "name" | "description" | "outputSchema" | "outputSchemaBySurface" | "inputSchemaBySurface">
+  >,
   registryTools: ReadonlyArray<{
     name: string;
     parameters: Record<string, { description?: string }>;
@@ -749,6 +744,21 @@ export function assertProseBudget(
     }
     if (entry > TOOL_ENTRY_MAX_CHARS)
       failures.push(`${m.name}: tool entry is ${entry} chars (cap ${TOOL_ENTRY_MAX_CHARS}).`);
+    const chatgptInput = m.inputSchemaBySurface?.chatgpt;
+    if (chatgptInput !== undefined) {
+      const chatgptParamLens = Object.entries(flattenParameters(z.toJSONSchema(chatgptInput))).map(
+        ([name, spec]) => [name, (spec.description ?? "").length] as const,
+      );
+      for (const [name, len] of chatgptParamLens) {
+        if (len > PARAM_MAX_CHARS)
+          failures.push(
+            `${m.name}.${name}: chatgpt parameter description is ${len} chars (cap ${PARAM_MAX_CHARS}).`,
+          );
+      }
+      const chatgptEntry = m.description.length + chatgptParamLens.reduce((a, [, len]) => a + len, 0);
+      if (chatgptEntry > TOOL_ENTRY_MAX_CHARS)
+        failures.push(`${m.name}: chatgpt tool entry is ${chatgptEntry} chars (cap ${TOOL_ENTRY_MAX_CHARS}).`);
+    }
     // Per SURFACE, not once per tool: `tako_search` publishes a wider schema on
     // chatgpt (the six widget fields), and the cap is about what one host
     // receives. Sits below the legacy `continue`, so a ratcheted tool is exempt
@@ -1100,6 +1110,13 @@ function mdCell(text: string): string {
 
 function renderAnnotations(a: ToolAnnotations): string {
   return `title: ${a.title}; readOnlyHint: ${a.readOnlyHint}; destructiveHint: ${a.destructiveHint}; idempotentHint: ${a.idempotentHint}; openWorldHint: ${a.openWorldHint}`;
+}
+
+function declaresExtraTopLevelFields(schema: z.ZodType, baseline: z.ZodType): boolean {
+  const keysOf = (candidate: z.ZodType) =>
+    Object.keys((publishedOutputJsonSchema(candidate) as { properties?: Record<string, unknown> }).properties ?? {});
+  const baselineKeys = new Set(keysOf(baseline));
+  return keysOf(schema).some((key) => !baselineKeys.has(key));
 }
 
 export function buildToolsDoc(input: ToolsDocInput): string {

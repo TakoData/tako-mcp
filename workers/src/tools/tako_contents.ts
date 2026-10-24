@@ -42,7 +42,7 @@ import {
   djangoPost,
   extractErrorDetail,
 } from "../django.js";
-import { ContentsHighlights, ContentsRequest, ContentsResponse } from "../generated/schemas.js";
+import { BaseAPIError, ContentsHighlights, ContentsRequest, ContentsResponse } from "../generated/schemas.js";
 import {
   CARD_FALLBACK_NOTE,
   chatgptContentsOutputShape,
@@ -61,8 +61,7 @@ import type { ToolContext, ToolModule } from "./types.js";
 
 /** Max urls per call. The backend takes one url per request, so a batch fans
  *  out to N subrequests; this bounds both the Workers subrequest budget and
- *  the bill a single call can run up: at most 10 urls of up to 100,000 rows
- *  each in link mode. */
+ *  the bill a single call can run up. */
 export const MAX_CONTENTS_URLS = 10;
 
 export const MAX_CONTENTS_ROWS = 2000;
@@ -260,7 +259,7 @@ const inputSchema = chatgptInputSchema
       .enum(["inline", "link"])
       .optional()
       .describe(
-        'Tako cards only. `inline` returns the data in the result. `link` returns a download link: a CSV file, or a JSON file with `format: "card"`. It expires in 5 minutes. Use `link` when you can run shell commands and want to analyze the data in code. If the download fails, call again without `delivery`. Web pages ignore it.',
+        'Tako cards only. `inline` returns the data in the result. `link` returns a download link: a CSV file, or a JSON file with `format: "card"`. It expires in 5 minutes. Use `link` when you can run shell commands and want to analyze the data in code. If the download fails, call again inline with `max_rows` at 2,000 or less.',
       ),
     format: z
       .enum(["rows", "card"])
@@ -427,10 +426,21 @@ async function fetchCard(
   try {
     return projectContentsItem(await postContents(body, ctx), url, {});
   } catch (err) {
-    if (!(err instanceof DjangoHttpError) || err.status !== 422) throw err;
+    if (!isUnsupportedContentFormat(err)) throw err;
+    console.warn("[tako] tako_contents card fallback tool=tako_contents status=422");
   }
   const rowsBody = { ...body, ...wireFormatFor(url, { ...input, format: "rows" }) };
   return projectContentsItem(await postContents(rowsBody, ctx), url, { cardNote: CARD_FALLBACK_NOTE });
+}
+
+function isUnsupportedContentFormat(err: unknown): boolean {
+  if (!(err instanceof DjangoHttpError) || err.status !== 422) return false;
+  try {
+    const parsed = BaseAPIError.safeParse(JSON.parse(err.body));
+    return parsed.success && parsed.data.error_type === "UNSUPPORTED_CONTENT_FORMAT";
+  } catch {
+    return false;
+  }
 }
 
 async function fetchPage(
@@ -566,7 +576,7 @@ const takoContents = {
       note: 'The data comes back in the response. On /mcp, set `delivery: "link"` to get a download link for a Tako card.',
     },
     {
-      field: "content_format (when format is omitted)",
+      field: "content_format (when delivery and format are omitted)",
       value: '"json_compact"',
       note: "One row serialization, projected to `rows`. CSV writes a missing cell as an empty field; positional JSON writes null.",
     },

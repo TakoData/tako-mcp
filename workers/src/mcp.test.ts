@@ -2049,16 +2049,10 @@ describe("published inputSchema per surface", () => {
   }
 
   it("tools/list publishes the chatgpt input override on /mcp/chatgpt only", async () => {
-    const contents = TOOL_REGISTRY.find((tool) => tool.name === "tako_contents")!;
-    const original = contents.inputSchemaBySurface;
-    contents.inputSchemaBySurface = { chatgpt: z.object({ query: z.string().optional() }) };
-    try {
-      expect(await contentsInputProperties("generic")).toContain("max_rows");
-      expect(await contentsInputProperties("chatgpt")).not.toContain("max_rows");
-    } finally {
-      if (original === undefined) delete contents.inputSchemaBySurface;
-      else contents.inputSchemaBySurface = original;
-    }
+    expect(await contentsInputProperties("generic")).toEqual(
+      expect.arrayContaining(["urls", "max_rows", "max_chars", "query", "delivery", "format"]),
+    );
+    expect(await contentsInputProperties("chatgpt")).toEqual(["urls", "max_rows", "max_chars", "query"]);
   });
 });
 
