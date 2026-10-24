@@ -29,8 +29,11 @@ because the same call already searched the web for it.
 | Full rows, or a web page's text | `tako_contents` | A card's data rows, or any url's extracted text (set `query` to a question to get only the passages that answer it). Needs a signed-in connection |
 | Tako's agent to find which companies or people match a set of facts, even one filtered by a financial metric | `tako_company_agent` | A cited answer, plus list cards |
 | Tako's agent to research a ranking, trend, total, or calculation, including companies ranked by a metric | `tako_agent` | A cited answer, plus chart cards |
+| A chart of data the user already has | `tako_visualize` | A public, permanent card that anyone with its url can open |
 
 Start an agent only when the user asks for Tako's agent or for deep, multi-step research with Tako. Otherwise, use `tako_search`. Both agents plan their own steps. While a run's `status` is `running`, call the same tool again with its `run_id` and no `query`.
+
+`tako_visualize` publishes what you send. Before you call it, confirm that the user wants a public card, and leave sensitive data out of it.
 
 To analyze rows in code, set `delivery: "link"` on `tako_contents`, download the file in your shell, and read only the result; the link expires 5 minutes after the call.
 

@@ -6,6 +6,7 @@ export const PLUGIN_TOOL_NAMES: readonly string[] = [
   ...GENERIC_DEFAULT_TOOL_NAMES,
   "tako_agent",
   "tako_company_agent",
+  "tako_visualize",
 ].sort();
 
 const REGISTRY_TOOL_NAMES: ReadonlySet<string> = new Set(

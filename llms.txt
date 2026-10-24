@@ -6,7 +6,7 @@
 
 Connect an MCP client to `https://mcp.tako.com/mcp` (Streamable HTTP). No token is needed: paste the URL and sign in when the client prompts — a per-host key is minted automatically, and a new account gets up to 2,000 free requests. One command per major client:
 
-- Claude Code (plugin, includes the tako-search and tako-agent skills and both agent tools, `tako_agent` and `tako_company_agent`): `claude plugin marketplace add TakoData/tako-mcp && claude plugin install tako@tako`
+- Claude Code (plugin, includes the tako-search and tako-agent skills, both agent tools, `tako_agent` and `tako_company_agent`, and `tako_visualize`): `claude plugin marketplace add TakoData/tako-mcp && claude plugin install tako@tako`
 - Claude Code (plain): `claude mcp add tako --transport http https://mcp.tako.com/mcp` (then `/mcp` → tako → Authenticate)
 - Gemini CLI: `gemini extensions install https://github.com/TakoData/tako-mcp` (then `/mcp auth tako`)
 - Cursor / Windsurf / VS Code / OpenCode: add `{"type": "http", "url": "https://mcp.tako.com/mcp"}` to the client's MCP config and sign in when prompted
