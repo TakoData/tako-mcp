@@ -10,13 +10,12 @@
  * `_render_markdown.ts`; the note there records what the old
  * payload-in-structured-only split cost on the hosts that read `content`.
  *
- * Delivery and serialization are no longer the caller's decision. `mode` and
- * `content_format` are gone from the input surface: every call is `inline`
- * (the MCP-ergonomics divergence from the backend's `url` default — an agent
- * wants to read the data, and a 5-minute presigned S3 link is 1,560 chars a
- * model cannot use) and every card comes back as `json_compact`, projected to
- * one `rows` shape. That is why `data`, `records`, `dataset` and `format` are
- * gone from the output too.
+ * `mode` and `content_format` are gone from the input surface. A call that
+ * omits `delivery` and `format`, which is every `/mcp/chatgpt` call, is
+ * `inline` (the MCP-ergonomics divergence from the backend's `url` default —
+ * a ChatGPT model can't use a 5-minute presigned S3 link) and every card comes
+ * back as `json_compact`, projected to one `rows` shape. That is why `data`,
+ * `records`, `dataset` and `format` are gone from the output too.
  *
  * A Tako card export returns the WHOLE card by default, up to
  * `MAX_CONTENTS_ROWS` (2,000); `max_rows` caps it lower. Every row delivered bills per
@@ -43,8 +42,10 @@ import {
   djangoPost,
   extractErrorDetail,
 } from "../django.js";
-import { ContentsHighlights, ContentsRequest, ContentsResponse } from "../generated/schemas.js";
+import { BaseAPIError, ContentsHighlights, ContentsRequest, ContentsResponse } from "../generated/schemas.js";
 import {
+  CARD_FALLBACK_NOTE,
+  chatgptContentsOutputShape,
   contentsOutputShape,
   contentsUsage,
   projectContentsItem,
@@ -64,6 +65,8 @@ import type { ToolContext, ToolModule } from "./types.js";
 export const MAX_CONTENTS_URLS = 10;
 
 export const MAX_CONTENTS_ROWS = 2000;
+
+export const MAX_LINK_ROWS = 100_000;
 
 /**
  * Per-call ceiling on TOTAL default (caller did not set `max_chars`) web-text
@@ -180,7 +183,7 @@ const DESCRIPTION = [
   "Best for: reading one source in full — a page you need to quote, or the rows behind a card you need to compute over.",
 ].join("\n");
 
-const inputSchema = z.object({
+export const chatgptInputSchema = z.object({
   // looseArray: a host that sends one url as a bare string, or the array as
   // JSON text, gets it coerced instead of a -32602. Deliberately NOT
   // `commaSeparated`: the item schema has no url format check, so splitting
@@ -250,7 +253,48 @@ const inputSchema = z.object({
     ),
 });
 
+const inputSchema = chatgptInputSchema
+  .extend({
+    delivery: z
+      .enum(["inline", "link"])
+      .optional()
+      .describe(
+        'Tako cards only. `inline` returns the data in the result. `link` returns a download link: a CSV file, or a JSON file with `format: "card"`. It expires in 5 minutes. Use `link` when you can run shell commands and want to analyze the data in code. If the download fails, call again inline with `max_rows` at 2,000 or less.',
+      ),
+    format: z
+      .enum(["rows", "card"])
+      .optional()
+      .describe(
+        "Tako cards only. `rows` returns the card's data as one table. `card` returns the card's own structure, such as a company card's tabs or a game's box score. A card type without its own structure returns `rows`. Web pages ignore it.",
+      ),
+    max_rows: z
+      .number()
+      .int()
+      .gte(1)
+      .lte(MAX_LINK_ROWS)
+      .optional()
+      .describe(
+        'Tako cards only: how many rows to return. Omit it to get up to 2,000 rows. With `delivery: "link"`, you can raise it to 100,000. Charges scale with rows returned, so lower it when the recent rows are enough.',
+      ),
+  })
+  .superRefine((input, refinement) => {
+    if (input.max_rows !== undefined && input.max_rows > MAX_CONTENTS_ROWS && input.delivery !== "link") {
+      refinement.addIssue({
+        code: "custom",
+        path: ["max_rows"],
+        message: 'max_rows above 2,000 needs `delivery: "link"`. An inline result stops at 2,000 rows.',
+      });
+    }
+  });
+
 type Input = z.infer<typeof inputSchema>;
+
+function wireFormatFor(url: string, input: Input) {
+  if (!isTakoHostUrl(url)) return { mode: "inline" as const, content_format: "json_compact" as const };
+  const mode = input.delivery === "link" ? ("url" as const) : ("inline" as const);
+  if (input.format === "card") return { mode, content_format: "card_json" as const };
+  return { mode, content_format: mode === "url" ? ("csv" as const) : ("json_compact" as const) };
+}
 
 /** One url's failure, as text the model can act on. Prefers the
  *  self-correcting `modelGuidance` any DjangoError path attaches (403/404
@@ -310,8 +354,9 @@ export class ContentsFetchError extends Error {}
  *
  * `query` never goes on the wire as itself; a web url carries it as
  * `highlights.query`, and a Tako url carries no `highlights`, because the
- * backend rejects them on a card. `mode` and `content_format` always go,
- * because the backend defaults to "url" and "csv" and this tool serves neither.
+ * backend rejects them on a card. `mode` and `content_format` always go.
+ * Without `delivery` and `format`, which is every `/mcp/chatgpt` call, they are
+ * "inline" and "json_compact", not the backend's "url" and "csv" defaults.
  *
  * The effective character cap: a plain fetch with no caller cap defaults to
  * 100k, split across the batch. An EXPLICIT `max_chars` is left untouched at
@@ -328,12 +373,10 @@ export function buildContentsBody(
   // satisfies T` type-checks a key the target no longer declares — which is
   // the drift that matters here: a backend that renames `mode` or
   // `content_format` would keep receiving the dead key and silently serve its
-  // own "url" / "csv" defaults, and the whole one-delivery-one-serialization
-  // design rides on those two.
+  // own "url" / "csv" defaults.
   const body = {
     url,
-    mode: "inline" as const,
-    content_format: "json_compact" as const,
+    ...wireFormatFor(url, input),
     max_chars: input.max_chars ?? defaultMaxChars(batchSize),
     max_rows: input.max_rows ?? MAX_CONTENTS_ROWS,
     ...(highlights !== undefined ? { highlights } : {}),
@@ -357,6 +400,7 @@ async function fetchOne(
   batchSize: number,
 ): Promise<ProjectedContentsItem> {
   const body = buildContentsBody(url, input, batchSize);
+  if (body.content_format === "card_json") return fetchCard(url, input, body, ctx);
   if (body.highlights === undefined) {
     const queryDropped = input.query !== undefined && isTakoHostUrl(url);
     return fetchPage(url, body, input, ctx, batchSize, queryDropped ? TAKO_URL_QUERY_NOTE : undefined);
@@ -371,6 +415,32 @@ async function fetchOne(
   }
   const { highlights: _unavailable, ...pageBody } = body;
   return fetchPage(url, pageBody, input, ctx, batchSize, wholePageNote);
+}
+
+async function fetchCard(
+  url: string,
+  input: Input,
+  body: z.input<typeof ContentsRequest> & { max_chars: number },
+  ctx: ToolContext,
+): Promise<ProjectedContentsItem> {
+  try {
+    return projectContentsItem(await postContents(body, ctx), url, {});
+  } catch (err) {
+    if (!isUnsupportedContentFormat(err)) throw err;
+    console.warn("[tako] tako_contents card fallback tool=tako_contents status=422");
+  }
+  const rowsBody = { ...body, ...wireFormatFor(url, { ...input, format: "rows" }) };
+  return projectContentsItem(await postContents(rowsBody, ctx), url, { cardNote: CARD_FALLBACK_NOTE });
+}
+
+function isUnsupportedContentFormat(err: unknown): boolean {
+  if (!(err instanceof DjangoHttpError) || err.status !== 422) return false;
+  try {
+    const parsed = BaseAPIError.safeParse(JSON.parse(err.body));
+    return parsed.success && parsed.data.error_type === "UNSUPPORTED_CONTENT_FORMAT";
+  } catch {
+    return false;
+  }
 }
 
 async function fetchPage(
@@ -479,12 +549,14 @@ const takoContents = {
   name: "tako_contents",
   description: DESCRIPTION,
   inputSchema,
+  inputSchemaBySurface: { chatgpt: chatgptInputSchema },
   // The ADVERTISED output IS the projected shape (`_contents.ts`), typed field
   // by field: the handler builds every key, so nothing needs a loose stub and
   // no undeclared wire key can reach a strict client. The wire guard stays the
-  // generated `ContentsResponse` safeParse above. No per-surface variant — no
-  // widget reads this tool's output on any surface.
+  // generated `ContentsResponse` safeParse above. `/mcp/chatgpt` advertises
+  // `chatgptContentsOutputShape`, which has no `download` or `card`.
   outputSchema: contentsOutputShape,
+  outputSchemaBySurface: { chatgpt: chatgptContentsOutputShape },
   annotations: {
     title: "Tako: Fetch Contents",
     readOnlyHint: true,
@@ -499,12 +571,12 @@ const takoContents = {
   },
   fixedInputs: [
     {
-      field: "mode",
+      field: "mode (when delivery is omitted)",
       value: '"inline"',
-      note: "The content comes back in the response to read. The API default is a presigned download link, which a model cannot use.",
+      note: 'The data comes back in the response. On /mcp, set `delivery: "link"` to get a download link for a Tako card.',
     },
     {
-      field: "content_format",
+      field: "content_format (when delivery and format are omitted)",
       value: '"json_compact"',
       note: "One row serialization, projected to `rows`. CSV writes a missing cell as an empty field; positional JSON writes null.",
     },

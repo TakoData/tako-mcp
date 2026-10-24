@@ -2025,6 +2025,37 @@ describe("published outputSchema per surface", () => {
   });
 });
 
+describe("published inputSchema per surface", () => {
+  async function contentsInputProperties(surface: Surface): Promise<string[]> {
+    const server = createMcpServer(
+      { token: "sk-test", env: { DJANGO_BASE_URL: "https://staging.trytako.com" }, sendProgress: noopSendProgress, surface },
+      { surface },
+    );
+    const mcpClient = new Client(
+      { name: "surface-input-schema-test", version: "0.0.0" },
+      { jsonSchemaValidator: new CfWorkerJsonSchemaValidator() },
+    );
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    await mcpClient.connect(clientTransport);
+    try {
+      const listed = await mcpClient.listTools();
+      const contents = listed.tools.find((t) => t.name === "tako_contents");
+      return Object.keys((contents?.inputSchema as { properties?: Record<string, unknown> }).properties ?? {});
+    } finally {
+      await mcpClient.close();
+      await server.close();
+    }
+  }
+
+  it("tools/list publishes the chatgpt input override on /mcp/chatgpt only", async () => {
+    expect(await contentsInputProperties("generic")).toEqual(
+      expect.arrayContaining(["urls", "max_rows", "max_chars", "query", "delivery", "format"]),
+    );
+    expect(await contentsInputProperties("chatgpt")).toEqual(["urls", "max_rows", "max_chars", "query"]);
+  });
+});
+
 describe("caller stamp reaches Django on a tool call", () => {
   afterEach(() => {
     vi.unstubAllGlobals();

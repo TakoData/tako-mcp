@@ -790,6 +790,23 @@ describe("assertProseBudget", () => {
     ).toThrow(/tako_new: chatgpt outputSchema is \d+ chars/);
   });
 
+  it("checks the chatgpt input override's parameter descriptions too", () => {
+    const long = "x".repeat(PARAM_MAX_CHARS + 1);
+    expect(() =>
+      assertProseBudget(
+        [
+          {
+            name: "tako_new",
+            description: OK,
+            inputSchemaBySurface: { chatgpt: z.object({ query: z.string().describe(long) }) },
+          },
+        ],
+        params({ query: "The query." }),
+        "Short.",
+      ),
+    ).toThrow(/tako_new\.query: chatgpt parameter description is \d+ chars/);
+  });
+
   it("a tool with no outputSchema is not gated", () => {
     expect(() =>
       assertProseBudget([{ name: "tako_new", description: OK }], params({}), "Short."),

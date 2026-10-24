@@ -39,7 +39,7 @@ import {
 } from "../src/tools/_surface.js";
 import { TOOL_NAME_PREFIX } from "../src/tools/_tools_param.js";
 import { pickDeclared } from "../src/tools/_pick_declared.js";
-import { outputSchemaForSurface, publishedOutputJsonSchema } from "../src/tools/_surface.js";
+import { inputSchemaForSurface, outputSchemaForSurface, publishedOutputJsonSchema } from "../src/tools/_surface.js";
 import {
   buildSearchOutput,
   takoCardSchema,
@@ -713,7 +713,9 @@ export function assertProseBudget(
   // Narrowed to the fields this reads, like every sibling assert helper: the
   // gate is testable with a plain literal instead of a cast of a whole
   // ToolModule, and the signature states what it actually inspects.
-  modules: ReadonlyArray<Pick<ToolModule, "name" | "description" | "outputSchema" | "outputSchemaBySurface">>,
+  modules: ReadonlyArray<
+    Pick<ToolModule, "name" | "description" | "outputSchema" | "outputSchemaBySurface" | "inputSchemaBySurface">
+  >,
   registryTools: ReadonlyArray<{
     name: string;
     parameters: Record<string, { description?: string }>;
@@ -742,6 +744,21 @@ export function assertProseBudget(
     }
     if (entry > TOOL_ENTRY_MAX_CHARS)
       failures.push(`${m.name}: tool entry is ${entry} chars (cap ${TOOL_ENTRY_MAX_CHARS}).`);
+    const chatgptInput = m.inputSchemaBySurface?.chatgpt;
+    if (chatgptInput !== undefined) {
+      const chatgptParamLens = Object.entries(flattenParameters(z.toJSONSchema(chatgptInput))).map(
+        ([name, spec]) => [name, (spec.description ?? "").length] as const,
+      );
+      for (const [name, len] of chatgptParamLens) {
+        if (len > PARAM_MAX_CHARS)
+          failures.push(
+            `${m.name}.${name}: chatgpt parameter description is ${len} chars (cap ${PARAM_MAX_CHARS}).`,
+          );
+      }
+      const chatgptEntry = m.description.length + chatgptParamLens.reduce((a, [, len]) => a + len, 0);
+      if (chatgptEntry > TOOL_ENTRY_MAX_CHARS)
+        failures.push(`${m.name}: chatgpt tool entry is ${chatgptEntry} chars (cap ${TOOL_ENTRY_MAX_CHARS}).`);
+    }
     // Per SURFACE, not once per tool: `tako_search` publishes a wider schema on
     // chatgpt (the six widget fields), and the cap is about what one host
     // receives. Sits below the legacy `continue`, so a ratcheted tool is exempt
@@ -1095,6 +1112,13 @@ function renderAnnotations(a: ToolAnnotations): string {
   return `title: ${a.title}; readOnlyHint: ${a.readOnlyHint}; destructiveHint: ${a.destructiveHint}; idempotentHint: ${a.idempotentHint}; openWorldHint: ${a.openWorldHint}`;
 }
 
+function declaresExtraTopLevelFields(schema: z.ZodType, baseline: z.ZodType): boolean {
+  const keysOf = (candidate: z.ZodType) =>
+    Object.keys((publishedOutputJsonSchema(candidate) as { properties?: Record<string, unknown> }).properties ?? {});
+  const baselineKeys = new Set(keysOf(baseline));
+  return keysOf(schema).some((key) => !baselineKeys.has(key));
+}
+
 export function buildToolsDoc(input: ToolsDocInput): string {
   const byName = new Map(input.registryTools.map((t) => [t.name, t]));
   const modules = [...input.modules].sort((a, b) => a.name.localeCompare(b.name));
@@ -1197,6 +1221,20 @@ export function buildToolsDoc(input: ToolsDocInput): string {
     }
     out.push("", "<details><summary>wire — Published input schema (JSON Schema)</summary>", "", "```json",
       JSON.stringify(z.toJSONSchema(m.inputSchema, { io: "input" }), null, 2), "```", "</details>", "");
+    const chatgptInputSchema = inputSchemaForSurface(m, "chatgpt");
+    if (chatgptInputSchema !== m.inputSchema) {
+      out.push(
+        "<details><summary>wire — Published input schema on `/mcp/chatgpt` (JSON Schema)</summary>",
+        "",
+        "`/mcp/chatgpt` publishes a different input schema from `/mcp`.",
+        "",
+        "```json",
+        JSON.stringify(z.toJSONSchema(chatgptInputSchema, { io: "input" }), null, 2),
+        "```",
+        "</details>",
+        "",
+      );
+    }
 
     // Result channels — the other half of what the model reads. The schema is
     // rendered exactly as tools/list advertises it (per surface when the two
@@ -1216,7 +1254,9 @@ export function buildToolsDoc(input: ToolsDocInput): string {
         out.push(
           "<details><summary>wire — Published output schema on `/mcp/chatgpt` (JSON Schema)</summary>",
           "",
-          "The chart-widget fields are declared only here; the widget reads them from `window.openai.toolOutput`, and `pickDeclared` strips them from `/mcp` responses by construction.",
+          declaresExtraTopLevelFields(chatgptSchema, genericSchema)
+            ? "The chart-widget fields are declared only here; the widget reads them from `window.openai.toolOutput`, and `pickDeclared` strips them from `/mcp` responses by construction."
+            : "`/mcp/chatgpt` publishes a different output schema from `/mcp`.",
           "",
           "```json",
           JSON.stringify(publishedOutputJsonSchema(chatgptSchema), null, 2),
@@ -1472,7 +1512,10 @@ const SNAPSHOT_NOTE =
 /** The snapshot for the tools on the fixed chatgpt surface, serialized. */
 export function buildChatgptSnapshot(
   tools: ReadonlyArray<
-    Pick<ToolModule, "name" | "description" | "inputSchema" | "outputSchema" | "outputSchemaBySurface">
+    Pick<
+      ToolModule,
+      "name" | "description" | "inputSchema" | "inputSchemaBySurface" | "outputSchema" | "outputSchemaBySurface"
+    >
   >,
 ): string {
   const snapshot: ChatgptSnapshot = { note: SNAPSHOT_NOTE, tools: {} };
@@ -1493,7 +1536,7 @@ export function buildChatgptSnapshot(
       // report "input_schema changed since the accepted snapshot" for text
       // nobody edited. Sorting makes the digest
       // depend on the schema's content, which is what OpenAI reviewed.
-      input_schema_sha256: sha256(stableStringify(z.toJSONSchema(tool.inputSchema, { io: "input" }))),
+      input_schema_sha256: sha256(stableStringify(z.toJSONSchema(inputSchemaForSurface(tool, "chatgpt"), { io: "input" }))),
       ...(outputSchema !== undefined
         ? { output_schema_sha256: sha256(stableStringify(publishedOutputJsonSchema(outputSchema))) }
         : {}),
@@ -1510,7 +1553,10 @@ export function buildChatgptSnapshot(
  */
 export function assertChatgptSnapshot(
   tools: ReadonlyArray<
-    Pick<ToolModule, "name" | "description" | "inputSchema" | "outputSchema" | "outputSchemaBySurface">
+    Pick<
+      ToolModule,
+      "name" | "description" | "inputSchema" | "inputSchemaBySurface" | "outputSchema" | "outputSchemaBySurface"
+    >
   >,
   snapshotJson: string,
 ): void {

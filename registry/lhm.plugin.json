@@ -90,10 +90,10 @@
             "description": "The urls to fetch: a Tako card url or a web result url. One call for 8 urls saves 7 round trips."
           },
           "max_rows": {
-            "description": "Tako cards only: how many rows to return. Omit it for the whole card, up to 2,000 rows. Charges scale with rows returned, so lower it when the recent rows are enough.",
+            "description": "Tako cards only: how many rows to return. Omit it to get up to 2,000 rows. With `delivery: \"link\"`, you can raise it to 100,000. Charges scale with rows returned, so lower it when the recent rows are enough.",
             "type": "integer",
             "minimum": 1,
-            "maximum": 2000
+            "maximum": 100000
           },
           "max_chars": {
             "description": "Web pages only: character cap on the extracted text. Inline fetches default to 100,000 per url, less across a batch. Raise it for a long document; `truncated` reports a cut. With `query`, it caps the passages instead: 100 to 20,000, and 4,000 by default.",
@@ -105,6 +105,22 @@
             "description": "Web pages only: a question the passages should answer. The result holds those passages instead of the page. Omit it to get the whole page.",
             "type": "string",
             "minLength": 1
+          },
+          "delivery": {
+            "description": "Tako cards only. `inline` returns the data in the result. `link` returns a download link: a CSV file, or a JSON file with `format: \"card\"`. It expires in 5 minutes. Use `link` when you can run shell commands and want to analyze the data in code. If the download fails, call again inline with `max_rows` at 2,000 or less.",
+            "type": "string",
+            "enum": [
+              "inline",
+              "link"
+            ]
+          },
+          "format": {
+            "description": "Tako cards only. `rows` returns the card's data as one table. `card` returns the card's own structure, such as a company card's tabs or a game's box score. A card type without its own structure returns `rows`. Web pages ignore it.",
+            "type": "string",
+            "enum": [
+              "rows",
+              "card"
+            ]
           }
         },
         "required": [

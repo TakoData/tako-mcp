@@ -1218,14 +1218,16 @@ Parameters:
 | Name | Type | Required | Default | Description |
 |---|---|---|---|---|
 | `urls` | array | yes |  | The urls to fetch: a Tako card url or a web result url. One call for 8 urls saves 7 round trips. |
-| `max_rows` | integer | no |  | Tako cards only: how many rows to return. Omit it for the whole card, up to 2,000 rows. Charges scale with rows returned, so lower it when the recent rows are enough. |
+| `max_rows` | integer | no |  | Tako cards only: how many rows to return. Omit it to get up to 2,000 rows. With `delivery: "link"`, you can raise it to 100,000. Charges scale with rows returned, so lower it when the recent rows are enough. |
 | `max_chars` | integer | no |  | Web pages only: character cap on the extracted text. Inline fetches default to 100,000 per url, less across a batch. Raise it for a long document; `truncated` reports a cut. With `query`, it caps the passages instead: 100 to 20,000, and 4,000 by default. |
 | `query` | string | no |  | Web pages only: a question the passages should answer. The result holds those passages instead of the page. Omit it to get the whole page. |
+| `delivery` | string ("inline" \\| "link") | no |  | Tako cards only. `inline` returns the data in the result. `link` returns a download link: a CSV file, or a JSON file with `format: "card"`. It expires in 5 minutes. Use `link` when you can run shell commands and want to analyze the data in code. If the download fails, call again inline with `max_rows` at 2,000 or less. |
+| `format` | string ("rows" \\| "card") | no |  | Tako cards only. `rows` returns the card's data as one table. `card` returns the card's own structure, such as a company card's tabs or a game's box score. A card type without its own structure returns `rows`. Web pages ignore it. |
 
 Fixed request inputs (the caller cannot change these):
 
-- `mode` = `"inline"` — The content comes back in the response to read. The API default is a presigned download link, which a model cannot use.
-- `content_format` = `"json_compact"` — One row serialization, projected to `rows`. CSV writes a missing cell as an empty field; positional JSON writes null.
+- `mode (when delivery is omitted)` = `"inline"` — The data comes back in the response. On /mcp, set `delivery: "link"` to get a download link for a Tako card.
+- `content_format (when delivery and format are omitted)` = `"json_compact"` — One row serialization, projected to `rows`. CSV writes a missing cell as an empty field; positional JSON writes null.
 - `max_chars (when omitted)` = `min(100000, 250000 / batch size)` — Per-url character cap for web text. With `query`, the passages use the API's highlights budget instead: 4,000 characters.
 - `query` = `(sent as highlights.query)` — Web urls only. The tool drops a `query` with no letter or digit and sends no `highlights` for a Tako url. If the API can't return passages, the tool returns the whole page.
 
@@ -1235,6 +1237,66 @@ Annotations:
 - `/mcp/chatgpt`: title: Tako: Fetch Contents; readOnlyHint: true; destructiveHint: false; idempotentHint: true; openWorldHint: true
 
 <details><summary>wire — Published input schema (JSON Schema)</summary>
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "urls": {
+      "minItems": 1,
+      "maxItems": 10,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "description": "The urls to fetch: a Tako card url or a web result url. One call for 8 urls saves 7 round trips."
+    },
+    "max_rows": {
+      "description": "Tako cards only: how many rows to return. Omit it to get up to 2,000 rows. With `delivery: \"link\"`, you can raise it to 100,000. Charges scale with rows returned, so lower it when the recent rows are enough.",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100000
+    },
+    "max_chars": {
+      "description": "Web pages only: character cap on the extracted text. Inline fetches default to 100,000 per url, less across a batch. Raise it for a long document; `truncated` reports a cut. With `query`, it caps the passages instead: 100 to 20,000, and 4,000 by default.",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1000000
+    },
+    "query": {
+      "description": "Web pages only: a question the passages should answer. The result holds those passages instead of the page. Omit it to get the whole page.",
+      "type": "string",
+      "minLength": 1
+    },
+    "delivery": {
+      "description": "Tako cards only. `inline` returns the data in the result. `link` returns a download link: a CSV file, or a JSON file with `format: \"card\"`. It expires in 5 minutes. Use `link` when you can run shell commands and want to analyze the data in code. If the download fails, call again inline with `max_rows` at 2,000 or less.",
+      "type": "string",
+      "enum": [
+        "inline",
+        "link"
+      ]
+    },
+    "format": {
+      "description": "Tako cards only. `rows` returns the card's data as one table. `card` returns the card's own structure, such as a company card's tabs or a game's box score. A card type without its own structure returns `rows`. Web pages ignore it.",
+      "type": "string",
+      "enum": [
+        "rows",
+        "card"
+      ]
+    }
+  },
+  "required": [
+    "urls"
+  ]
+}
+```
+</details>
+
+<details><summary>wire — Published input schema on `/mcp/chatgpt` (JSON Schema)</summary>
+
+`/mcp/chatgpt` publishes a different input schema from `/mcp`.
 
 ```json
 {
@@ -1277,6 +1339,147 @@ Annotations:
 </details>
 
 <details><summary>wire — Published output schema (JSON Schema)</summary>
+
+```json
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "The url this entry is for."
+          },
+          "note": {
+            "description": "Whether `text` is passages or the whole page, or a card fell back to rows.",
+            "type": "string"
+          },
+          "rows": {
+            "description": "Tako cards only: the card's data.",
+            "type": "object",
+            "properties": {
+              "columns": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Column names, in row order; the unit is in the name."
+              },
+              "rows": {
+                "type": "array",
+                "items": {
+                  "type": "array",
+                  "items": {}
+                },
+                "description": "Positional cells; a missing cell is null."
+              },
+              "total_rows": {
+                "description": "Rows behind the card, before `max_rows`.",
+                "type": "number"
+              }
+            },
+            "required": [
+              "columns",
+              "rows"
+            ],
+            "additionalProperties": false
+          },
+          "text": {
+            "description": "Web pages only: the page text or its passages.",
+            "type": "string"
+          },
+          "download": {
+            "description": "The file, in link mode.",
+            "type": "object",
+            "properties": {
+              "url": {
+                "type": "string"
+              },
+              "expires_at": {
+                "type": "string"
+              },
+              "file_format": {
+                "type": "string",
+                "enum": [
+                  "csv",
+                  "json"
+                ]
+              },
+              "total_rows": {
+                "description": "Rows behind the card, before `max_rows`.",
+                "type": "number"
+              }
+            },
+            "required": [
+              "url",
+              "expires_at",
+              "file_format"
+            ],
+            "additionalProperties": false
+          },
+          "card": {
+            "description": "The card's structure.",
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          },
+          "error": {
+            "description": "Why this url failed.",
+            "type": "string"
+          },
+          "truncated": {
+            "description": "Part of this payload was cut.",
+            "type": "boolean"
+          },
+          "source_url": {
+            "description": "Where a redirect landed.",
+            "type": "string"
+          },
+          "cost": {
+            "type": "number",
+            "description": "USD billed for this url."
+          }
+        },
+        "required": [
+          "url",
+          "cost"
+        ],
+        "additionalProperties": {}
+      },
+      "description": "One per requested url, in order."
+    },
+    "usage": {
+      "type": "object",
+      "properties": {
+        "total_cost_usd": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "total_cost_usd"
+      ],
+      "additionalProperties": {},
+      "description": "What this request cost."
+    }
+  },
+  "required": [
+    "results",
+    "usage"
+  ],
+  "additionalProperties": false
+}
+```
+</details>
+
+<details><summary>wire — Published output schema on `/mcp/chatgpt` (JSON Schema)</summary>
+
+`/mcp/chatgpt` publishes a different output schema from `/mcp`.
 
 ```json
 {

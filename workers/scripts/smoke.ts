@@ -24,7 +24,7 @@
  *        a. `tako_search "US GDP"`        — non-empty results (read-only)
  *        a2. `tako_available_data "US GDP"` — text plus a match with an id (read-only)
  *        b. `tako_search_advanced "US GDP" include_answer` — answer text returned (read-only)
- *        c. `tako_contents {urls}` — a card's rows in BOTH channels, then a web url's page text (read-only)
+ *        c. `tako_contents {urls}` — a card's rows in BOTH channels, the same card as a download link, then a web url's page text (read-only)
  *        c2. `tako_company_agent` at `effort: "low"` — starts one billable
  *            company-agent run, which the smoke doesn't cancel
  *        d. `tako_visualize`              — creates a card (charges 1 credit)
@@ -523,7 +523,7 @@ try {
   );
 
   // ----- c) tako_contents canary (chained from the top search result) ----
-  // One delivery, one serialization: every call is inline json_compact, so the
+  // A call without `delivery` or `format` is inline json_compact, so the
   // card's rows come back as `results[0].rows` — `mode`, `content_format` and
   // the deprecated single `url` are off the input surface. Both channels carry
   // the payload now, so the text block is asserted too: it was a POINTER at
@@ -554,6 +554,23 @@ try {
   ok(
     `tako_contents {urls} → ${tcRows.rows.length} rows of ${tcRows.total_rows ?? "?"} in both channels`,
   );
+
+  const tcLink = await callOk(client, "tako_contents", {
+    urls: [topResultUrl],
+    delivery: "link",
+    max_rows: 5,
+  });
+  const tcDownload = (
+    tcLink.structuredContent as
+      | { results?: Array<{ download?: { url?: string; expires_at?: string; file_format?: string } }> }
+      | undefined
+  )?.results?.[0]?.download;
+  assert(
+    typeof tcDownload?.url === "string" && tcDownload.url.startsWith("https://") &&
+      typeof tcDownload.expires_at === "string" && tcDownload.expires_at.length > 0,
+    `tako_contents {delivery: "link"} returned no download: ${JSON.stringify(tcLink.structuredContent)?.slice(0, 200)}`,
+  );
+  ok(`tako_contents {delivery: "link"} → ${tcDownload.file_format ?? "?"} download, expires ${tcDownload.expires_at}`);
 
   // A web url returns page text through the same shape.
   const tcWeb = await callOk(client, "tako_contents", {

@@ -27,7 +27,7 @@ Tools are discovered at runtime via `tools/list`. There is no per-call `api_toke
 Two tools, one step apart — `tako_search` locates, `tako_contents` reads:
 
 - **Recon and fan-outs**: `tako_search`. Cards carry headline values, node ids, and chart links. Cheap; fire many narrow one-entity+one-metric queries in parallel and assemble the result yourself. Every card renders as a chart on the ChatGPT app, and the first card's chart renders elsewhere.
-- **The values themselves**: `tako_contents` on an `exportable: true` card's url — the card's rows, up to 2,000.
+- **The values themselves**: `tako_contents` on an `exportable: true` card's url — the card's rows, up to 2,000 inline. To analyze rows in code, set `delivery: "link"` and download the CSV before the link expires. `/mcp/chatgpt` returns rows inline only.
 - **A web page's text**: `tako_contents` on the web result's url.
 
 Never send a broad or multi-part question as one call — split it into narrow entity+metric searches (e.g. "US CPI inflation", "US core CPI inflation", "US PCE inflation", "US core PCE inflation"). For open-ended, multi-step research use `tako_agent` (opt-in).
@@ -70,9 +70,13 @@ Precondition (Tako cards): a card marked `exportable: false` is usually license-
 
 Results ride in `results`, positionally aligned with the urls you passed, failures included. Each entry carries `url` and `cost`, plus exactly one of `rows` (a card's data as `{columns, rows, total_rows}`, with positional cells and `null` for a missing value), `text` (a web page), or `error`. `truncated` reports a cut payload, and `note` says whether `text` holds the passages for `query` or the whole page. Root `usage.total_cost_usd` is the call's total.
 
+With `delivery: "link"`, a card's entry carries `download` (`url`, `expires_at`, `file_format`, `total_rows`) instead of inline data. With `format: "card"`, it carries `card`, the card's own structure. To analyze rows in code, use `delivery: "link"` and download the file right away. `/mcp/chatgpt` takes four inputs and returns rows inline only.
+
 Parameters:
 - `urls` (array of string, 1-10, required): The result urls to fetch — a Tako card's `url`, web-result urls, or a mix. Each is fetched independently, and one url failing doesn't fail the others (its entry carries an `error` instead of a payload).
-- `max_rows` (integer, 1-2000, optional): Tako cards only — how many rows to return. Omit it for the whole card, up to the 2,000-row ceiling. Charges scale with rows returned, so lower it when the recent rows are enough. Ignored for web urls (use `max_chars`).
+- `max_rows` (integer, 1-100,000, optional): Tako cards only — how many rows to return. Omit it for up to 2,000 rows. Charges scale with rows returned, so lower it when the recent rows are enough. Above 2,000 needs `delivery: "link"`. Ignored for web urls (use `max_chars`).
+- `delivery` (`inline` or `link`, optional): Tako cards only. `inline` returns the data in the result. `link` returns a download link that expires 5 minutes after the call: a CSV file, or a JSON file with `format: "card"`. Use `link` when you can run shell commands and want to analyze the data in code. Ignored for web urls.
+- `format` (`rows` or `card`, optional): Tako cards only. `rows` returns the card's data as one table. `card` returns the card's own structure, such as a company card's tabs. A card type without its own structure returns `rows`. Ignored for web urls.
 - `max_chars` (integer, 1-1,000,000, optional): Web urls only — character cap on the extracted page text. A single fetch defaults to 100,000; a batch splits a 250,000-character total evenly across its urls. `truncated: true` reports a cut. With `query`, it caps the passages instead: 100 to 20,000 characters, and 4,000 by default. Ignored for Tako card urls.
 - `query` (string, optional): Web urls only — a question the passages should answer. The result holds the passages of the page that answer it instead of the whole page, so one call lands on the relevant section of a long document. A ' … ' marks a break between passages, so never quote across it as one sentence. Omit it to get the whole page. A `query` with no letter or digit counts as omitted. Ignored for Tako urls. If Tako can't get passages from a page, the result holds the whole page, and `note` says so.
 

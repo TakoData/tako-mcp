@@ -913,6 +913,11 @@ export function renderAgentRunMarkdown(o: AgentRunOutput): string {
 // ambiguity the projection switched off CSV to escape (see `_contents.ts`).
 // ---------------------------------------------------------------------------
 
+function downloadLine(download: NonNullable<ProjectedContentsItem["download"]>): string {
+  const cardSize = download.total_rows !== undefined ? `; the card has ${download.total_rows} rows` : "";
+  return `Download (${download.file_format.toUpperCase()}, expires ${oneLine(download.expires_at)}${cardSize}): ${oneLine(download.url)}`;
+}
+
 /** One requested url: anchor, the note that explains the payload, the payload,
  *  then the chrome — the same order `projectedContentsItemShape` DECLARES, so a
  *  host that truncates either channel loses the same thing. The shape is the
@@ -927,6 +932,8 @@ function renderContentsItem(item: ProjectedContentsItem, showCost: boolean): str
   } else {
     if (item.note !== undefined) blocks.push(`> ${oneLine(item.note)}`);
     if (item.rows !== undefined) blocks.push(fenced(JSON.stringify(item.rows), "json"));
+    if (item.download !== undefined) blocks.push(downloadLine(item.download));
+    if (item.card !== undefined) blocks.push(fenced(JSON.stringify(item.card), "json"));
     // Page text is upstream content rendered verbatim into our own document —
     // fenced so a page ending in "## Contents (1 url)" cannot forge the framing.
     if (item.text !== undefined) blocks.push(fenced(item.text));

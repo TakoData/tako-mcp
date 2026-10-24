@@ -751,6 +751,40 @@ describe("renderContentsText", () => {
     expect(md).toContain("usage: $0.001");
   });
 
+  it("download line states the card's size, not the file's, and says truncated", () => {
+    const md = renderContentsText({
+      results: [{
+        url: "https://tako.com/card/abc",
+        download: {
+          url: "https://s3/x.csv",
+          expires_at: "2026-10-23T20:00:00+00:00",
+          file_format: "csv",
+          total_rows: 10000,
+        },
+        truncated: true,
+        cost: 0.01,
+      }],
+      usage: { total_cost_usd: 0.01 },
+    });
+    expect(md).toContain(
+      "Download (CSV, expires 2026-10-23T20:00:00+00:00; the card has 10000 rows): https://s3/x.csv",
+    );
+    expect(md).not.toContain("CSV, 10000 rows");
+    expect(md).toContain("truncated");
+  });
+
+  it("download line omits the card size when the backend sent none", () => {
+    const md = renderContentsText({
+      results: [{
+        url: "https://tako.com/card/abc",
+        download: { url: "https://s3/x.csv", expires_at: "2026-10-23T20:00:00+00:00", file_format: "csv" },
+        cost: 0,
+      }],
+      usage: { total_cost_usd: 0 },
+    });
+    expect(md).toContain("Download (CSV, expires 2026-10-23T20:00:00+00:00): https://s3/x.csv");
+  });
+
   it("card rows render as JSON byte-identical to the structured copy", () => {
     // Not a markdown table: a table writes a missing cell as an empty one,
     // which is the null ambiguity the projection left CSV to escape. Byte
@@ -812,6 +846,35 @@ describe("renderContentsText", () => {
 
   it("says so when nothing was fetched", () => {
     expect(renderContentsText({ results: [], usage: { total_cost_usd: 0 } })).toBe("No content fetched.");
+  });
+
+  it("renders a download as its url, format, row count and expiry", () => {
+    const md = renderContentsText({
+      results: [{
+        url: "https://tako.com/card/abc",
+        download: {
+          url: "https://s3/x.csv",
+          expires_at: "2026-10-23T20:00:00+00:00",
+          file_format: "csv",
+          total_rows: 40,
+        },
+        cost: 0.01,
+      }],
+      usage: { total_cost_usd: 0.01 },
+    });
+    expect(md).toContain("https://s3/x.csv");
+    expect(md).toContain("CSV");
+    expect(md).toContain("40 rows");
+    expect(md).toContain("2026-10-23T20:00:00+00:00");
+  });
+
+  it("renders a card object as fenced json", () => {
+    const card = { card_type: "company", tabs: [] };
+    const md = renderContentsText({
+      results: [{ url: "https://tako.com/card/abc", card, cost: 0.01 }],
+      usage: { total_cost_usd: 0.01 },
+    });
+    expect(md).toContain("```json\n" + JSON.stringify(card) + "\n```");
   });
 });
 
