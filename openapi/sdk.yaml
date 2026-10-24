@@ -2604,7 +2604,12 @@ components:
             has only that slice as its data, so total_rows is 30 and total_matching
             gives the set's size. On an agent run card, it's set for a card whose
             rows are stored with the card, such as a people list, and null for other
-            agent run cards. Null for web text.
+            agent run cards. On a search or answer card that returns no rows, it's
+            set when the card can hold premium values, and gives the rows a /contents
+            export of the card returns. A list of companies or people that match a
+            name shows the top of a search its /contents export runs again, so on
+            a search or answer card, returned rows or not, total_rows is the most
+            rows that export returns, and truncated is true. Null for web text.
         total_matching:
           anyOf:
           - type: integer
@@ -2625,14 +2630,16 @@ components:
             a card at the request max_rows or at the card's max_rows_ceiling (at most
             100,000), and then total_rows is larger than the rows returned. It's also
             true when the card itself lists a capped slice of a larger set; then total_matching
-            gives the set's size when Tako counts it. An inline /contents export that
-            omits max_rows returns up to 2,000 rows. On a search or answer response,
-            all cards share a budget of 2,000 billable rows and a budget of 20,000
-            inline rows, both spent in card order, so a later card can return fewer
-            rows than max_rows asked for. A card the billable budget can no longer
-            pay for still returns a small preview. A card that arrives after the inline
-            budget runs out returns no inline rows, and its export_pricing still prices
-            a /contents export of them.
+            gives the set's size when Tako counts it. On a search or answer response,
+            it's also true when a /contents export of a list card returns more rows
+            than the card shows, and then total_rows counts the export's rows. An
+            inline /contents export that omits max_rows returns up to 2,000 rows.
+            On a search or answer response, all cards share a budget of 2,000 billable
+            rows and a budget of 20,000 inline rows, both spent in card order, so
+            a later card can return fewer rows than max_rows asked for. A card the
+            billable budget can no longer pay for still returns a small preview. A
+            card that arrives after the inline budget runs out returns no inline rows,
+            and its export_pricing still prices a /contents export of them.
           default: false
         export_pricing:
           anyOf:
@@ -2680,7 +2687,11 @@ components:
             counts in each. Empty for a card with no premium columns; null for web
             text. On an agent run card, it counts every row of the card, so a premium=true
             export of all total_rows rows bills exactly these records when total_rows
-            is within max_rows_ceiling. It''s set wherever total_rows is.'
+            is within max_rows_ceiling. On a search or answer card that returns no
+            rows, it counts the rows the card shows, and it''s null for a card that
+            can''t hold a premium value. When truncated is true there, an export reads
+            more rows than the card shows, so these counts are a preview''s: ask /contents
+            with quote_only for the premium price. It''s set wherever total_rows is.'
         redacted_cells:
           anyOf:
           - additionalProperties:
@@ -4110,7 +4121,12 @@ components:
             has only that slice as its data, so total_rows is 30 and total_matching
             gives the set's size. On an agent run card, it's set for a card whose
             rows are stored with the card, such as a people list, and null for other
-            agent run cards. Null for web text.
+            agent run cards. On a search or answer card that returns no rows, it's
+            set when the card can hold premium values, and gives the rows a /contents
+            export of the card returns. A list of companies or people that match a
+            name shows the top of a search its /contents export runs again, so on
+            a search or answer card, returned rows or not, total_rows is the most
+            rows that export returns, and truncated is true. Null for web text.
         total_matching:
           anyOf:
           - type: integer
@@ -4131,14 +4147,16 @@ components:
             a card at the request max_rows or at the card's max_rows_ceiling (at most
             100,000), and then total_rows is larger than the rows returned. It's also
             true when the card itself lists a capped slice of a larger set; then total_matching
-            gives the set's size when Tako counts it. An inline /contents export that
-            omits max_rows returns up to 2,000 rows. On a search or answer response,
-            all cards share a budget of 2,000 billable rows and a budget of 20,000
-            inline rows, both spent in card order, so a later card can return fewer
-            rows than max_rows asked for. A card the billable budget can no longer
-            pay for still returns a small preview. A card that arrives after the inline
-            budget runs out returns no inline rows, and its export_pricing still prices
-            a /contents export of them.
+            gives the set's size when Tako counts it. On a search or answer response,
+            it's also true when a /contents export of a list card returns more rows
+            than the card shows, and then total_rows counts the export's rows. An
+            inline /contents export that omits max_rows returns up to 2,000 rows.
+            On a search or answer response, all cards share a budget of 2,000 billable
+            rows and a budget of 20,000 inline rows, both spent in card order, so
+            a later card can return fewer rows than max_rows asked for. A card the
+            billable budget can no longer pay for still returns a small preview. A
+            card that arrives after the inline budget runs out returns no inline rows,
+            and its export_pricing still prices a /contents export of them.
           default: false
         export_pricing:
           anyOf:
@@ -4186,7 +4204,11 @@ components:
             counts in each. Empty for a card with no premium columns; null for web
             text. On an agent run card, it counts every row of the card, so a premium=true
             export of all total_rows rows bills exactly these records when total_rows
-            is within max_rows_ceiling. It''s set wherever total_rows is.'
+            is within max_rows_ceiling. On a search or answer card that returns no
+            rows, it counts the rows the card shows, and it''s null for a card that
+            can''t hold a premium value. When truncated is true there, an export reads
+            more rows than the card shows, so these counts are a preview''s: ask /contents
+            with quote_only for the premium price. It''s set wherever total_rows is.'
         redacted_cells:
           anyOf:
           - additionalProperties:
