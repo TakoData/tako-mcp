@@ -14,15 +14,19 @@
 
 /**
  * `sources` on `tako_search` and `tako_agent`. Both take the same two-corpus
- * enum with the same default, and both route the same way, so the sentence is
- * one string.
+ * enum and route the same way, so the sentence is one string. `tako_agent`
+ * appends `AGENT_SOURCES_THREAD_RULE`.
  *
  * The digital-metrics clause is the load-bearing part: models narrow to
  * `["web"]` for website and app traffic on the assumption that a data graph
  * cannot hold it, and Tako's does.
  */
 export const SOURCES_DESCRIBE =
-  'Which corpora to search; default is both. Narrow to ["data"] once `tako_available_data` confirms coverage; narrow to ["web"] only for news or page text — website traffic is in the data graph.';
+  'Which corpora to search; default is both. Narrow to ["web"] only for news or page text — website traffic is in the data graph.';
+
+/** The `sources` rule both agent tools share: a thread's sources are fixed. */
+export const AGENT_SOURCES_THREAD_RULE =
+  "A thread keeps its sources, so omit this on a follow-up.";
 
 export const PASSAGE_BREAK_DESCRIBE =
   "A ' … ' marks a discontinuity — joined passages or the page's own ellipsis — so never quote across it as one sentence.";

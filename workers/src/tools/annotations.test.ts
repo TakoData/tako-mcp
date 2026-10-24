@@ -39,7 +39,7 @@ describe("tool annotations", () => {
     // user-addressable resource — a chart card with public URLs
     // (tako_visualize) or a queued agent run reachable later via
     // `run_id`/`thread_id` (tako_agent). Everything else is a read.
-    const WRITERS = new Set(["tako_visualize", "tako_agent"]);
+    const WRITERS = new Set(["tako_visualize", "tako_agent", "tako_company_agent"]);
     for (const tool of TOOL_REGISTRY) {
       expect(tool.annotations.readOnlyHint, tool.name).toBe(
         !WRITERS.has(tool.name),

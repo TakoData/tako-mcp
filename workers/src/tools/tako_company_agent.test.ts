@@ -1,0 +1,145 @@
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("../django.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../django.js")>();
+  return { ...actual, djangoPost: vi.fn(), djangoGet: vi.fn() };
+});
+import { djangoPost, djangoGet } from "../django.js";
+import type { Env } from "../env.js";
+import { parseToolsParam } from "./_tools_param.js";
+import { CHATGPT_TOOL_NAMES, GENERIC_DEFAULT_TOOL_NAMES, resolveToolSet } from "./_surface.js";
+import { TOOL_REGISTRY } from "./_registry.js";
+import tool, { buildCompanyAgentBody } from "./tako_company_agent.js";
+import type { ToolContext } from "./types.js";
+import { AGENT_CARD_LINK_SENTENCE } from "./_agent_call.js";
+
+const encoder = new TextEncoder();
+const RUN = "run_1";
+
+const ctx: ToolContext = {
+  token: "t",
+  env: { DJANGO_BASE_URL: "https://trytako.com" } as Env,
+  surface: "generic",
+  caller: undefined,
+  sendProgress: vi.fn(async () => {}),
+};
+
+function completedStream(): void {
+  const frames = [
+    {
+      kind: "agent_result",
+      id: "a1",
+      data: { answer: "Acme Corp matches [1].", cards: [], citations: [] },
+    },
+    { kind: "run_summary", status: "completed", created_at: "2026-10-22T00:00:00Z", error: null, usage: null },
+  ].map(
+    (block) =>
+      `data: ${JSON.stringify({ seq: 1, run_id: RUN, thread_id: "t1", category: "x", block })}\n\n`,
+  );
+  vi.stubGlobal(
+    "fetch",
+    vi.fn<typeof fetch>(
+      async () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              for (const text of frames) controller.enqueue(encoder.encode(text));
+              controller.close();
+            },
+          }),
+          { status: 200, headers: { "content-type": "text/event-stream" } },
+        ),
+    ),
+  );
+}
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.clearAllMocks();
+});
+
+describe("tako_company_agent", () => {
+  it("the description tells the model to link each card's url", () => {
+    expect(tool.description).toContain(AGENT_CARD_LINK_SENTENCE);
+  });
+
+  it("posts to the company runs path with cards true and no effort when omitted", async () => {
+    vi.mocked(djangoPost).mockResolvedValue({ run_id: RUN, thread_id: "t1" });
+    completedStream();
+
+    await tool.handler({ query: "UK companies dissolved in 2024" }, ctx);
+
+    expect(tool.name).toBe("tako_company_agent");
+    expect(vi.mocked(djangoPost).mock.calls[0]![2]).toBe("/api/v1/agent/company/runs");
+    const body = vi.mocked(djangoPost).mock.calls[0]![3] as Record<string, unknown>;
+    expect(body).toEqual({ query: "UK companies dissolved in 2024", cards: true });
+  });
+
+  it("sends effort and source_indexes only when the caller set them", () => {
+    const threadId = "cde6ed80-ab7d-464b-baa9-793fcb418a62";
+    const body = buildCompanyAgentBody(
+      tool.inputSchema.parse({
+        query: "q",
+        thread_id: threadId,
+        effort: "high",
+        sources: ["web"],
+      }),
+    );
+
+    expect(body).toEqual({
+      query: "q",
+      cards: true,
+      thread_id: threadId,
+      effort: "high",
+      source_indexes: ["web"],
+    });
+    expect(Object.keys(buildCompanyAgentBody(tool.inputSchema.parse({ query: "q" })))).toEqual([
+      "query",
+      "cards",
+    ]);
+  });
+
+  it("returns a company_run_ run_id", async () => {
+    vi.mocked(djangoPost).mockResolvedValue({ run_id: RUN, thread_id: "t1" });
+    completedStream();
+
+    const out = await tool.handler({ query: "q" }, ctx);
+
+    expect(out.status).toBe("completed");
+    expect(out.run_id).toBe("company_run_run_1");
+    expect(out.answer).toBe("Acme Corp matches [1].");
+  });
+
+  it("resumes a company run by run_id on the company path", async () => {
+    vi.mocked(djangoGet).mockResolvedValue({
+      run_id: "x",
+      status: "completed",
+      result: { answer: "done", cards: [], citations: [] },
+    });
+
+    const out = await tool.handler({ run_id: "company_run_x" }, ctx);
+
+    expect(djangoPost).not.toHaveBeenCalled();
+    expect(vi.mocked(djangoGet).mock.calls[0]![2]).toBe("/api/v1/agent/company/runs/x");
+    expect(out.run_id).toBe("company_run_x");
+  });
+
+  it("rejects an answer_run_ run_id and names tako_agent", () => {
+    const parsed = tool.inputSchema.safeParse({ run_id: "answer_run_x" });
+
+    expect(parsed.success).toBe(false);
+    expect(parsed.error?.issues.map((i) => i.message).join(" ")).toContain("tako_agent");
+  });
+
+  it("is opt-in on generic, where ?tools= must name company_agent, and always listed on chatgpt", () => {
+    const known = new Set(TOOL_REGISTRY.map((t) => t.name));
+    const requested = parseToolsParam("company_agent", known);
+
+    expect(requested).toEqual(new Set(["tako_company_agent"]));
+    expect(resolveToolSet("generic", requested).has("tako_company_agent")).toBe(true);
+    expect(resolveToolSet("generic", null).has("tako_company_agent")).toBe(false);
+    expect(GENERIC_DEFAULT_TOOL_NAMES.has("tako_company_agent")).toBe(false);
+    expect(resolveToolSet("chatgpt", requested)).toBe(CHATGPT_TOOL_NAMES);
+    expect(CHATGPT_TOOL_NAMES.has("tako_company_agent")).toBe(true);
+  });
+});

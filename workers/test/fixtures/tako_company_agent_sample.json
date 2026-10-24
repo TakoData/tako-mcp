@@ -1,0 +1,69 @@
+{
+  "__comment": "Canonical tako_company_agent wire fixture for the generated docs/TOOLS.md samples. Shape mirrors GET /api/v1/agent/company/runs/{run_id}: a RetrievalAgentResult with one card and two citations. Regenerating TOOLS.md runs this through the real projection and renderer; do not hand-edit the samples there.",
+  "run_id": "3b7d9e14-52c8-4a0f-8e61-0d4f7a9c2b35",
+  "object": "agent.company.run",
+  "thread_id": "5a2e8c71-0f3b-4d96-b1a4-7c6e9d2f8031",
+  "status": "completed",
+  "created_at": "2026-10-22T15:02:10.751475+00:00",
+  "completed_at": "2026-10-22T15:02:48.204118+00:00",
+  "usage": { "total_cost_usd": 0.04127, "compute": { "cost_usd": 0.04127 } },
+  "error": null,
+  "result": {
+    "answer": "Three active companies registered in Leeds were incorporated in 2024 and list software development as their industry [1]. Northern Lattice Ltd was incorporated first, on 12 February 2024 [1]. Its directors include Priya Nair, per its latest filing [2].",
+    "cards": [
+      {
+        "card_id": "Kd3vQ8mXr2LpT9-aYwNe",
+        "title": "Leeds Software Companies Incorporated in 2024",
+        "description": "Active companies registered in Leeds, incorporated in 2024, with software development as their industry.",
+        "semantic_description": null,
+        "webpage_url": "https://tako.com/card/Kd3vQ8mXr2LpT9-aYwNe/",
+        "image_url": "https://tako.com/api/v1/image/Kd3vQ8mXr2LpT9-aYwNe/",
+        "embed_url": "https://tako.com/embed/Kd3vQ8mXr2LpT9-aYwNe/",
+        "card_type": "table",
+        "exportable": true,
+        "relevance": null,
+        "relevance_score": null,
+        "nodes": null,
+        "source_indexes": ["data"],
+        "sources": [
+          {
+            "source_name": "Companies House",
+            "source_index": "data",
+            "url": "https://www.gov.uk/government/organisations/companies-house",
+            "source_description": "The UK registrar of companies.",
+            "source_text": null
+          }
+        ],
+        "methodologies": [],
+        "metric_definitions": [],
+        "content": null,
+        "data_freshness": null
+      }
+    ],
+    "citations": [
+      {
+        "index": 1,
+        "title": "Companies House",
+        "url": "https://www.gov.uk/government/organisations/companies-house",
+        "source_name": null,
+        "source_index": "data",
+        "excerpt": null,
+        "publish_date": null,
+        "content": null
+      },
+      {
+        "index": 2,
+        "title": "Northern Lattice Ltd confirmation statement",
+        "url": "https://find-and-update.company-information.service.gov.uk/company/00000000/filing-history",
+        "source_name": null,
+        "source_index": "web",
+        "excerpt": null,
+        "publish_date": null,
+        "content": null
+      }
+    ],
+    "metadata": null,
+    "refusal_code": null,
+    "request_id": "req_fixture"
+  }
+}

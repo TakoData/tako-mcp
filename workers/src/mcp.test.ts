@@ -1,4 +1,5 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { CfWorkerJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/cfworker";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -17,14 +18,18 @@ import type { Env } from "./env.js";
 import { FREE_TIER_TOOL_NAMES, resolveToolSet } from "./tools/_surface.js";
 import {
   SERVER_INSTRUCTIONS,
+  serverInstructionsFor,
 } from "./instructions.js";
 import { GENERIC_SIGN_IN_HINT } from "./tools/_shared_prose.js";
 import {
   AUTH_INVALID_MESSAGE,
   authModeFor,
+  closeWhenStreamEnds,
   createMcpServer,
   djangoErrorToToolResult,
+  streamingToolCallName,
   logSdkValidationRejections,
+  logToolInputRejections,
   PAYMENT_REQUIRED_MESSAGE,
   PAYMENT_REQUIRED_REMEDY_FALLBACK,
   paymentRequiredToolResult,
@@ -34,6 +39,10 @@ import {
 } from "./mcp.js";
 import type { Surface } from "./surface.js";
 import { TOOL_REGISTRY } from "./tools/_registry.js";
+import { projectRunningRun } from "./tools/_agent_run.js";
+import { PROGRESS_MIN_INTERVAL_MS } from "./tools/_agent_wait.js";
+import takoAgent from "./tools/tako_agent.js";
+import takoCompanyAgent from "./tools/tako_company_agent.js";
 import {
   CHATGPT_CLOSED_WORLD_TOOLS,
   toolAnnotationsForSurface,
@@ -101,7 +110,7 @@ describe("toolAnnotationsForSurface", () => {
         name,
       ).toBe(true);
     }
-    for (const name of ["tako_visualize", "tako_agent"]) {
+    for (const name of ["tako_visualize", "tako_agent", "tako_company_agent"]) {
       expect(
         toolAnnotationsForSurface(
           TOOL_REGISTRY.find((tool) => tool.name === name)!,
@@ -588,6 +597,42 @@ describe("chart render gates per surface", () => {
     expect(pngRequest.headers.get("range")).not.toBeNull();
   });
 
+  function twoCardSearchResponse(): Response {
+    return jsonResponse(200, {
+      cards: [
+        { card_id: "c1", title: "US GDP", embed_url: "https://trytako.com/embed/c1/" },
+        { card_id: "c2", title: "US CPI", embed_url: "https://trytako.com/embed/c2/" },
+      ],
+      web_results: [],
+      request_id: "req-2cards",
+    });
+  }
+
+  it("the chatgpt surface returns every card's chart and reads only the top chart's PNG", async () => {
+    const fetchMock = mockFetchSequence([twoCardSearchResponse(), realPngResponse()]);
+
+    const result = await callSearch("chatgpt");
+
+    expect(result.structuredContent?.charts).toBeUndefined();
+    const charts = result._meta?.charts as
+      | { pub_id: string; image_natural_width?: number }[]
+      | undefined;
+    expect(charts?.map((c) => c.pub_id)).toEqual(["c1", "c2"]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(result._meta?.image_natural_width).toEqual(expect.any(Number));
+    expect(charts?.[0]?.image_natural_width).toBe(result._meta?.image_natural_width);
+    expect(charts?.[1]?.image_natural_width).toBeUndefined();
+  });
+
+  it("the generic surface doesn't return charts", async () => {
+    mockFetchSequence([twoCardSearchResponse(), pngResponse()]);
+
+    const result = await callSearch("generic");
+
+    expect(result.structuredContent?.charts).toBeUndefined();
+    expect(result._meta?.charts).toBeUndefined();
+  });
+
   it("generic surface: no image block when the search returns zero cards", async () => {
     // Empty result → no top card → no image_url → `extraMeta`'s PNG
     // prefetch must not fire (queue holds only the search response; an
@@ -600,13 +645,7 @@ describe("chart render gates per surface", () => {
     const result = await callSearch("generic");
 
     expect(result.content.filter((b) => b.type === "image")).toHaveLength(0);
-    // The zero-result guidance must survive the SDK round trip: it is
-    // declared in the tool's published outputSchema, so `structuredContent` keeps it
-    // (an undeclared key would be silently stripped by the SDK's
-    // outputSchema parse — this pins schema and builder together).
-    expect(
-      (result.structuredContent as { guidance?: string }).guidance,
-    ).toMatch(/tako_available_data/);
+    expect(result.structuredContent).not.toHaveProperty("guidance");
   });
 
   it("a chart-less result references no ui resource at all", async () => {
@@ -894,9 +933,11 @@ describe("free-tier tool surface", () => {
     ).resolves.toEqual(expected);
   });
 
-  it("the chatgpt surface serves the fixed five-tool set", async () => {
+  it("the chatgpt surface serves the fixed seven-tool set", async () => {
     await expect(listToolNames({ surface: "chatgpt" })).resolves.toEqual([
+      "tako_agent",
       "tako_available_data",
+      "tako_company_agent",
       "tako_contents",
       "tako_graph_related",
       "tako_search",
@@ -1255,6 +1296,49 @@ describe("withChatGptToolSecuritySchemes", () => {
   });
 });
 
+describe("logToolInputRejections", () => {
+  const call = (name: string, args: unknown): unknown => ({
+    jsonrpc: "2.0",
+    id: 1,
+    method: "tools/call",
+    params: { name, arguments: args },
+  });
+
+  it("logs the tool and the schema's issue, not the arguments", () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    logToolInputRejections(
+      call("tako_agent", { run_id: "6f1c1d2e-3a4b-4c5d-8e9f-0a1b2c3d4e5f" }),
+      new Set(["tako_agent"]),
+      "generic",
+    );
+
+    expect(logSpy.mock.calls.map((c) => String(c[0]))).toEqual([
+      "[mcp] tool input rejected by schema tool=tako_agent surface=generic: run_id: This run_id isn't one `tako_agent` returned. Send the `run_id` from an earlier `status: running` result unchanged.",
+    ]);
+    logSpy.mockRestore();
+  });
+
+  it("checks every call in a batch and skips valid and unregistered calls", () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    logToolInputRejections(
+      [
+        call("tako_search", { query: "US GDP" }),
+        call("tako_search", { query: 42 }),
+        call("tako_agent", { run_id: "bad" }),
+      ],
+      new Set(["tako_search"]),
+      "generic",
+    );
+
+    const lines = logSpy.mock.calls.map((c) => String(c[0]));
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatch(/^\[mcp\] tool input rejected by schema tool=tako_search surface=generic: query: /);
+    logSpy.mockRestore();
+  });
+});
+
 describe("logSdkValidationRejections", () => {
   // The SDK answers schema-invalid tools/call arguments with -32602 before
   // any tool handler runs; this tap is the only Worker-side signal for those
@@ -1528,10 +1612,25 @@ describe("paymentRequiredToolResult", () => {
   });
 });
 
-describe("SERVER_INSTRUCTIONS", () => {
+const SHARED_DEFAULT_ROUTING_TOOLS = ["tako_search", "tako_available_data", "tako_contents"];
+
+const DEFAULT_ROUTING_TOOLS_BY_SURFACE: ReadonlyArray<{
+  surface: Surface;
+  routingTools: readonly string[];
+}> = [
+  { surface: "generic", routingTools: SHARED_DEFAULT_ROUTING_TOOLS },
+  {
+    surface: "chatgpt",
+    routingTools: [...SHARED_DEFAULT_ROUTING_TOOLS, "tako_agent", "tako_company_agent"],
+  },
+];
+
+describe.each(DEFAULT_ROUTING_TOOLS_BY_SURFACE)("$surface default instructions", ({ surface, routingTools }) => {
+  const instructions = serverInstructionsFor(resolveToolSet(surface, null));
+
   it("names every DEFAULT-surface tool an agent must choose between — and no opt-in tool", () => {
-    for (const tool of ["tako_search", "tako_available_data", "tako_contents"]) {
-      expect(SERVER_INSTRUCTIONS).toContain(tool);
+    for (const tool of routingTools) {
+      expect(instructions).toContain(tool);
     }
     // The "and no opt-in tool" half is NOT asserted here. Naming one name by
     // hand is the defect `tools/phantom_tool.test.ts` exists to remove; it
@@ -1546,7 +1645,7 @@ describe("SERVER_INSTRUCTIONS", () => {
     // them, so the anonymous text outlived the state it described and
     // suppressed the tool sign-in had just unlocked. The dispatch gate's
     // `authRequiredToolResult` is the one place this claim is allowed.
-    expect(SERVER_INSTRUCTIONS).not.toMatch(TIER_CLAIM);
+    expect(instructions).not.toMatch(TIER_CLAIM);
   });
 
   // The instructions sit ABOVE the tool descriptions in the host's system
@@ -1585,7 +1684,7 @@ describe("SERVER_INSTRUCTIONS", () => {
   //                     reads an obligation and then reads the tool denying it.
   //                     That is what this test exists to catch.
   it("does not oblige a free-tool call the tool's own description denies", () => {
-    const freeToolLine = SERVER_INSTRUCTIONS.split("\n").find((l) =>
+    const freeToolLine = instructions.split("\n").find((l) =>
       l.includes("`tako_available_data`"),
     );
     expect(freeToolLine).toBeDefined();
@@ -1628,9 +1727,9 @@ describe("SERVER_INSTRUCTIONS", () => {
   // them. `_pin_form.test.ts` still guarantees the form is stated correctly
   // everywhere it does belong.
   it("keeps per-tool call mechanics OUT — no pin recipe at server level", () => {
-    expect(SERVER_INSTRUCTIONS).not.toMatch(/strict/i);
-    expect(SERVER_INSTRUCTIONS).not.toMatch(/node[_ ]?ids?/i);
-    expect(SERVER_INSTRUCTIONS).not.toMatch(/METRIC node/i);
+    expect(instructions).not.toMatch(/strict/i);
+    expect(instructions).not.toMatch(/node[_ ]?ids?/i);
+    expect(instructions).not.toMatch(/METRIC node/i);
   });
 
   // The discovery trigger. On a host with several servers connected this is
@@ -1639,8 +1738,8 @@ describe("SERVER_INSTRUCTIONS", () => {
   // Tako. Cheap to delete as "filler" during a trim; the most expensive line
   // here to lose.
   it("keeps the domain list that makes the server discoverable", () => {
-    for (const domain of ["finance", "economics", "website/app traffic", "elections"]) {
-      expect(SERVER_INSTRUCTIONS).toContain(domain);
+    for (const domain of ["finance", "economics", "website traffic", "elections"]) {
+      expect(instructions).toContain(domain);
     }
   });
 
@@ -1654,8 +1753,8 @@ describe("SERVER_INSTRUCTIONS", () => {
   // trailing clause. Assert both jobs by MEANING, not by example strings —
   // the argument examples live in the tool's own description now.
   it("names both of tako_available_data's jobs — coverage AND name resolution", () => {
-    expect(SERVER_INSTRUCTIONS).toMatch(/what data Tako has/i);
-    expect(SERVER_INSTRUCTIONS).toMatch(/canonical name/i);
+    expect(instructions).toMatch(/what data Tako has/i);
+    expect(instructions).toMatch(/canonical name/i);
   });
 
   // Parameter-shaped guidance (argument examples, the q+metric split, response
@@ -1663,8 +1762,8 @@ describe("SERVER_INSTRUCTIONS", () => {
   // takes it, read at the moment it applies. Duplicating it here bought a
   // second copy the model pays for on every request, Tako-bound or not.
   it("carries no argument-level examples — those live in the descriptions", () => {
-    expect(SERVER_INSTRUCTIONS).not.toMatch(/`q="/);
-    expect(SERVER_INSTRUCTIONS).not.toMatch(/`metric="/);
+    expect(instructions).not.toMatch(/`q="/);
+    expect(instructions).not.toMatch(/`metric="/);
   });
 
   // Register check. "is free and does two jobs" spends the highest-value
@@ -1672,7 +1771,7 @@ describe("SERVER_INSTRUCTIONS", () => {
   // hosted MCP (836 chars across 2 tools, no instructions at all) never does
   // this: one imperative per line, no meta-commentary.
   it("states what to do, not what the tools 'do'", () => {
-    expect(SERVER_INSTRUCTIONS).not.toMatch(/does two jobs/i);
+    expect(instructions).not.toMatch(/does two jobs/i);
   });
 
   it("stays short enough to sit in a system prompt", () => {
@@ -1683,7 +1782,7 @@ describe("SERVER_INSTRUCTIONS", () => {
     // across 2 tools and no instructions at all (mcp.exa.ai, 2026-07-31).
     // Tako needs more than Exa (4+ tools, non-obvious routing, coverage a
     // model cannot guess) but the gap should be justified per sentence.
-    expect(SERVER_INSTRUCTIONS.length).toBeLessThan(1600);
+    expect(instructions.length).toBeLessThan(1600);
   });
 });
 
@@ -1874,7 +1973,7 @@ describe("object-level schema checks reach the wire", () => {
  * `tool.outputSchema` left all 1267 tests green while stripping the six
  * widget fields out of the `structuredContent` ChatGPT's bundle reads via
  * `window.openai.toolOutput` — a silently broken chart on the one surface
- * that costs an app resubmission to fix.
+ * where a fix waits for a production release and OpenAI's next scan.
  *
  * `tools/list` over a real server, not the module constant, because the SDK
  * republishes the schema and the surface is chosen inside `registerTool`.
@@ -2138,5 +2237,454 @@ describe("caller attribution through handleMcpRequest", () => {
     expect(requestFrom(fetchMock.mock.calls[0]!).headers.get("x-tako-caller")).toBe(
       "channel=mcp, surface=generic, tier=anonymous, tool=tako_search",
     );
+  });
+});
+
+describe("agent tool calls over SSE", () => {
+  const env = { DJANGO_BASE_URL: "http://localhost:8000" } as unknown as Env;
+  const RUNNING = projectRunningRun({
+    toolName: "tako_agent",
+    publicRunId: "answer_run_abc",
+    elapsedS: 45,
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  function mcpPost(
+    path: string,
+    body: unknown,
+    init: { accept?: string; signal?: AbortSignal } = {},
+  ): Request {
+    return new Request(`https://mcp.tako.com${path}`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: init.accept ?? "application/json, text/event-stream",
+        authorization: "Bearer raw-tako-token-no-dots",
+      },
+      body: JSON.stringify(body),
+      ...(init.signal !== undefined ? { signal: init.signal } : {}),
+    });
+  }
+
+  function toolsCall(name: string, meta?: Record<string, unknown>): unknown {
+    return {
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: {
+        name,
+        arguments: { query: "who founded Tako" },
+        ...(meta !== undefined ? { _meta: meta } : {}),
+      },
+    };
+  }
+
+  type SseMessage = {
+    id?: unknown;
+    method?: string;
+    params?: { progressToken?: unknown; progress?: unknown; message?: unknown };
+    result?: { structuredContent?: unknown; isError?: unknown };
+  };
+
+  function sseMessages(body: string): SseMessage[] {
+    return body
+      .split("\n\n")
+      .flatMap((event) => event.split("\n"))
+      .filter((line) => line.startsWith("data: "))
+      .map((line) => JSON.parse(line.slice("data: ".length)) as SseMessage);
+  }
+
+  function untilAborted(signal: AbortSignal | undefined): Promise<void> {
+    if (signal === undefined || signal.aborted) return Promise.resolve();
+    return new Promise((resolve) => {
+      signal.addEventListener("abort", () => resolve(), { once: true });
+    });
+  }
+
+  function stubAgentHandler(
+    run: (ctx: ToolContext) => Promise<void> = async (ctx) => {
+      await ctx.sendProgress(3, { message: "Searching" });
+    },
+  ): { contexts: ToolContext[] } {
+    const contexts: ToolContext[] = [];
+    vi.spyOn(takoAgent, "handler").mockImplementation(async (_input, ctx) => {
+      contexts.push(ctx);
+      await run(ctx);
+      return RUNNING;
+    });
+    return { contexts };
+  }
+
+  it("answers an agent tools/call as text/event-stream with progress before the result", async () => {
+    stubAgentHandler();
+    const closeSpy = vi.spyOn(McpServer.prototype, "close");
+
+    const res = await worker.fetch(
+      mcpPost("/mcp?tools=agent", toolsCall("tako_agent", { progressToken: "p1" })),
+      env,
+    );
+
+    expect(res.headers.get("content-type")).toContain("text/event-stream");
+    const messages = sseMessages(await res.text());
+    expect(messages.map((m) => m.method ?? `result:${String(m.id)}`)).toEqual([
+      "notifications/progress",
+      "result:1",
+    ]);
+    expect(messages[0]!.params).toEqual({
+      progressToken: "p1",
+      progress: 3,
+      message: "Searching",
+    });
+    expect(messages[1]!.result?.structuredContent).toEqual(RUNNING);
+    await vi.waitFor(() => expect(closeSpy).toHaveBeenCalledTimes(1));
+  });
+
+  it("answers an agent tools/call on /mcp/chatgpt as buffered JSON", async () => {
+    const COMPANY_RUNNING = projectRunningRun({
+      toolName: "tako_company_agent",
+      publicRunId: "company_run_abc",
+      elapsedS: 45,
+    });
+    vi.spyOn(takoCompanyAgent, "handler").mockResolvedValue(COMPANY_RUNNING);
+
+    const res = await worker.fetch(
+      mcpPost("/mcp/chatgpt", toolsCall("tako_company_agent", { progressToken: "p1" })),
+      env,
+    );
+
+    expect(res.headers.get("content-type")).toContain("application/json");
+    const body = (await res.json()) as SseMessage;
+    expect(body.id).toBe(1);
+    expect(body.result?.structuredContent).toEqual(COMPANY_RUNNING);
+  });
+
+  it("aborts ctx.signal on /mcp/chatgpt when the request's own signal aborts", async () => {
+    const { contexts } = stubAgentHandler(async (ctx) => {
+      await untilAborted(ctx.signal);
+    });
+    const clientGone = new AbortController();
+
+    const pending = worker.fetch(
+      mcpPost("/mcp/chatgpt", toolsCall("tako_agent"), { signal: clientGone.signal }),
+      env,
+    );
+    await vi.waitFor(() => expect(contexts).toHaveLength(1));
+    clientGone.abort();
+
+    const res = await pending;
+    expect(contexts[0]?.signal?.aborted).toBe(true);
+    expect(res.headers.get("content-type")).toContain("application/json");
+    expect(((await res.json()) as SseMessage).result?.structuredContent).toEqual(RUNNING);
+  });
+
+  it("relays a backend status event from a real agent run as a progress notification", async () => {
+    vi.useFakeTimers();
+    try {
+      const encoder = new TextEncoder();
+      const frame = (block: Record<string, unknown>): string =>
+        `data: ${JSON.stringify({ seq: 1, run_id: "abc", thread_id: "t1", category: "x", block })}\n\n`;
+      let finishRun = (): void => {};
+      vi.stubGlobal(
+        "fetch",
+        vi.fn<typeof fetch>(async (input) => {
+          if ((input as Request).method === "POST") {
+            return jsonResponse(202, { run_id: "abc", status: "queued", created_at: new Date().toISOString() });
+          }
+          return new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.enqueue(encoder.encode(frame({ kind: "status", message: "Searching the web" })));
+                finishRun = () => {
+                  controller.enqueue(
+                    encoder.encode(
+                      frame({ kind: "agent_result", id: "a1", data: { answer: "42", cards: [], citations: [] } }),
+                    ),
+                  );
+                  controller.enqueue(
+                    encoder.encode(
+                      frame({
+                        kind: "run_summary",
+                        status: "completed",
+                        created_at: "2026-10-22T00:00:00Z",
+                        error: null,
+                        usage: null,
+                      }),
+                    ),
+                  );
+                  controller.close();
+                };
+              },
+            }),
+            { status: 200, headers: { "content-type": "text/event-stream" } },
+          );
+        }),
+      );
+
+      const pending = worker.fetch(
+        mcpPost("/mcp?tools=agent", toolsCall("tako_agent", { progressToken: "p1" })),
+        env,
+      );
+      await vi.advanceTimersByTimeAsync(PROGRESS_MIN_INTERVAL_MS);
+      finishRun();
+      const messages = sseMessages(await (await pending).text());
+
+      expect(messages.map((m) => m.method ?? `result:${String(m.id)}`)).toEqual([
+        "notifications/progress",
+        "result:1",
+      ]);
+      expect(messages[0]!.params).toMatchObject({ progressToken: "p1", message: "Searching the web" });
+      expect(messages[1]!.result?.structuredContent).toMatchObject({
+        status: "completed",
+        run_id: "answer_run_abc",
+        answer: "42",
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("logs an agent call the input schema rejects", async () => {
+    const logSpy = vi.spyOn(console, "log");
+
+    const res = await worker.fetch(
+      mcpPost("/mcp?tools=agent", {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "tako_agent", arguments: { run_id: "run_123" } },
+      }),
+      env,
+    );
+    await res.text();
+
+    expect(logSpy.mock.calls.map((c) => String(c[0]))).toContain(
+      "[mcp] tool input rejected by schema tool=tako_agent surface=generic: run_id: This run_id isn't one `tako_agent` returned. Send the `run_id` from an earlier `status: running` result unchanged.",
+    );
+  });
+
+  it("sends no progress notification when the request has no progressToken", async () => {
+    stubAgentHandler();
+    const errorSpy = vi.spyOn(console, "error");
+
+    const res = await worker.fetch(
+      mcpPost("/mcp?tools=agent", toolsCall("tako_agent")),
+      env,
+    );
+
+    expect(res.headers.get("content-type")).toContain("text/event-stream");
+    const messages = sseMessages(await res.text());
+    expect(messages).toHaveLength(1);
+    expect(messages[0]!.id).toBe(1);
+    expect(messages[0]!.result?.isError).toBeUndefined();
+    expect(messages[0]!.result?.structuredContent).toEqual(RUNNING);
+    expect(errorSpy).not.toHaveBeenCalled();
+  });
+
+  it("answers an agent input mistake as a tool error without logging a handler bug", async () => {
+    const errorSpy = vi.spyOn(console, "error");
+    const body = {
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: { name: "tako_agent", arguments: { query: "q", run_id: "answer_run_r1" } },
+    };
+
+    const res = await worker.fetch(mcpPost("/mcp?tools=agent", body), env);
+
+    const [message] = sseMessages(await res.text());
+    expect(message!.result?.isError).toBe(true);
+    expect(JSON.stringify(message!.result)).toContain("Send exactly one of `query`");
+    expect(errorSpy).not.toHaveBeenCalled();
+  });
+
+  it("keeps JSON responses for tools/list and non-agent tools/call", async () => {
+    mockFetchSequence([jsonResponse(200, {})]);
+
+    const list = await worker.fetch(
+      mcpPost("/mcp?tools=agent", { jsonrpc: "2.0", id: 1, method: "tools/list" }),
+      env,
+    );
+    const search = await worker.fetch(
+      mcpPost("/mcp?tools=agent", toolsCall("tako_search", { progressToken: "p1" })),
+      env,
+    );
+
+    expect(list.headers.get("content-type")).toContain("application/json");
+    expect(search.headers.get("content-type")).toContain("application/json");
+    expect(((await search.json()) as { id: unknown }).id).toBe(1);
+  });
+
+  it("keeps JSON for an agent tool the connection didn't register", async () => {
+    const agentNotOptedIn = await worker.fetch(
+      mcpPost("/mcp?tools=search", toolsCall("tako_agent", { progressToken: "p1" })),
+      env,
+    );
+    const companyNotOptedIn = await worker.fetch(
+      mcpPost("/mcp?tools=agent", toolsCall("tako_company_agent", { progressToken: "p1" })),
+      env,
+    );
+
+    for (const res of [agentNotOptedIn, companyNotOptedIn]) {
+      expect(res.headers.get("content-type")).toContain("application/json");
+      const body = (await res.json()) as { result?: { isError?: unknown } };
+      expect(body.result?.isError).toBe(true);
+    }
+  });
+
+  it("closes the server when an agent call gets a JSON error response", async () => {
+    const closeSpy = vi.spyOn(McpServer.prototype, "close");
+
+    const res = await worker.fetch(
+      mcpPost("/mcp?tools=agent", toolsCall("tako_agent"), { accept: "application/json" }),
+      env,
+    );
+
+    expect(res.status).toBe(406);
+    expect(closeSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("aborts ctx.signal when the client drops the SSE response", async () => {
+    const { contexts } = stubAgentHandler(async (ctx) => {
+      await ctx.sendProgress(1, { message: "Searching" });
+      await untilAborted(ctx.signal);
+    });
+    const closeSpy = vi.spyOn(McpServer.prototype, "close");
+
+    const res = await worker.fetch(
+      mcpPost("/mcp?tools=agent", toolsCall("tako_agent", { progressToken: "p1" })),
+      env,
+    );
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    let seen = "";
+    while (!seen.includes("notifications/progress")) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      seen += decoder.decode(value, { stream: true });
+    }
+    await reader.cancel();
+
+    await vi.waitFor(() => expect(contexts[0]?.signal?.aborted).toBe(true));
+    await vi.waitFor(() => expect(closeSpy).toHaveBeenCalledTimes(1));
+  });
+
+  it("aborts ctx.signal when the request's own signal aborts", async () => {
+    const { contexts } = stubAgentHandler(async (ctx) => {
+      await untilAborted(ctx.signal);
+    });
+    const clientGone = new AbortController();
+
+    const pending = worker.fetch(
+      mcpPost("/mcp?tools=agent", toolsCall("tako_agent"), { signal: clientGone.signal }),
+      env,
+    );
+    await vi.waitFor(() => expect(contexts).toHaveLength(1));
+    clientGone.abort();
+
+    const messages = sseMessages(await (await pending).text());
+    expect(contexts[0]?.signal?.aborted).toBe(true);
+    expect(messages.at(-1)?.result?.structuredContent).toEqual(RUNNING);
+  });
+
+  it("streams a tool error result and closes once when the agent handler throws a DjangoHttpError", async () => {
+    vi.spyOn(takoAgent, "handler").mockRejectedValue(
+      new DjangoHttpError({
+        path: "/api/v1/agent/answer/runs",
+        method: "POST",
+        status: 500,
+        body: "boom",
+      }),
+    );
+    const closeSpy = vi.spyOn(McpServer.prototype, "close");
+
+    const res = await worker.fetch(
+      mcpPost("/mcp?tools=agent", toolsCall("tako_agent", { progressToken: "p1" })),
+      env,
+    );
+
+    expect(res.headers.get("content-type")).toContain("text/event-stream");
+    const messages = sseMessages(await res.text());
+    expect(messages).toHaveLength(1);
+    expect(messages[0]!.id).toBe(1);
+    expect(messages[0]!.result?.isError).toBe(true);
+    await vi.waitFor(() => expect(closeSpy).toHaveBeenCalledTimes(1));
+  });
+});
+
+describe("closeWhenStreamEnds", () => {
+  type StreamingResponse = Parameters<typeof closeWhenStreamEnds>[0];
+
+  function sseResponse(body: ReadableStream<Uint8Array>): StreamingResponse {
+    return {
+      body,
+      status: 200,
+      headers: new Headers({ "content-type": "text/event-stream" }),
+    } as StreamingResponse;
+  }
+
+  it("signals the client is gone and closes once when the upstream read fails", async () => {
+    const readFailure = new Error("upstream broke");
+    const close = vi.fn(async () => {});
+    const onClientGone = vi.fn();
+    const upstream = new ReadableStream<Uint8Array>({
+      pull() {
+        throw readFailure;
+      },
+    });
+
+    const res = closeWhenStreamEnds(sseResponse(upstream), close, onClientGone);
+
+    await expect(res.text()).rejects.toBe(readFailure);
+    expect(onClientGone).toHaveBeenCalledWith(readFailure);
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  it("closes once when the client cancels and cancelling upstream throws", async () => {
+    const close = vi.fn(async () => {});
+    const onClientGone = vi.fn();
+    const upstream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("data: {}\n\n"));
+      },
+      cancel() {
+        return Promise.reject(new Error("cancel failed"));
+      },
+    });
+
+    const res = closeWhenStreamEnds(sseResponse(upstream), close, onClientGone);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await res.body!.cancel("client left").catch(() => undefined);
+
+    expect(onClientGone).toHaveBeenCalledWith("client left");
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("streamingToolCallName", () => {
+  const call = (name: string) => ({
+    jsonrpc: "2.0",
+    id: 1,
+    method: "tools/call",
+    params: { name, arguments: {} },
+  });
+
+  it("names a single tools/call to either agent tool", () => {
+    expect(streamingToolCallName(call("tako_agent"))).toBe("tako_agent");
+    expect(streamingToolCallName(call("tako_company_agent"))).toBe("tako_company_agent");
+  });
+
+  it("is undefined for other tools and methods", () => {
+    expect(streamingToolCallName(call("tako_search"))).toBeUndefined();
+    expect(streamingToolCallName({ jsonrpc: "2.0", id: 1, method: "tools/list" })).toBeUndefined();
+    expect(streamingToolCallName(null)).toBeUndefined();
+    expect(streamingToolCallName("tools/call")).toBeUndefined();
+  });
+
+  it("is undefined for a batch", () => {
+    expect(streamingToolCallName([call("tako_agent")])).toBeUndefined();
   });
 });

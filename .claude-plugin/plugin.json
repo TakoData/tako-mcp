@@ -1,6 +1,6 @@
 {
   "name": "tako",
-  "description": "Tako's proprietary knowledge graph as MCP tools — live financial, macroeconomic, and company data as interactive, citation-backed charts — plus bundled research skills.",
+  "description": "Tako's proprietary knowledge graph as MCP tools — live financial, macroeconomic, and company data as interactive, citation-backed charts — plus bundled lookup and research skills.",
   "version": "1.4.5",
   "author": {
     "name": "Tako",
@@ -21,7 +21,7 @@
   "mcpServers": {
     "tako": {
       "type": "http",
-      "url": "https://mcp.tako.com/mcp"
+      "url": "https://mcp.tako.com/mcp?tools=search,available_data,contents,graph_related,agent,company_agent"
     }
   }
 }

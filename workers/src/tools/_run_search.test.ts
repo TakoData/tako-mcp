@@ -38,7 +38,7 @@ describe("runSearch on the answer endpoint", () => {
         structured_output: { gdp_usd_trillions: 29 },
       }),
     ]);
-    const out = await runSearch({ endpoint: "answer", body: { query: "US GDP 2024" } }, ["data", "web"], null, CTX, "tako_search_advanced");
+    const out = await runSearch({ endpoint: "answer", body: { query: "US GDP 2024" } }, null, CTX, "tako_search_advanced");
     expect(requestFrom(fetchMock.mock.calls[0]).url).toContain("/api/v1/answer/");
     expect(out.answer).toBe("US GDP was $29T in 2024.");
     expect(out.structured_output).toEqual({ gdp_usd_trillions: 29 });
@@ -54,46 +54,27 @@ describe("runSearch on the answer endpoint", () => {
         structured_output_error: { code: "arbiter_failed", message: "no evidence" },
       }),
     ]);
-    const out = await runSearch({ endpoint: "answer", body: { query: "q" } }, ["data", "web"], null, CTX, "tako_search_advanced");
+    const out = await runSearch({ endpoint: "answer", body: { query: "q" } }, null, CTX, "tako_search_advanced");
     expect(out.structured_output_error).toEqual({ code: "arbiter_failed", message: "no evidence" });
   });
 
-  it("zero data cards with web grounding gives the soft data-index verdict, not the search verdict", async () => {
-    mockFetchSequence([
-      jsonResponse(200, {
-        answer: "I couldn't find that in the provided sources.",
-        cards: [],
-        web_results: [{ title: "w", url: "https://example.com" }],
-        request_id: "req-gap",
-      }),
-    ]);
-    const out = await runSearch({ endpoint: "answer", body: { query: "hotel RevPAR Q3" } }, ["data", "web"], null, CTX, "tako_search_advanced");
-    expect(out.guidance).toContain("No data cards ground this answer");
-    expect(out.guidance).toContain("web-grounded only");
-    expect(out.guidance).toContain("use the prose if it answers the question");
-  });
-
-  it("zero data cards AND zero web results gives the hard anti-retry verdict", async () => {
-    mockFetchSequence([
-      jsonResponse(200, { answer: "I couldn't find that.", cards: [], web_results: [], request_id: "r" }),
-    ]);
-    const out = await runSearch({ endpoint: "answer", body: { query: "hotel RevPAR Q3" } }, ["data", "web"], null, CTX, "tako_search_advanced");
-    expect(out.guidance).toContain("Neither data cards nor web results");
-    expect(out.guidance).toContain("rewording alone will not change that");
-    // The carve-out on the hardest stop: one narrower WEB attempt is still
-    // allowed. Without it the two arms disagree about the single most common
-    // Tako-has-nothing path — see the carve-out in buildDataGapGuidance.
-    expect(out.guidance).toMatch(/genuinely narrower web question/);
-  });
-
-  it("data-only ask with zero cards says nothing about web coverage", async () => {
-    // One source's evidence must never produce two sources' worth of verdict.
-    mockFetchSequence([
-      jsonResponse(200, { answer: "I couldn't find that.", cards: [], web_results: [], request_id: "r" }),
-    ]);
-    const out = await runSearch({ endpoint: "answer", body: { query: "q", sources: { data: {} } } }, ["data"], null, CTX, "tako_search_advanced");
-    expect(out.guidance).toContain("searched the data source only");
-    expect(out.guidance).not.toMatch(/nor web results/);
+  it("zero data cards carry no guidance, whatever the web returned", async () => {
+    for (const [sources, web_results] of [
+      [undefined, [{ title: "w", url: "https://example.com" }]],
+      [undefined, []],
+      [{ data: {} }, []],
+    ] as const) {
+      mockFetchSequence([
+        jsonResponse(200, { answer: "I couldn't find that.", cards: [], web_results, request_id: "r" }),
+      ]);
+      const out = await runSearch(
+        { endpoint: "answer", body: { query: "hotel RevPAR Q3", ...(sources ? { sources } : {}) } },
+        null,
+        CTX,
+        "tako_search_advanced",
+      );
+      expect(out.guidance, `sources=${JSON.stringify(sources)} web=${web_results.length}`).toBeUndefined();
+    }
   });
 
   it("a strict pin returning zero cards is a filter artefact, on the answer path too", async () => {
@@ -102,13 +83,11 @@ describe("runSearch on the answer endpoint", () => {
     ]);
     const out = await runSearch(
       { endpoint: "answer", body: { query: "q", sources: { data: { node_ids: ["mt::x"], strict: true } } } },
-      ["data"],
       null,
       CTX,
       "tako_search_advanced",
     );
     expect(out.guidance).toContain("hard filter");
-    expect(out.guidance).not.toContain("ZERO curated data cards");
   });
 
   it("refuses output_schema on the search branch, which no type can reject", async () => {
@@ -123,7 +102,6 @@ describe("runSearch on the answer endpoint", () => {
           endpoint: "search",
           body: { query: "q", output_schema: { type: "object" } } as never,
         },
-        ["data"],
         null,
         CTX,
         "tako_search_advanced",
@@ -131,26 +109,7 @@ describe("runSearch on the answer endpoint", () => {
     ).rejects.toThrow(/output_schema rides the answer endpoint only/);
   });
 
-  it("keeps the backend's card order when the prose cites by position", async () => {
-    // `data_freshness` is a DataFreshness OBJECT on the wire, not a string —
-    // AnswerResponse rejects the string form, so the fixture has to be real.
-    const fresh = { card_id: "fresh", title: "Fresh", data_freshness: { data_as_of: "2026-06-30" } };
-    const stale = { card_id: "stale", title: "Stale", data_freshness: { data_as_of: "2020-01-01" } };
-    mockFetchSequence([
-      jsonResponse(200, {
-        answer: "Revenue was $60.9B [1].",
-        cards: [stale, fresh],
-        web_results: [],
-        request_id: "r",
-      }),
-    ]);
-    const out = await runSearch({ endpoint: "answer", body: { query: "q" } }, ["data"], null, CTX, "tako_search_advanced");
-    // [1] refers to `stale`; reordering would silently repoint the citation.
-    // Projected cards carry no card_id — the title is the identity here.
-    expect(out.cards.map((c) => c.title)).toEqual(["Stale", "Fresh"]);
-  });
-
-  it("orders by usefulness when the prose carries no positional markers", async () => {
+  it("keeps the backend's card order", async () => {
     // `data_freshness` is a DataFreshness OBJECT on the wire, not a string —
     // AnswerResponse rejects the string form, so the fixture has to be real.
     const fresh = { card_id: "fresh", title: "Fresh", data_freshness: { data_as_of: "2026-06-30" } };
@@ -163,8 +122,8 @@ describe("runSearch on the answer endpoint", () => {
         request_id: "r",
       }),
     ]);
-    const out = await runSearch({ endpoint: "answer", body: { query: "q" } }, ["data"], null, CTX, "tako_search_advanced");
-    expect(out.cards.map((c) => c.title)).toEqual(["Fresh", "Stale"]);
+    const out = await runSearch({ endpoint: "answer", body: { query: "q" } }, null, CTX, "tako_search_advanced");
+    expect(out.cards.map((c) => c.title)).toEqual(["Stale", "Fresh"]);
   });
 });
 
@@ -173,7 +132,7 @@ describe("runSearch on the search endpoint", () => {
     const fetchMock = mockFetchSequence([
       jsonResponse(200, { cards: [], web_results: [], request_id: "r" }),
     ]);
-    const out = await runSearch({ endpoint: "search", body: { query: "q" } }, ["data", "web"], null, CTX, "tako_search_advanced");
+    const out = await runSearch({ endpoint: "search", body: { query: "q" } }, null, CTX, "tako_search_advanced");
     expect(requestFrom(fetchMock.mock.calls[0]).url).toContain("/api/v3/search/");
     expect(out).not.toHaveProperty("answer");
   });
@@ -183,9 +142,7 @@ describe("runSearch on the search endpoint", () => {
     // tako_search_advanced's input schema. Not a behavior anyone wants — a
     // record of what selecting the mode costs, so the omission cannot outlive
     // it. `wire.results` is the only place the rows exist and nothing here
-    // reads it, so the caller pays for a search and gets an empty projection
-    // plus the zero-result protocol's pin guidance, which names a cause that is
-    // not the one.
+    // reads it, so the caller pays for a search and gets an empty projection.
     //
     // WHEN THIS FAILS, runSearch has learned to read `wire.results`. That is
     // the signal to expose the field in tako_search_advanced.ts — with a
@@ -209,7 +166,6 @@ describe("runSearch on the search endpoint", () => {
     ]);
     const out = await runSearch(
       { endpoint: "search", body: { query: "q", output_settings: { flat_results: {} } } },
-      ["data", "web"],
       null,
       CTX,
       "tako_search_advanced",

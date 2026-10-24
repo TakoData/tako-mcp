@@ -267,6 +267,69 @@ export async function djangoPost<T>(
   );
 }
 
+/**
+ * Open a server-sent event stream with a `GET` and return the response body.
+ *
+ * Sends `Accept: text/event-stream` plus the same auth and caller headers as
+ * `djangoGet`. `timeoutMs` bounds the wait for the response headers only;
+ * `signal` ends the request at any point, including while the caller reads
+ * the body. A non-2xx response throws the same `DjangoError` subclasses as
+ * `djangoGet`. An abort from `signal` rethrows the fetch's abort error.
+ */
+export async function djangoOpenStream(
+  env: Env,
+  token: string,
+  path: string,
+  opts: DjangoRequestOptions & { signal: AbortSignal },
+): Promise<ReadableStream<Uint8Array>> {
+  const url = buildUrl(env, path, opts.query);
+  const headers = new Headers({
+    "X-API-Key": token,
+    Accept: "text/event-stream",
+  });
+  applyCallerHeaders(headers, opts.caller);
+  const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const ctx = { path, method: "GET" as const };
+
+  const controller = new AbortController();
+  const forwardAbort = (): void => controller.abort(opts.signal.reason);
+  if (opts.signal.aborted) forwardAbort();
+  else opts.signal.addEventListener("abort", forwardAbort, { once: true });
+  let headersTimedOut = false;
+  const headerTimer = setTimeout(() => {
+    headersTimedOut = true;
+    controller.abort();
+  }, timeoutMs);
+
+  let response: Response;
+  try {
+    response = await fetch(new Request(url, { method: "GET", headers }), {
+      signal: controller.signal,
+    });
+  } catch (err) {
+    if (headersTimedOut && isAbortError(err)) {
+      throw new DjangoTimeoutError({ ...ctx, timeoutMs });
+    }
+    throw err;
+  } finally {
+    clearTimeout(headerTimer);
+  }
+
+  if (!response.ok) {
+    opts.signal.removeEventListener("abort", forwardAbort);
+    return throwForStatus(response, ctx);
+  }
+  if (response.body === null) {
+    opts.signal.removeEventListener("abort", forwardAbort);
+    throw new DjangoResponseParseError({
+      ...ctx,
+      status: response.status,
+      cause: new Error("The event stream response has no body."),
+    });
+  }
+  return response.body;
+}
+
 /* ------------------------------------------------------------------ */
 /* Internals                                                           */
 /* ------------------------------------------------------------------ */
@@ -373,6 +436,13 @@ async function executeRequest<T>(
     }
   }
 
+  return throwForStatus(response, ctx);
+}
+
+async function throwForStatus(
+  response: Response,
+  ctx: { path: string; method: HttpMethod },
+): Promise<never> {
   // Read the response body for every error subtype that surfaces it.
   // `DjangoUnauthorizedError` carries it so the caller can relay the
   // backend's auth-failure reason (bad key vs. wrong environment) rather

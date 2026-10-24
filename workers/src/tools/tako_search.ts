@@ -4,16 +4,15 @@
  *
  * Synchronous and fast-only: `effort` is `fast` (default) or `instant`
  * (cached-embed fast path). There is no in-tool deep/research path and
- * no async polling. A zero-card response carries a `guidance` field
- * (built in `_search_results.ts`) steering the model to the free
- * `tako_available_data` coverage check instead of priced
- * reword-and-retry loops.
+ * no async polling. A zero-card response carries no `guidance`: the empty
+ * `cards` list and the `web_results` beside it are the whole verdict.
  *
- * The top result auto-renders inline as a chart: `buildSearchOutput`
- * lifts the top card's `card_id` into top-level widget fields
- * (`pub_id`, `embed_url`, `image_url`, …) that the host's chart widget
- * reads. `buildChartUrls` only needs a `card_id`, which v3 TakoCards
- * carry directly.
+ * Cards keep search's order. `buildSearchOutput` lifts the first
+ * card's `card_id` into top-level widget fields (`pub_id`, `embed_url`,
+ * `image_url`, …), which is the single chart that renders on generic
+ * `/mcp`. On `/mcp/chatgpt`, `_meta.charts` carries a chart for every
+ * card, and the widget renders two or more as a carousel. `buildChartUrls` only needs a
+ * `card_id`, which v3 TakoCards carry directly.
  */
 import { z } from "zod";
 
@@ -32,17 +31,17 @@ import {
 } from "./_render_markdown.js";
 import { runSearch } from "./_run_search.js";
 import { SOURCES_DESCRIBE } from "./_shared_prose.js";
-import type { SearchOutput } from "./_search_results.js";
+import type { CardChart, SearchOutput } from "./_search_results.js";
 import type { AppUiResource, ToolContentBlock, ToolContext, ToolModule } from "./types.js";
 
 const DESCRIPTION = [
-  "Search Tako's data graph and the live web in one call: many results at once, as structured cards plus web results, with the top card rendered inline as a chart.",
+  "Search Tako's data graph and the live web in one call: many results at once, as structured cards plus web results. The first card's chart renders inline; some hosts also show every other card's chart, in search's order.",
   "",
-  "It finds data; `tako_contents` fetches it. Each card carries a headline value, node ids, and a url — pass the url to `tako_contents` for rows (`exportable: true` cards) or a web result's full page text. When `exportable` is false the rows are locked — read the headline value from the card's `description`. Website-traffic and SEO cards bill a per-unit data minimum above the search price.",
+  "It finds results; `tako_contents` fetches what's behind them. Each card carries a headline value, node ids, and a url — pass the url to `tako_contents` for rows (`exportable: true` cards) or a web result's full page text. When `exportable` is false the rows are locked — read the headline value from the card's `description`.",
   "",
   // `Best for:` verbatim: AGENTS.md's tool-description rule, and the form the
   // other three default tools already use in docs/TOOLS.md.
-  'Best for: breadth — fan out several narrow queries in parallel. Each query resolves one metric — for one entity, or a comparison set ("Apple revenue", "Nvidia vs AMD gross margin"); several metrics or topics in one query retrieve poorly. To learn what Tako covers, or a metric\'s canonical name, run `tako_available_data` first, then search on the canonical name it returns.',
+  'Best for: breadth — fan out several narrow queries in parallel. Each query answers one question — one metric for one entity, a comparison set ("Apple revenue", "Nvidia vs AMD gross margin"), or one news or web lookup ("EU AI Act timeline"); several metrics or topics in one query retrieve poorly.',
 ].join("\n");
 
 const inputSchema = z.object({
@@ -59,8 +58,7 @@ const inputSchema = z.object({
   //
   // The ONE field here that keeps a default, and it is not an exception to the
   // no-defaults rule below: the Worker READS `sources` to decide which
-  // per-source blocks to build and which zero-card guidance branch applies. It
-  // is never forwarded to the API as a value.
+  // per-source blocks to build. It is never forwarded to the API as a value.
   sources: looseArray(
     z
       .array(z.enum(["data", "web"]))
@@ -148,6 +146,22 @@ export function buildSearchBody(input: Input, tier: Tier): z.input<typeof Search
 }
 
 
+type ChartMeta = CardChart & { image_natural_width?: number; image_natural_height?: number };
+
+function withTopChartDims(
+  charts: readonly CardChart[],
+  topPubId: string | undefined,
+  topMeta: Record<string, unknown> | undefined,
+): ChartMeta[] {
+  const width = topMeta?.image_natural_width;
+  const height = topMeta?.image_natural_height;
+  return charts.map((chart) =>
+    chart.pub_id === topPubId && typeof width === "number" && typeof height === "number"
+      ? { ...chart, image_natural_width: width, image_natural_height: height }
+      : { ...chart },
+  );
+}
+
 const tako_search = {
   name: "tako_search",
   description: DESCRIPTION,
@@ -191,7 +205,6 @@ const tako_search = {
     // that also lets this tool run anonymously.
     return runSearch(
       { endpoint: "search", body: buildSearchBody(input, ctx.tier ?? "authenticated") },
-      input.sources,
       null,
       ctx,
       "tako_search",
@@ -225,12 +238,16 @@ const tako_search = {
     // Cast: the widget fields are declared only on the chatgpt advertised
     // schema now, so the loose base Output no longer types them.
     const o = output as SearchOutput;
-    return buildChartExtraMeta(o.image_url, {
+    const charts = o.charts ?? [];
+    const metaOpts = {
       bakeImage: ctx.surface !== "chatgpt",
       env: ctx.env,
       origin: ctx.origin,
       pubId: o.pub_id,
-    });
+    };
+    const topMeta = await buildChartExtraMeta(o.image_url, metaOpts);
+    if (ctx.surface !== "chatgpt" || charts.length < 2) return topMeta;
+    return { ...topMeta, charts: withTopChartDims(charts, o.pub_id, topMeta) };
   },
   async extraContentBlocks(output, _ctx): Promise<ToolContentBlock[]> {
     void _ctx;

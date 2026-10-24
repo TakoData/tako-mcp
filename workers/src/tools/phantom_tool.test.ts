@@ -6,8 +6,6 @@ import {
   serverInstructionsFor,
 } from "../instructions.js";
 import { TOOL_REGISTRY } from "./_registry.js";
-import { buildSearchOutput } from "./_search_results.js";
-import type { Env } from "../env.js";
 import { isToolOnSurface, outputSchemaForSurface, resolveToolSet } from "./_surface.js";
 import type { Surface } from "../surface.js";
 
@@ -230,9 +228,9 @@ describe("no opt-in tool names a tool outside the defaults plus itself", () => {
 /**
  * The `initialize` instructions are the widest phantom surface in the repo and
  * the only one not published by a tool: `mcp.ts` returns ONE string for every
- * tier and surface, and the host puts it in the model's system prompt. So a
- * tool name here is read by every connection on every surface, including the
- * connections that do not register it.
+ * tier, built from the connection's resolved toolset, and the host puts it in
+ * the model's system prompt. So a tool name here is read by every connection
+ * that gets that string, including any that does not register it.
  *
  * That is not hypothetical. `mcp.ts` carries a comment recording that this
  * string "used to carry a second half about `tako_answer`" and telling the
@@ -240,39 +238,27 @@ describe("no opt-in tool names a tool outside the defaults plus itself", () => {
  * prose, whose only test was a hand-written `not.toContain("tako_answer")`.
  * One name, checked by hand, in the file this suite exists to replace.
  *
- * The allowed set is the INTERSECTION of the default listings, not either
- * surface's own: one string serves both, so a name has to be reachable on
- * both to be safe. That is strictly tighter than the per-tool checks above —
- * `tako_visualize` is default-on for chatgpt and off for generic, so naming
- * it here would be a phantom for every `/mcp` client.
+ * Each surface's default string is checked against that surface's own
+ * listing. `/mcp/chatgpt` lists both agent tools by default and `/mcp` doesn't,
+ * so the agent routing sentence is right on one and a phantom on the other.
  */
 describe("server instructions name no tool a connection may not have", () => {
-  const surfaces = ["generic", "chatgpt"] as const satisfies Surface[];
-  const universal = [...ALL_TOOL_NAMES].filter((name) =>
-    surfaces.every((surface) => isToolOnSurface(name, surface, null)),
-  );
-
-  it("the cross-surface default set is non-empty", () => {
-    // Without this the filters below pass vacuously if surface membership
-    // ever returns nothing.
-    expect(universal.length).toBeGreaterThan(0);
-  });
-
-  it("SERVER_INSTRUCTIONS names only tools every surface registers by default", () => {
-    // `ownName` is empty: instructions belong to no tool, so every name in
-    // them is foreign and none gets the self-reference exemption.
-    const unreachable = foreignToolNamesIn(SERVER_INSTRUCTIONS, "").filter(
-      (name) => !universal.includes(name),
-    );
-    expect(unreachable, "SERVER_INSTRUCTIONS names unreachable tools").toEqual([]);
-  });
+  for (const surface of ["generic", "chatgpt"] as const satisfies Surface[]) {
+    it(`the ${surface} default instructions name only tools that surface registers`, () => {
+      const listed = resolveToolSet(surface, null);
+      // `ownName` is empty: instructions belong to no tool, so every name in
+      // them is foreign and none gets the self-reference exemption.
+      const unreachable = foreignToolNamesIn(serverInstructionsFor(listed), "").filter(
+        (name) => !listed.has(name),
+      );
+      expect(unreachable, `${surface} default instructions name unreachable tools`).toEqual([]);
+    });
+  }
 });
 
 /**
- * The block above pins the UNFILTERED constant against the cross-surface
- * default set, which passes only because `tako_search`,
- * `tako_available_data` and `tako_contents` are default on both surfaces.
- * It says nothing about `?tools=`, and `?tools=` REPLACES the default listing
+ * The block above checks only the default listings. It says nothing about
+ * `?tools=`, and `?tools=` REPLACES the default listing
  * (spec D1) — so `?tools=agent` used to serve a system prompt naming three
  * tools the connection had not registered. This block is the derived guard:
  * for any allowlist, every tool the instructions name must be in the set the
@@ -281,6 +267,7 @@ describe("server instructions name no tool a connection may not have", () => {
 describe("server instructions name no tool outside the resolved ?tools= set", () => {
   const allowlists: ReadonlySet<string>[] = [
     new Set(["tako_agent"]),
+    new Set(["tako_agent", "tako_company_agent"]),
     new Set(["tako_search"]),
     new Set(["tako_search", "tako_contents"]),
     new Set(["tako_visualize", "tako_graph_related"]),
@@ -311,9 +298,9 @@ describe("server instructions name no tool outside the resolved ?tools= set", ()
   // POSITIVE, because every case above asserts only an ABSENCE. Over-filtering
   // a partial allowlist is invisible to them: make `assembleInstructions` drop
   // one extra sentence whenever any sentence is dropped and all of them still
-  // pass, because the result still names no phantom. The `unfiltered` case
-  // below catches only wholesale over-filtering of the DEFAULT set. This pins
-  // the half nothing else does — what a partial allowlist KEEPS.
+  // pass, because the result still names no phantom. `mcp.test.ts` catches
+  // only over-filtering of each surface's DEFAULT set. This pins the half
+  // nothing else does — what a partial allowlist KEEPS.
   it("?tools=search,contents keeps its own sentences and drops the others", () => {
     const resolved = resolveToolSet("generic", new Set(["tako_search", "tako_contents"]));
     const text = serverInstructionsFor(resolved);
@@ -329,89 +316,15 @@ describe("server instructions name no tool outside the resolved ?tools= set", ()
     expect(text).toContain("knowledge graph of live structured data");
   });
 
-  // Named by the invariant, not by a count. The assertion compares against
-  // SERVER_INSTRUCTIONS whole, so it never needed a number — and "all three"
-  // went stale the moment `tako_graph_related` made four.
-  it("the default listing names every tool sentence, unfiltered", () => {
-    // Guards the other direction: over-filtering would silently strip
-    // guidance from every default connection.
-    const resolved = resolveToolSet("generic", null);
-    expect(serverInstructionsFor(resolved)).toBe(SERVER_INSTRUCTIONS);
+  it("routes between the agent tools only when the connection registers both", () => {
+    const both = serverInstructionsFor(
+      resolveToolSet("generic", new Set(["tako_agent", "tako_company_agent"])),
+    );
+    const one = serverInstructionsFor(resolveToolSet("generic", new Set(["tako_agent"])));
+
+    expect(both).toContain("Use `tako_company_agent` for a list of companies or people");
+    expect(both).toContain("`tako_agent` for a ranking, trend, or aggregate of metrics");
+    expect(one).not.toContain("tako_company_agent");
+    expect(SERVER_INSTRUCTIONS).not.toContain("tako_company_agent");
   });
-});
-
-/**
- * The same rule, applied to a tool RESULT rather than a description.
- *
- * Everything above scans `tools/list` text, which is why the zero-result
- * guidance escaped: it is built per call, and it branched on TIER
- * (`tier === "free"`) as a proxy for "can this connection call
- * tako_available_data". Tier is not that predicate. `?tools=` REPLACES the
- * defaults (spec D1), so a SIGNED-IN `?tools=search` connection registers
- * `tako_search` alone, took the authenticated arm, and read "Call
- * tako_available_data (free) to learn the canonical metric name" — a call
- * that resolves to the SDK's bare "tool not found".
- *
- * Every branch is enumerated rather than sampled: the guidance has four
- * shapes on the search path plus three on the answer path, and the bug lived
- * in exactly one of them.
- */
-describe("zero-result guidance names no tool the connection lacks", () => {
-  const ENV: Env = { DJANGO_BASE_URL: "https://example.invalid" };
-
-  // The tool sets a real connection can resolve: each surface's defaults, and
-  // — on generic, the only surface `?tools=` reaches — each single-tool
-  // allowlist, which is the narrowest thing an operator can ask for.
-  const connections: Array<{ label: string; surface: Surface; requested: ReadonlySet<string> | null }> = [
-    { label: "generic defaults", surface: "generic", requested: null },
-    { label: "chatgpt", surface: "chatgpt", requested: null },
-    ...TOOL_REGISTRY.map((t) => ({
-      label: `generic ?tools=${t.name}`,
-      surface: "generic" as Surface,
-      requested: new Set([t.name]) as ReadonlySet<string>,
-    })),
-  ];
-
-  for (const { label, surface, requested } of connections) {
-    const registered = resolveToolSet(surface, requested);
-
-    it(`${label} — every tool named in guidance is registered`, () => {
-      for (const tier of ["free", "authenticated"] as const) {
-        for (const sources of [["data"], ["web"], ["data", "web"]] as const) {
-          for (const webResults of [[], [{ title: "t", url: "https://e.com" }]] as const) {
-            for (const extras of [{}, { answer: "Some synthesized prose." }] as const) {
-              const out = buildSearchOutput(
-                [],
-                webResults as never,
-                "req-1",
-                null,
-                ENV,
-                [...sources],
-                false,
-                tier,
-                {
-                  rowCap: null,
-                  keepWebText: false,
-                  registeredTools: registered,
-                  toolName: extras.answer === undefined ? "tako_search" : "tako_search_advanced",
-                },
-                extras,
-              );
-              const guidance = out.guidance;
-              expect(guidance, "a zero-card response must carry guidance").toBeDefined();
-              const named = [...ALL_TOOL_NAMES].filter((name) =>
-                new RegExp(`\\b${name}\\b`).test(guidance ?? ""),
-              );
-              const unreachable = named.filter((name) => !registered.has(name));
-              expect(
-                unreachable,
-                `${label} / ${tier} / sources=${sources.join("+")} / web=${webResults.length} / ` +
-                  `${extras.answer === undefined ? "search" : "answer"}: guidance names unregistered tool(s)`,
-              ).toEqual([]);
-            }
-          }
-        }
-      }
-    });
-  }
 });

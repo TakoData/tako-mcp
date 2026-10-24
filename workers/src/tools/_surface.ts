@@ -4,8 +4,8 @@
  * The request PATH decides the surface (`surface.ts`); the `?tools=` query
  * param (parsed by `_tools_param.ts`) can replace the generic surface's
  * default listing with an allowlist (spec D1). The chatgpt surface is FIXED
- * (spec D2): OpenAI snapshots the tool list at submission, so nothing may
- * add to or remove from it per request — the param is ignored there.
+ * (spec D2): OpenAI's daily scan reads one listing for every user, so nothing
+ * may add to or remove from it per request — the param is ignored there.
  *
  * Nothing here varies by tier: the LISTING is auth-invariant (spec D4 of the
  * surface-split design); anonymous EXECUTION is gated at dispatch in
@@ -27,8 +27,8 @@ import type { AnyToolModule, ToolAnnotations } from "./types.js";
 /**
  * Default listing on `/mcp` (spec D3). Search + fetch + the free coverage
  * tool, plus graph exploration. Everything else
- * (`tako_search_advanced`, `tako_agent`, `tako_visualize`) is reachable only
- * by naming it in `?tools=`.
+ * (`tako_search_advanced`, `tako_agent`, `tako_company_agent`,
+ * `tako_visualize`) is reachable only by naming it in `?tools=`.
  */
 export const GENERIC_DEFAULT_TOOL_NAMES: ReadonlySet<string> = new Set([
   "tako_search",
@@ -76,11 +76,14 @@ export const FREE_TIER_TOOL_NAMES: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * The listing on `/mcp/chatgpt` — exactly the tools submitted to OpenAI
- * (`chatgpt-app-submission.json`). Any change here is a resubmission.
+ * The listing on `/mcp/chatgpt`, matched by `chatgpt-app-submission.json`.
+ * OpenAI's daily scan removes a dropped tool and holds an added one until its
+ * automated checks pass.
  */
 export const CHATGPT_TOOL_NAMES: ReadonlySet<string> = new Set([
   "tako_search",
+  "tako_agent",
+  "tako_company_agent",
   "tako_available_data",
   "tako_contents",
   "tako_visualize",

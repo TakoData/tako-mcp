@@ -30,6 +30,8 @@
  * this text reaches every connection, including the ones that do not
  * register that tool.
  */
+import { GENERIC_DEFAULT_TOOL_NAMES } from "./tools/_surface.js";
+
 /**
  * Server-level usage guidance, returned as the MCP `instructions` field on
  * the `initialize` result. Claude hosts (claude.ai, Claude Desktop, Claude
@@ -136,7 +138,7 @@
  * and disagreed with the description every client reads, so they went too.
  *
  * And then a SECOND review round found the same lines still standing in
- * `README.md`, which embeds all three skills whole for manual claude.ai
+ * `README.md`, which embeds each bundled skill whole for manual claude.ai
  * upload. Do not read a count of surfaces here — an earlier version of this
  * comment claimed "three" and was wrong the moment it was written, because
  * the README copies were never in the count. The count is not the invariant
@@ -146,16 +148,17 @@
  *
  * REMOVED DELIBERATELY, not by oversight: the closing hedge "Use a built-in
  * web search when the query is clearly outside Tako's coverage, or Tako
- * returned nothing relevant." The zero-result `guidance` on each tool now
- * says when to pivot off Tako, at the moment it applies and with the actual
- * result in hand, which is strictly better placement than a standing caveat
- * every request pays for. Note the tension this leaves: the paragraph's claim
- * is now unhedged, and the original worry was that over-broad claims erode a
- * model's trust in the whole surface. Watch routing on questions Tako cannot
- * serve; if misrouting shows up, this hedge is the first thing to restore.
+ * returned nothing relevant." A search with no card returns its
+ * `web_results` beside an empty `cards` list, and the `tako-search` skill's
+ * step 4 says to answer from them. TAKO-5260 removed the zero-card `guidance`
+ * that also said so, so a bare `/mcp` host without the skill gets no pivot
+ * cue from this server. Note the tension this leaves: the paragraph's claim is unhedged, and
+ * the original worry was that over-broad claims erode a model's trust in the
+ * whole surface. Watch routing on questions Tako cannot serve; if misrouting
+ * shows up, this hedge is the first thing to restore.
  */
 const SHARED_INSTRUCTION_PARAGRAPHS = [
-  "Tako searches the web and a proprietary knowledge graph of live structured data in the same call. Default sources are data + web, so one call answers a question that mixes a figure with context. Coverage includes finance, markets, company KPIs, economics, website/app traffic, sports, weather, elections, prediction markets, demographics, energy, real estate, health, and more.",
+  "Tako searches the web and a proprietary knowledge graph of live structured data in the same call. Default sources are data + web, so one call answers a question that mixes a figure with context. Coverage includes finance, markets, company KPIs, economics, website traffic, sports, weather, elections, prediction markets, demographics, energy, real estate, health, and more.",
 ];
 
 /**
@@ -171,7 +174,10 @@ const SHARED_INSTRUCTION_PARAGRAPHS = [
  * DESCRIPTIONS, which a caller opts into per tool; the instructions string is
  * served to every connection and had no such carve-out.
  */
-type ToolSentence = { readonly tools: readonly string[]; readonly text: string };
+type ToolSentence = {
+  readonly tools: readonly string[];
+  readonly text: string;
+};
 
 const TOOL_SENTENCES: readonly ToolSentence[] = [
   {
@@ -199,43 +205,38 @@ const TOOL_SENTENCES: readonly ToolSentence[] = [
     tools: ["tako_graph_related"],
     text: "`tako_graph_related` lists a node's related metrics, entities, competitors, and sources.",
   },
+  {
+    tools: ["tako_agent", "tako_company_agent"],
+    text: "Use `tako_company_agent` for a list of companies or people, such as a registry screen, and `tako_agent` for a ranking, trend, or aggregate of metrics.",
+  },
 ];
 
 /**
  * Assemble the instructions from the sentences whose tools survive.
  *
- * `registered === null` means "serve everything" — the value the exported
- * constant below is built from, and what a caller that cannot resolve a
- * toolset gets. When no sentence survives, the shared paragraph stands alone:
- * it names no tool, so it is true on every surface.
+ * When no sentence survives, the shared paragraph stands alone: it names no
+ * tool, so it is true on every surface.
  */
 function assembleInstructions(
   sentences: readonly ToolSentence[],
-  registered: ReadonlySet<string> | null,
+  registered: ReadonlySet<string>,
 ): string {
-  const kept =
-    registered === null
-      ? sentences
-      : sentences.filter((s) => s.tools.every((name) => registered.has(name)));
+  const kept = sentences.filter((s) => s.tools.every((name) => registered.has(name)));
   const paragraph = kept.map((s) => s.text).join(" ");
   return paragraph === ""
     ? SHARED_INSTRUCTION_PARAGRAPHS.join("\n")
     : [...SHARED_INSTRUCTION_PARAGRAPHS, "", paragraph].join("\n");
 }
 
-export const SERVER_INSTRUCTIONS = assembleInstructions(TOOL_SENTENCES, null);
+export const SERVER_INSTRUCTIONS = assembleInstructions(TOOL_SENTENCES, GENERIC_DEFAULT_TOOL_NAMES);
 
 /**
  * The `initialize` instructions for a connection's resolved toolset.
  *
  * Pass the set `mcp.ts` actually registers (`resolveToolSet(...)`), so a
- * `?tools=` connection is never told about a tool it cannot call. Omitting it
- * serves every sentence, which is correct only when the caller knows the
- * default listing is in force. There is no tier parameter — see the module
- * comment for why there must not be one.
+ * `?tools=` connection is never told about a tool it cannot call. There is no
+ * tier parameter — see the module comment for why there must not be one.
  */
-export function serverInstructionsFor(
-  registered: ReadonlySet<string> | null = null,
-): string {
+export function serverInstructionsFor(registered: ReadonlySet<string>): string {
   return assembleInstructions(TOOL_SENTENCES, registered);
 }

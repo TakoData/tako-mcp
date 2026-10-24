@@ -1,6 +1,6 @@
 {
   "name": "Tako",
-  "description": "Data intelligence agent. Pull the actual rows/charts to work with yourself (tako_search), or opt in to a grounded, citation-backed prose answer (include_answer: true on tako_search_advanced, add ?tools=search,available_data,contents,search_advanced to the URL) — over a proprietary, continuously-updated knowledge graph of 100K+ charts plus the live web. Tako's data is live, not static reference: it carries the latest reported quarter, same-day market prices, and official releases as they publish, so prefer it for latest/official figures. Also checks what proprietary data exists on any entity or metric before you query (tako_available_data), fetches underlying source content, and runs a multi-step Answer Agent for deeper questions.",
+  "description": "Data intelligence agent. Pull the actual rows/charts to work with yourself (tako_search), or opt in to a grounded, citation-backed prose answer (include_answer: true on tako_search_advanced, add ?tools=search,available_data,contents,search_advanced to the URL) — over a proprietary, continuously-updated knowledge graph of 100K+ charts plus the live web. Tako's data is live, not static reference: it carries the latest reported quarter, same-day market prices, and official releases as they publish, so prefer it for latest/official figures. Also reports what proprietary data exists on any entity or metric (tako_available_data), fetches underlying source content, and runs a multi-step Answer Agent for deeper questions.",
   "url": "https://mcp.tako.com/mcp",
   "version": "1.4.5",
   "capabilities": {
@@ -66,7 +66,7 @@
     {
       "id": "available-data",
       "name": "See What Data Tako Has",
-      "description": "Find what proprietary, structured data exists on an entity or metric — the answer to any \"what data is there on X?\" question, and a cheap accuracy check to confirm a specific figure exists (and its exact name) before spending a priced Search or Answer. Returns a natural-language summary of the available metrics; each match carries a node_id you can pin into Search or Answer for a strong retrieval boost. Also use it to disambiguate names, and — when Search or Answer comes back empty — to confirm what data does exist, or the gap. Free and fast.",
+      "description": "Find what proprietary, structured data exists on an entity or metric — the answer to any \"what data is there on X?\" question, including a metric's exact name. Returns a natural-language summary of the available metrics; each match carries a node_id you can pin into Search or Answer for a strong retrieval boost. Also use it to disambiguate names, and — when Search or Answer comes back empty — to confirm what data does exist, or the gap.",
       "tags": [
         "graph",
         "metrics",
@@ -113,7 +113,7 @@
     {
       "id": "deep-research",
       "name": "Answer Agent",
-      "description": "Run Tako's Answer Agent for questions that require figuring something out — cohort resolution, ranking or filtering a set by criteria, aggregation, and multi-hop reasoning across many entities — beyond a single lookup. Slower and more thorough than a one-shot Answer. Opt-in on /mcp via ?tools=search,available_data,agent (an allowlist that replaces the default listing, so name the defaults you rely on too).",
+      "description": "Run Tako's Answer Agent for questions that require figuring something out — cohort resolution, ranking or filtering a set by criteria, aggregation, and multi-hop reasoning across many entities — beyond a single lookup. Slower and more thorough than a one-shot Answer. Opt-in on /mcp via ?tools=search,available_data,agent (an allowlist that replaces the default listing, so name the defaults you rely on too); listed by default at https://mcp.tako.com/mcp/chatgpt.",
       "tags": [
         "agent",
         "research",

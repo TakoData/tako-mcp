@@ -7,17 +7,17 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
 [![Benchmarks: +21% on VerticalRTK](https://img.shields.io/badge/Benchmarks-%2B21%25_on_VerticalRTK-6E56CF?style=flat-square)](https://tako.com/blog/evaluating-a-new-kind-of-search-api/)
 
-Tako MCP gives your agent industry-leading live web search plus licensed data that the open web does not have. That includes company financials, macroeconomic indicators, web and app traffic, sports, US government spending, and more.
+Tako MCP gives your agent industry-leading live web search plus licensed data that the open web does not have. That includes company financials, macroeconomic indicators, website traffic, sports, US government spending, and more.
 
 **[Full Documentation](https://docs.tako.com/documentation/integrations/mcp-server)** · **[Get your API key](https://tako.com/console/api-keys)** · **[MCP Registry](https://registry.modelcontextprotocol.io)**
 
 Tako MCP lets an agent:
 
-- **Search** Tako's knowledge graph and the live web — top result renders inline as a chart, and `tako_contents` reads the rows behind it
-- **Discover** exactly what proprietary data exists for an entity or metric — free and fast
+- **Search** Tako's knowledge graph and the live web — every card renders as a chart on the ChatGPT app (the first card's chart elsewhere), and `tako_contents` reads the rows behind it
+- **Discover** exactly what proprietary data exists for an entity or metric
 - **Fetch** the underlying rows (JSON) or a page's text behind any result URL
 - **Visualize** your own structured data as an embeddable card — public and permanent, readable by anyone with the link _(opt-in; on by default on the ChatGPT app)_
-- **Run** Tako's Answer Agent for deep, multi-step research _(opt-in)_
+- **Run** Tako's Answer Agent for deep, multi-step research, or its Company Agent for company and registry-officer questions _(opt-in; on by default on the ChatGPT app)_
 
 > **Why a data-native search API?** On Tako's [VerticalRTK benchmark](https://tako.com/blog/evaluating-a-new-kind-of-search-api/) of real-time domain questions (finance, economics, sports, weather), Tako outperforms the next-best web search API by **21%** — while using **~75% fewer tool calls at up to one-tenth the cost**, and answering research tasks in **15.5s vs 124.2s** for OpenAI web search. It reaches parity with Exa, Parallel, Nimble, and Tavily on standard web benchmarks (SimpleQA, FRAMES) and pulls ahead where structured, real-time data matters. **[Read the evals →](https://tako.com/blog/evaluating-a-new-kind-of-search-api/)**
 
@@ -37,7 +37,7 @@ Paste the URL. Sign in when your client prompts you — a per-host key is minted
 [![Install in VS Code](https://img.shields.io/badge/VS_Code-Install_Tako-0098FF?style=flat-square&logo=visualstudiocode&logoColor=white)](https://insiders.vscode.dev/redirect/mcp/install?name=tako&config=%7B%22type%22%3A%22http%22%2C%22url%22%3A%22https%3A%2F%2Fmcp.tako.com%2Fmcp%22%7D)
 [![Install in VS Code Insiders](https://img.shields.io/badge/VS_Code_Insiders-Install_Tako-24bfa5?style=flat-square&logo=visualstudiocode&logoColor=white)](https://insiders.vscode.dev/redirect/mcp/install?name=tako&config=%7B%22type%22%3A%22http%22%2C%22url%22%3A%22https%3A%2F%2Fmcp.tako.com%2Fmcp%22%7D&quality=insiders)
 
-Claude Code installs with one command — the plugin brings the MCP connection plus Tako's bundled [research skills](#agent-skills):
+Claude Code installs with one command — the plugin brings the MCP connection plus Tako's bundled [lookup and research skills](#agent-skills):
 
 ```bash
 claude plugin marketplace add TakoData/tako-mcp && claude plugin install tako@tako
@@ -56,7 +56,7 @@ Pick your client below.
 <details>
 <summary><b>Claude Code</b></summary>
 
-**Plugin (recommended)** — installs the MCP connection plus Tako's bundled [research skills](#agent-skills) in one step, and works immediately on the free tier — no API key to mint or manage:
+**Plugin (recommended)** — installs the MCP connection plus Tako's bundled [lookup and research skills](#agent-skills) in one step, and works immediately on the free tier — no API key to mint or manage:
 
 ```bash
 claude plugin marketplace add TakoData/tako-mcp
@@ -138,13 +138,13 @@ Add to `.vscode/mcp.json` (workspace) or your user `mcp.json` — VS Code prompt
 gemini extensions install https://github.com/TakoData/tako-mcp
 ```
 
-That installs the MCP connection, Tako's bundled [research skills](#agent-skills), and three commands:
+That installs the MCP connection, Tako's bundled [lookup and research skills](#agent-skills), and three commands:
 
 | Command | What it does |
 | --- | --- |
 | `/data <question>` | The answer, cited, across proprietary data **and** the full web, since `sources` defaults to both. One narrow `tako_search` (with rows) for a specific value, parallel searches for anything broad |
 | `/chart <question>` | The series as a chart, with the **Open in Tako** embed link |
-| `/coverage <entity or metric>` | What the proprietary graph has, before you spend a call. `tako_available_data` is free, and a miss there still leaves web search |
+| `/coverage <entity or metric>` | What the proprietary graph has on an entity or metric. A miss there still leaves web search |
 
 To unlock the full toolset and your own account limits, authenticate once: run `/mcp auth tako` inside Gemini CLI. A browser opens to sign you in with your Tako account, and a per-host API key is minted for you automatically (visible and revocable at [tako.com/console/api-keys](https://tako.com/console/api-keys)).
 
@@ -240,7 +240,7 @@ The consumer chat hosts don't accept Bearer tokens. `claude_desktop_config.json`
 3. Paste `https://mcp.tako.com/mcp/chatgpt` and click **Connect**
 4. Complete the Tako sign-in flow; the connector is then listed and ready
 
-The `/mcp/chatgpt` surface is OAuth-only and tuned for ChatGPT (interactive chart widget, a fixed five-tool listing; `?tools=` is ignored there). The generic `/mcp` URL also works there — you get chart images instead of the interactive widget.
+The `/mcp/chatgpt` surface is OAuth-only and tuned for ChatGPT (interactive chart widget, a fixed seven-tool listing; `?tools=` is ignored there). The generic `/mcp` URL also works there — you get chart images instead of the interactive widget.
 
 ![ChatGPT connector connected](docs/images/chatgpt-tako-connected.png)
 
@@ -289,10 +289,10 @@ The full reference — every description and parameter exactly as the model sees
 
 | Tool | What it's for |
 | ---- | ------------- |
-| `tako_search` | **Find the data.** Fast search over Tako's curated graph and the live web. Four parameters — `query`, `sources`, `country_code`, `locale` — and no defaults of its own, so an omitted field takes the API's. Cards carry headline values, node ids and chart links; `tako_contents` reads the rows. The top result renders inline as a chart with an **Open in Tako** link. Parallelize broad questions into narrow single entity+metric searches. |
-| `tako_available_data` | **Find what structured data exists** on an entity or metric in one free call — the exact metric name to search on, an `id` for graph traversal, and a ready-to-run `next_call`. Ambiguous names come back as candidates with a `kind`; `metric` doubles as the substring browse filter; `limit` widens the candidate list. |
-| `tako_contents` | Fetch what's behind result URLs (1-10 per call): a card's rows (billed per 1k rows) or a web page's text — set `query` to a question to get only the passages that answer it. Requires a signed-in connection. |
-| `tako_graph_related` | Explore a graph node: a map (each relation's key, total, first three names) or one paged relation — metrics, the entities a metric covers, competitors (`rel:competes_with`), memberships, sources. `q` is a substring filter. Free. |
+| `tako_search` | **Find the data.** Fast search over Tako's curated graph and the live web. Four parameters — `query`, `sources`, `country_code`, `locale` — and no defaults of its own, so an omitted field takes the API's. Cards carry headline values, node ids and chart links; `tako_contents` reads the rows. Every card renders as a chart on the ChatGPT app, and the first card's chart renders elsewhere, each with an **Open in Tako** link. Parallelize broad questions into narrow single entity+metric searches. |
+| `tako_available_data` | **Find what structured data exists** on an entity or metric in one call — the exact metric name to search on, an `id` for graph traversal, and a ready-to-run `next_call`. Ambiguous names come back as candidates with a `kind`; `metric` doubles as the substring browse filter; `limit` widens the candidate list. |
+| `tako_contents` | Fetch what's behind result URLs (1-10 per call): a card's rows or a web page's text — set `query` to a question to get only the passages that answer it. Requires a signed-in connection. |
+| `tako_graph_related` | Explore a graph node: a map (each relation's key, total, first three names) or one paged relation — metrics, the entities a metric covers, competitors (`rel:competes_with`), memberships, sources. `q` is a substring filter. |
 
 **Anonymous connections (no credentials):** the tool list is the same — it never changes with auth state. `tako_search` runs anonymously (rate-limited, on shared capacity); the others answer with sign-in instructions.
 
@@ -303,7 +303,8 @@ On connect, the server also advertises [MCP server instructions](https://modelco
 | Tool | Token | What it's for |
 | ---- | ----- | ------------- |
 | `tako_search_advanced` | `search_advanced` | The whole v3 search request body: per-source `count`, inline rows and `max_rows`, graph pins (`node_ids` + `strict`), web `include_domains` / `exclude_domains` / `category` / `snippet_max_chars` / `published_after` / `published_before`, `location`, `timezone`, `include_related`, and `effort: deep`. Set `include_answer: true` for one synthesized, citation-backed answer (and `output_schema` to fill a JSON Schema from the same evidence). Same structured payload as `tako_search`, minus the auto-rendered inline chart — `embed_url` is still there to click through. |
-| `tako_agent` | `agent` | Tako's **Answer Agent**: multi-step research (~30–90s) across many retrievals, returning a synthesized answer plus chart cards. |
+| `tako_agent` | `agent` | Tako's **Answer Agent**: multi-step research across many retrievals, returning a synthesized answer plus chart cards. A call waits up to 45 s. If the run is still going, it returns `status: "running"` and an `answer_run_…` `run_id`; call again with that `run_id` instead of `query`. |
+| `tako_company_agent` | `company_agent` | Tako's **Company Agent**: which companies or people match registry facts (status, incorporation date, location, industry), plus officers and directors. Same start-or-resume contract with a `company_run_…` `run_id`. On by default on `/mcp/chatgpt`, like `tako_agent`. |
 | `tako_visualize` | `visualize` | Author a Tako card from your own typed `components` (timeseries, bar, table, financial boxes…). It PUBLISHES: the card is public, permanent, and readable by anyone with the link. On by default on `/mcp/chatgpt`, the host that renders the widget inline. |
 
 **`?tools=` is an allowlist that replaces the defaults.** `?tools=search,contents` lists exactly those two; `?tools=agent` lists only `tako_agent`. Tokens are tool names with the `tako_` prefix optional. Unknown tokens are ignored, and a param that names nothing yields the defaults, so a typo never breaks the connection. Include the defaults you rely on:
@@ -313,8 +314,8 @@ claude mcp add tako --transport http "https://mcp.tako.com/mcp?tools=search,avai
 ```
 
 - **Claude.ai, Claude Desktop, ChatGPT developer-mode connectors:** put the param on the URL you paste. OAuth is unaffected (the server canonicalizes the resource, query string included).
-- **Claude Code plugin:** the plugin pins the default surface (its URL isn't user-editable). For a different set, add the server yourself with `claude mcp add` as above, and keep only one Tako connection active so you don't get two copies of every tool.
-- **`/mcp/chatgpt` ignores `?tools=`**: its listing is fixed at submission — `tako_search`, `tako_available_data`, `tako_contents`, `tako_visualize`, `tako_graph_related`.
+- **Claude Code plugin and Gemini CLI extension:** each pins the default surface plus `tako_agent` and `tako_company_agent` (`?tools=search,available_data,contents,graph_related,agent,company_agent`), and its URL isn't user-editable. For a different set, add the server yourself with `claude mcp add` as above, and keep only one Tako connection active so you don't get two copies of every tool. Claude Code stores a sign-in for each server URL, so after you update the Claude Code plugin from 1.4.5 or earlier, sign in again: run `/mcp`, select `tako`, and choose **Authenticate**.
+- **`/mcp/chatgpt` ignores `?tools=`**: its listing is fixed — `tako_search`, `tako_available_data`, `tako_contents`, `tako_visualize`, `tako_graph_related`, `tako_agent`, `tako_company_agent`.
 
 <details>
 <summary><b>Getting values vs. getting pointers</b></summary>
@@ -324,12 +325,12 @@ Two tools, one step apart — `tako_search` finds, `tako_contents` fetches:
 | You want… | Call | What you get back |
 |---|---|---|
 | **To see what exists** — recon, fan-outs, a chart to embed | `tako_search` | Cards with headline values, node ids, and chart links, plus web results. Cheap; safe to parallelize widely. |
-| **The values themselves** — rows to compute over or quote | `tako_contents` on the card's url | Up to 2,000 rows of an `exportable: true` card, billed per 1k delivered. |
+| **The values themselves** — rows to compute over or quote | `tako_contents` on the card's url | Up to 2,000 rows of an `exportable: true` card. |
 | **A web page's text** | `tako_contents` on the web result's url | The page's extracted text (set `query` to a question to get only the passages that answer it). |
 | **More search options** — per-source counts, graph pins, domain filters, `effort: deep` | `tako_search_advanced` (opt-in, `?tools=search_advanced`) | The same structured payload as `tako_search`. No inline chart render — the response still carries `embed_url`. |
 
 - **Broad or multi-part questions → parallel narrow searches.** Decompose into single entity+metric queries fired concurrently — e.g. *"US CPI inflation"*, *"US core CPI inflation"*, *"US PCE inflation"* — then synthesize yourself.
-- **Unsure what Tako covers → `tako_available_data` first.** It is free, returns the metric's exact name to search on, and a miss there still leaves web search.
+- **Questions about what Tako covers → `tako_available_data`.** It returns the metric's exact name, and a miss there still leaves web search.
 </details>
 
 <details>
@@ -343,16 +344,18 @@ Two tools, one step apart — `tako_search` finds, `tako_contents` fetches:
 **Data to work with → parallel `tako_search` (synthesize yourself):**
 1. User asks: *"Compare US CPI, core CPI, PCE, and core PCE inflation."*
 2. Agent fires **four** narrow `tako_search` calls concurrently — one per entity+metric
-3. Each returns a card with headline values (top result renders inline as a chart)
+3. Each returns a card with headline values (every card renders as a chart on the ChatGPT app; the first card's chart renders elsewhere)
 4. Agent synthesizes the four results, calling `tako_contents` on a card's `url` if it needs full rows (when the card is `exportable: true`)
 </details>
 
 ## Agent Skills
 
-Ready-to-use skills for Claude Code. Each teaches Claude how to use Tako for a specific kind of data work. Copy the block inside a dropdown and paste it into Claude Code — it sets up the connection and skill for you.
+Two ready-to-use skills for Claude Code. `tako-search` teaches Claude when to look something up with Tako and how to report what it finds. `tako-agent` teaches Claude to start one of Tako's research agents when you ask for one, which agent to call, and how to wait for its answer. Copy the block inside each dropdown and paste it into Claude Code — it sets up the connection and the skill for you. Both blocks set up the same connection, so you can install either one or both.
+
+The `tako-search` skill replaces the `tako-financial-research`, `tako-macroeconomics`, and `tako-web-traffic` skills. If you called one of them by name, such as `/tako:tako-financial-research`, call `/tako:tako-search` instead.
 
 <details>
-<summary><b>Financial Research</b></summary>
+<summary><b>Tako search</b></summary>
 
 Copy the block below and paste it into Claude Code. It will set up the MCP connection and skill for you.
 
@@ -361,52 +364,41 @@ Step 1: Install or update Tako MCP
 
 If Tako MCP already exists in your config, update it to this endpoint. Run this in your terminal:
 
-claude mcp add tako-mcp --transport http "https://mcp.tako.com/mcp" --header "Authorization: Bearer $TAKO_API_TOKEN"
+claude mcp add tako-mcp --transport http "https://mcp.tako.com/mcp?tools=search,available_data,contents,graph_related,agent,company_agent" --header "Authorization: Bearer $TAKO_API_TOKEN"
 
 
 Step 2: Add this Claude skill
 
 ---
-name: tako-financial-research
+name: tako-search
 description: >-
-  Use when the user asks what a company's financial metric is or was (revenue, margins, EPS, cash flow, valuation, stock price, analyst estimates), compares companies on a metric, asks who a company competes with or what data exists on it, or wants a financial chart — including private companies and crypto spot prices. Returns the figures as structured, citation-backed data from Tako (S&P Global, Fiscal.ai, Visible Alpha, Xignite and others), each with a chart. Company-level data only, not country indicators or website traffic.
+  Use when you need to look something up: current events, facts, figures, or pages on any topic. Tako searches the live web and a knowledge graph of licensed data in one call, and returns web results, plus a structured, cited card when the graph has one.
 ---
 
-# Financial Research (Tako)
+# Tako
 
-Tako serves company financials as structured, cited data: each result is a card carrying the headline value, the underlying rows, and a chart of the series. All tools below live on the Tako MCP server installed in Step 1. The tool descriptions and every result already carry the card fields, the `sources` guidance and the zero-card recovery; this skill covers how to shape a financial query, how to check a card against the question, and how to report.
+Tako searches the live web and a knowledge graph of licensed and public data in one call. The graph covers companies, markets, economies, sports, weather, prediction markets, websites, and more, and refreshes much of it during the day. When the graph has the answer, the result leads with a card: a headline value, its source, and a chart. Every search also returns web results. All tools below live on the Tako MCP server installed in Step 1.
 
-## Workflow
+## Look something up
 
-1. **Query as ENTITY + METRIC**: `"Nvidia revenue"`, `"Tesla free cash flow"`, with `quarterly` or `annual` to steer the period. When the user wants several metrics or companies, run one call per pair in parallel: each answer then comes back as its own card, and the checks below apply cleanly to each.
-2. **Call `tako_search`** with the default sources. Web results carry the qualitative half and the facts the graph doesn't hold (earnings dates, management commentary, companies with no filings or coverage).
-3. **Check the top card against the question** with the list below. The top card renders inline automatically; if a different card is the right one, link its title to its `url` and say so.
-4. **Read the figure from the card's `description`.** Fetch the series with `tako_contents` on the card's `url` only when you need the rows, such as to compute a growth rate, ratio or change yourself: search retrieves reported values and derives nothing. A locked card (`exportable: false`) is a licensing wall, not an error: quote the headline and stop.
-5. **Zero cards?** Follow the recovery the result states, and keep to two priced searches per question. Empty means Tako doesn't cover it, not that the fact is false: no dividend card is not "pays no dividend".
-6. **Ambiguous entity?** `"Costco"` resolves to Costco Wholesale Corporation and Costco Wholesale Australia; `"Coca-Cola"` to four listed companies. If the user's intent doesn't settle it, ask before quoting a number.
-7. **Discovery asks** ("who does Nvidia compete with", "what does Tako track for Tesla", "Nvidia's acquisitions")? Resolve the entity with `tako_available_data` to get its node id, then call `tako_graph_related` on it. The first call returns the relation map with counts (`rel:competes_with`, `rel:subsidiaries`, `rel:acquisitions`, `metrics`, `sources`); pass `relation` to page one and `q` to filter it, then search on the names it returns.
+1. Search first. Call `tako_search` once per question, naming the entity and what you want: "Apple revenue", "Lakers last game score", "US CPI inflation", "EU AI Act timeline". For a comparison, name both entities in one query: "Nvidia vs AMD gross margin". Run independent searches in parallel.
+2. Query website traffic by domain: "netflix.com monthly visits", not "Netflix website visits".
+3. If a card comes back, check that it answers the question: the same entity, metric, and unit. For example, operating income isn't operating margin. Read the value from the card's `description`.
+4. If no card answers the question, answer from the web results. To read a page in full, pass its url to `tako_contents`.
+5. If a name is ambiguous, such as "Costco" or "Coca-Cola", and the question doesn't settle which entity, ask before quoting a number.
 
-## Checking a card against the question
+If the user asks for Tako's agent and the `tako-agent` skill is installed, follow `tako-agent` instead.
 
-Search ranks on relevance to the words, and financial vocabulary is dense: the same query can match a level and a rate, a segment and the total, an actual and an estimate. Before quoting, confirm:
+## Explore what Tako has
 
-1. **Metric.** The title names the metric asked for, not an overview of several. Overview cards ("Earnings & Estimates Overview", "Ratios Overview", "Stock Overview") summarize many metrics and lead with estimate-vs-actual; use one only when the question is that broad.
-2. **Scope.** The card is company-wide unless a segment or geography was asked for. Segment cards exist for every line the company reports, so they can match the same words. If only a segment card exists, say so; never pass a segment off as the total.
-3. **Unit.** A rate query can match the level (operating income vs operating margin). Confirm the unit in `description`.
-4. **Reported or estimate, as asked.** Analyst-estimate and consensus cards match plain metric queries, and a future `coverage_end` is how you spot one. Both are financial data: quote the estimate when the question is about forecasts or consensus and label it so; otherwise take the reported card.
-5. **Entity.** `nodes` names the company asked about; related listed entities share names. Some cards (Fiscal.ai charts, Stock and Ratios Overviews) carry no nodes; fall back to the title there.
+For questions about coverage or relationships, such as "What does Tako track for Tesla?", "Who competes with Nvidia?", or "Which countries are in the G7?", resolve the entity with `tako_available_data`. Then call `tako_graph_related` on the node id it returns.
 
-## Comparisons
+## Report
 
-- A two-series comparison card exists for many pairs but not all; some pairs return two single-entity cards. Treat a card as a comparison only if every compared entity appears in its `nodes` or title; otherwise synthesize from the per-entity cards. Comparisons default to annual; say `quarterly` for quarterly.
-- A cross-currency pair plots both series on one axis unnormalized. State each currency and convert before comparing; never present the raw chart as like-for-like.
-- Period labels are calendar-normalized (a September fiscal year-end shows as Dec 31). Flag the normalization when the fiscal period matters.
-
-## Output
-
-1. One or two lines on the finding, referencing the chart in prose. Never re-post the image URL: it double-renders the inline chart.
-2. Source name and `coverage_end` date. Cite the source the card names; it varies by metric. Say plainly when a figure came from a web result rather than a card.
-3. One `[Open in Tako](url)` link for the card you embedded.
+- Lead with the answer in one or two lines. The top card renders inline as a chart, so refer to it in prose; don't re-post its image URL.
+- Name the source: the card's `source`, or the web page you used.
+- Link the card you used: `[Open in Tako](url)`.
+- If the series ended well before today, give its as-of date from `coverage_end`.
 
 Step 3: Ask the user to restart Claude Code
 
@@ -416,7 +408,7 @@ Ask the user to restart Claude Code so the config change takes effect.
 </details>
 
 <details>
-<summary><b>Website &amp; App Traffic</b></summary>
+<summary><b>Tako agents</b></summary>
 
 Copy the block below and paste it into Claude Code. It will set up the MCP connection and skill for you.
 
@@ -425,105 +417,46 @@ Step 1: Install or update Tako MCP
 
 If Tako MCP already exists in your config, update it to this endpoint. Run this in your terminal:
 
-claude mcp add tako-mcp --transport http "https://mcp.tako.com/mcp" --header "Authorization: Bearer $TAKO_API_TOKEN"
+claude mcp add tako-mcp --transport http "https://mcp.tako.com/mcp?tools=search,available_data,contents,graph_related,agent,company_agent" --header "Authorization: Bearer $TAKO_API_TOKEN"
 
 
 Step 2: Add this Claude skill
 
 ---
-name: tako-web-traffic
+name: tako-agent
 description: >-
-  Use when the user asks how much traffic a website gets, compares sites' visits, wants a top-sites ranking, asks which sites compete with a brand for attention, or asks about an app's monthly active users — including when they name the brand rather than the domain ("how much traffic does Netflix get"). Returns SimilarWeb figures as structured, citation-backed data from Tako, each with a chart. Not for company financials such as subscribers or revenue.
+  Use when the user explicitly asks for Tako's research agent or for deep, multi-step research with Tako, such as "use the Tako agent to…", "have Tako research…", or "use Tako to build a list of companies that…". Tako's agents plan the steps, search the web and licensed data, and return a cited answer with charts or lists. For any other question, use tako-search, even one that needs a ranking or a calculation.
 ---
 
-# Web & App Traffic (Tako)
+# Tako agents
 
-Tako serves SimilarWeb traffic data as structured, cited data: each result is a card carrying the headline value and a chart of the series. All tools below live on the Tako MCP server installed in Step 1. The tool descriptions and every result already carry the card fields, the `sources` guidance and the zero-card recovery; this skill covers how to shape a traffic query, how to check a card against the question, and how to report.
+Tako's agents run multi-step research. An agent plans its own steps, searches the web and Tako's licensed data, computes what the question asks for, and returns a cited answer with charts or lists. All tools below live on the Tako MCP server installed in Step 1.
 
-## Workflow
+## When to use an agent
 
-1. **Query by domain**: `"netflix.com monthly visits"`, `"chatgpt.com"`. Traffic data is keyed by domain, so resolve a brand to its domain yourself. For app usage, query app name + metric: `"Spotify app monthly active users"`; app cards are keyed by the bare app name.
-2. **Call `tako_search`** with the default sources. Web results add competitive write-ups and ranking roundups.
-3. **Check the top card against the question** with the list below. You have the traffic number only when the card's title is `<domain> Monthly Visits`, or the app's active-users card.
-4. **Read the figure from `description`**: the latest monthly value and the % change over the period. Traffic cards are licensed and don't export (`exportable: false`), so the description and the chart are the data; don't call `tako_contents` on one. Web-result urls remain fetchable.
-5. **Zero cards?** If the query wasn't a bare domain, make it one and retry once. If a domain query is still empty, answer from the web results and label the figure web-sourced. Don't use `tako_available_data` to rule a domain out: the graph resolves brands to companies, not to domains, so a domain it doesn't know can still have a traffic card.
-6. **Competitive asks** ("who competes with Netflix for attention", "Netflix vs its rivals")? Resolve the brand with `tako_available_data` to get its company node id, call `tako_graph_related` with `relation: "rel:competes_with"`, map the competitors to their domains yourself, and run one domain search per site in parallel.
+Start an agent only when the user asks for one: they name Tako's agent, ask for deep or multi-step research with Tako, or ask Tako to build a list of companies or people. Otherwise, use `tako-search`, even when the question needs a ranking, a trend, or a calculation. Don't start an agent for a task that needs no data, such as writing, editing, or explaining a concept.
 
-## Checking a card against the question
+## Choose the agent
 
-1. **Domain, from the title.** Traffic cards list only the metric in `nodes`; the domain never appears there, so the entity check that works elsewhere doesn't apply.
-2. **Absolute vs relative.** An `"A vs B"` card's description reports each series as a % change over the period. For absolute visits, read each domain's single-series card; run a per-domain search if the comparison result didn't include them.
-3. **Ranking scope.** Ranking cards exist per category and per measure ("Top Websites by Visits", "Top Arts and Entertainment Websites by Visits", "… by Average Visit Duration"). The title names both; confirm they match the question.
-4. **Metric family.** SimilarWeb app "Monthly Active Users" and a company's own reported MAU are different numbers from different sources, and both can appear in one result. Say which you're quoting.
-5. **Month.** `coverage_end` is the data month. Cite it.
+- Use `tako_company_agent` to find which companies or people match a set of facts: a screen by location, industry, status, founding date, funding, or size; officers, directors, or owners; or companies filtered by a financial metric, such as "UK software companies with more than £10 million in revenue".
+- Use `tako_agent` for a ranking, trend, total, or calculation, including companies ranked by a metric: "the 10 largest UK software companies by revenue", countries ranked by GDP, a growth rate across several periods, or a figure computed from several metrics.
 
-## Output
+## Run an agent
 
-1. One or two lines on the traffic, referencing the inline chart in prose. Never re-post the image URL: it double-renders the chart.
-2. "SimilarWeb" and the `coverage_end` month. Say plainly when a figure is web-sourced.
-3. One `[Open in Tako](url)` link for the top card; point at extra cards by linking their titles to their `url`.
+1. Send the user's question in `query`, one question per call. The agent plans its own steps, so don't split the question.
+2. If `status` is `running`, call the same tool again with that `run_id` and no `query`. Don't start a new run for the same question.
+3. If a call fails before it returns a `run_id`, follow its guidance. If the guidance says the run may have started, ask the user before you retry.
+4. For a follow-up in the same conversation, pass the `thread_id` from the earlier run with the new `query`.
 
-Step 3: Ask the user to restart Claude Code
+## Effort
 
-Ask the user to restart Claude Code so the config change takes effect.
-````
+`tako_company_agent` takes `effort`. Leave it unset for the default, `medium`. Use `high` only when the user asks for a thorough answer. Don't use `low` when the question filters by a financial metric such as revenue or headcount, because `low` can't. A thread keeps its effort, so omit `effort` on a follow-up.
 
-</details>
+## Report
 
-<details>
-<summary><b>Macroeconomics</b></summary>
-
-Copy the block below and paste it into Claude Code. It will set up the MCP connection and skill for you.
-
-````
-Step 1: Install or update Tako MCP
-
-If Tako MCP already exists in your config, update it to this endpoint. Run this in your terminal:
-
-claude mcp add tako-mcp --transport http "https://mcp.tako.com/mcp" --header "Authorization: Bearer $TAKO_API_TOKEN"
-
-
-Step 2: Add this Claude skill
-
----
-name: tako-macroeconomics
-description: >-
-  Use when the user asks what a country's economic indicator is or was (inflation, CPI, PCE, unemployment, GDP, interest rates, population), compares countries on one, asks which indicators exist for a country or which countries belong to a bloc, or wants a macro chart or briefing. Returns the figures as structured, citation-backed data from Tako (FRED, BLS, OECD, BIS, IMF, World Bank, Census and Polymarket), each with a chart. Country-level indicators only, not company financials or website traffic.
----
-
-# Macroeconomics (Tako)
-
-Tako serves macro and demographic indicators as structured, cited data: each result is a card carrying the headline value, the underlying rows, and a chart of the series. All tools below live on the Tako MCP server installed in Step 1. The tool descriptions and every result already carry the card fields, the `sources` guidance and the zero-card recovery; this skill covers how to shape a macro query, how to check a card against the question, and how to report.
-
-## Workflow
-
-1. **Query as COUNTRY + INDICATOR**: `"US CPI inflation"`, `"Japan unemployment rate"`. Coverage is keyed by country. For a bloc or region, check coverage with `tako_available_data` before searching: member-country series are far denser, so aggregate them yourself or take the figure from the web results and say so.
-2. **Name the variant when intent is precise.** Most indicators exist in several variants with materially different values: headline vs core, seasonally adjusted or not, BLS vs IMF vs OECD-harmonised, U-3 vs U-6, target rate vs effective rate. When you don't know the exact name, call `tako_available_data` first, which is free, and search on the name it returns. Level and rate series share a stem: "Core PCE Price Index" is the index level and "Core PCE Price Index (% Change)" is the inflation rate, and a query that says "inflation" can match either, or a CPI series.
-3. **Call `tako_search`** with the default sources. Web results carry release commentary and cover the gaps in bloc-level data.
-4. **Check the top card against the question** with the list below. If a different card is the right one, link its title to its `url` and say so.
-5. **Read the value from `description`.** When the card is exportable and you need more than the headline, `tako_contents` on its `url` returns the series.
-6. **Zero cards?** Follow the recovery the result states, and keep to two priced searches per question. Empty means not covered, not that the indicator doesn't exist.
-7. **Discovery asks** ("what does Tako track for Japan", "which countries are in the G7", "who publishes Japan's data")? Resolve the country with `tako_available_data` to get its node id, then call `tako_graph_related` on it. The first call returns the relation map with counts (`metrics`, `part_of`, `siblings`, `sources`; `members` on a bloc node); pass `relation` to page one and `q` to filter it, then search on the names it returns.
-
-## Checking a card against the question
-
-One indicator name covers many series: providers, methodologies, vintages, levels and rates, and prediction markets on the same quantity. Before quoting, confirm:
-
-1. **Variant.** The title names the variant asked for; several providers' headline numbers can come back together. Don't average them or take the first.
-2. **Vintage, as asked.** For a current figure, take the series whose `coverage_end` is latest among the matches: discontinued series stay in the graph and an annual series can sit a year behind the monthly one. For a historical period, any series that covers it is valid. Series refresh on different schedules, so don't present two indicators as the same vintage without checking.
-3. **Rate, not level.** A "(% Change)" card is a percentage; a bare "Price Index" card is index points. Confirm from the unit in `description`.
-4. **Indicator or expectation, as asked.** Polymarket cards report what traders expect, not what a statistics agency published, and exist for many macro quantities. Quote one when the question is about expectations, and label it market-implied; otherwise take the published series.
-5. **Country.** `nodes` names it. Country overview cards sometimes carry no nodes; fall back to the title there.
-
-## Comparisons
-
-- Cross-country comparison is built in: `"US vs China inflation"` returns a two-series card. For currency-denominated indicators (GDP, wages) the chart plots both currencies on one axis unnormalized; state each currency and convert before comparing.
-
-## Output
-
-1. One or two lines on the indicator, referencing the chart in prose. Never re-post the image URL: it double-renders the inline chart.
-2. Source name and `coverage_end` date. The roster is wider than FRED, so cite what the card names. Say plainly when a figure is web-sourced.
-3. One `[Open in Tako](url)` link for the card you embedded.
+- Lead with the agent's answer in a few lines, and keep its numbered citations.
+- Link each card the agent returns: `[Open in Tako](url)`. The full chart or list lives on that page.
+- If the agent says it couldn't answer part of the question, say so.
 
 Step 3: Ask the user to restart Claude Code
 
@@ -553,10 +486,10 @@ The Worker extracts the Bearer (or OAuth-derived) token, validates the MCP reque
 
 - **`tako_answer` is gone, and `?tools=answer` no longer resolves to anything.** Synthesis is `include_answer: true` on **`tako_search_advanced`**, which reaches the same endpoint. `answer` is now an unknown token: it is dropped, so `?tools=answer` alone falls back to the four default tools — none of which synthesize. Update the URL to `?tools=search,available_data,contents,search_advanced`.
 - **`?tools=` now replaces the default listing instead of adding to it** (tokens are tool names, e.g. `?tools=search,contents,agent`). `tako_graph_search`, `tako_graph_node`, `tako_agent_start`, `tako_agent_wait`, `get_credit_balance`, and `tako_credit_balance` were removed; `tako_graph_related` is listed by default. See [`docs/TOOLS.md`](docs/TOOLS.md).
-- **The ChatGPT app surface no longer serves the Answer Agent in any form.** `https://mcp.tako.com/mcp/chatgpt?tools=agent` was the documented way to reach it; that URL now serves the fixed five-tool listing, because `?tools=` is ignored on `/mcp/chatgpt`. `https://mcp.tako.com/mcp?tools=search,available_data,agent` registers `tako_agent` for a ChatGPT developer-mode connector, but ChatGPT's ~60 s per-call ceiling cannot hold a 30–90 s run, so treat it as unsupported rather than a replacement. The agent returns to ChatGPT as reviewed app functionality, not as a hidden opt-in.
+- **`?tools=agent` no longer changes the ChatGPT app surface.** `https://mcp.tako.com/mcp/chatgpt?tools=agent` was the documented way to reach the Answer Agent there. `?tools=` is now ignored on `/mcp/chatgpt`, and its fixed listing includes `tako_agent` and `tako_company_agent`. A call returns within 45 s, inside ChatGPT's ~60 s per-call ceiling, and a run that's still going returns a `run_id` to resume with.
 - **`tako_search` takes four parameters** — `query`, `sources`, `country_code`, `locale`. `include_contents`, `preview_rows`, `effort`, `count`, `node_ids` and `strict` are gone, and it declares no defaults of its own, so an omitted field takes the v3 API's. Rows come from `tako_contents` on an `exportable: true` card's url. Every removed option, plus `effort: deep`, `include_domains`, `exclude_domains`, `category`, `max_rows` and `content_format`, lives on the new opt-in **`tako_search_advanced`** (`?tools=search_advanced`).
 - **`tako_contents` takes four parameters** — `urls` (now required), `max_rows`, `max_chars`, `query`. The deprecated single `url`, plus `content_format` and `mode`, are gone: every call is delivered inline, and a card's rows come back as one projected `rows` shape (`{columns, rows, total_rows}`, positional cells, `null` for a missing value) rather than CSV or a choice of JSON. `download_url`, `expires_at`, `data`, `records`, `dataset` and `format` left the output with them. Its `max_rows` documentation said "20-row default"; the real default is the whole card, up to 2,000 rows.
-- **`tako_agent` returns the answer itself instead of a run envelope.** Its `structuredContent` used to carry `{run_id, status, timed_out, thread_id}` and nothing else — the answer, the citations and the cards existed in the markdown text only, so a host that reads `structuredContent` and drops `content` saw a uuid and the word `completed`. Both channels now carry `answer`, `cards`, `citations`, `definitions`, `assumptions`, `methodology`, `thread_id`, `usage`, `guidance` and `error`. `run_id`, `status` and `timed_out` left the output: the first has no poll tool to spend it on, and `error` already distinguishes the only two states the other two could report. `usage` is new. Per card, `methodologies`, `metric_definitions`, `content`, `card_id`, `card_type`, `semantic_description`, `source_indexes`, `nodes`, `relevance` and `relevance_score` are gone; per citation, `source_name`, `excerpt`, `publish_date` and `content` are gone.
+- **`tako_agent` returns the answer itself instead of a run envelope.** Its `structuredContent` used to carry `{run_id, status, timed_out, thread_id}` and nothing else — the answer, the citations and the cards existed in the markdown text only, so a host that reads `structuredContent` and drops `content` saw a uuid and the word `completed`. Both channels now carry `status`, `run_id`, `answer`, `cards`, `citations`, `definitions`, `assumptions`, `methodology`, `thread_id`, `usage`, `guidance` and `error`, plus a `message` while a run is still going. `timed_out` left the output. `usage` is new. Per card, `methodologies`, `metric_definitions`, `content`, `card_id`, `card_type`, `semantic_description`, `source_indexes`, `nodes`, `relevance` and `relevance_score` are gone; per citation, `source_name`, `excerpt` and `content` are gone, and `publish_date` arrives as a date-only `published`.
 - **`sources: "tako"`** — a synonym for `"data"` — was removed from `tako_search`, `tako_answer` and `tako_agent`.
 - **`tako_available_data`'s `next_call`** carries only `tool` and `query` now, and `tool` names whichever search tool the connection registers rather than always `tako_search`. The query names both halves by their canonical graph names, because `tako_search` matches the graph's own names; the pin is gone because `tako_search` no longer accepts one.
 - **`tako_available_data` and `tako_graph_related` renamed most of their output.** `node_id` is `id` everywhere in the OUTPUT (the input parameter keeps its name), `other_matches` is `candidates`, `entity_alternates` / `metric_alternates` are `entity_candidates` / `metric_candidates`, and `coverage.capped` is `coverage.total_capped`. `subtype` and `label` collapse into one `kind`. The `summary` prose field is gone: a short `guidance` string now carries the verdict on the branches that have one. Dropped entirely: `coverage.kind`, `coverage.names`, the relation group's `kind`, each related item's `type` and `label`, `inferred_labels`, candidate `aliases`, and the `query` / `metric_query` echoes. `tako_graph_related`'s map previews names only — ids come from drilling the relation.

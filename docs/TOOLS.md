@@ -8,7 +8,7 @@ This page is rendered from the same objects the server publishes on `tools/list`
 
 ## Choosing tools with `?tools=`
 
-On `/mcp`, `?tools=` on the connection URL is an allowlist that **replaces** the default listing: `?tools=search,contents` lists exactly those two. Tokens are tool names; the `tako_` prefix is optional. Unknown tokens are dropped, and a param that names nothing recognizable yields the defaults, so a typo never breaks a connection. If you list tools, include the defaults you rely on — descriptions assume `tako_search`, `tako_available_data`, and `tako_contents` are present, and a `tako_available_data` result hands back a `next_call` handle naming whichever search tool the connection registers — `tako_search`, else `tako_search_advanced`, else no handle at all. `/mcp/chatgpt` ignores the param: its listing is fixed at submission.
+On `/mcp`, `?tools=` on the connection URL is an allowlist that **replaces** the default listing: `?tools=search,contents` lists exactly those two. Tokens are tool names; the `tako_` prefix is optional. Unknown tokens are dropped, and a param that names nothing recognizable yields the defaults, so a typo never breaks a connection. If you list tools, include the defaults you rely on — descriptions assume `tako_search`, `tako_available_data`, and `tako_contents` are present, and a `tako_available_data` result hands back a `next_call` handle naming whichever search tool the connection registers — `tako_search`, else `tako_search_advanced`, else no handle at all. `/mcp/chatgpt` ignores the param: its listing is fixed.
 
 ## `/mcp` — the generic surface, every client
 
@@ -22,13 +22,14 @@ Default listing:
 Opt-in (name them in `?tools=`):
 
 - `tako_agent` — `?tools=available_data,contents,graph_related,search,agent`
+- `tako_company_agent` — `?tools=available_data,contents,graph_related,search,company_agent`
 - `tako_search_advanced` — `?tools=available_data,contents,graph_related,search,search_advanced`
 - `tako_visualize` — `?tools=available_data,contents,graph_related,search,visualize`
 
 Server instructions:
 
 ```text
-Tako searches the web and a proprietary knowledge graph of live structured data in the same call. Default sources are data + web, so one call answers a question that mixes a figure with context. Coverage includes finance, markets, company KPIs, economics, website/app traffic, sports, weather, elections, prediction markets, demographics, energy, real estate, health, and more.
+Tako searches the web and a proprietary knowledge graph of live structured data in the same call. Default sources are data + web, so one call answers a question that mixes a figure with context. Coverage includes finance, markets, company KPIs, economics, website traffic, sports, weather, elections, prediction markets, demographics, energy, real estate, health, and more.
 
 `tako_search` finds cards and web links. `tako_contents` fetches a url in full: a web page returns its text, and an exportable Tako card returns its data rows. `tako_available_data` answers what data Tako has on an entity or metric, including a metric's canonical name. `tako_graph_related` lists a node's related metrics, entities, competitors, and sources.
 ```
@@ -37,7 +38,9 @@ Tako searches the web and a proprietary knowledge graph of live structured data 
 
 Default listing:
 
+- `tako_agent`
 - `tako_available_data`
+- `tako_company_agent`
 - `tako_contents`
 - `tako_graph_related`
 - `tako_search`
@@ -46,9 +49,9 @@ Default listing:
 Server instructions:
 
 ```text
-Tako searches the web and a proprietary knowledge graph of live structured data in the same call. Default sources are data + web, so one call answers a question that mixes a figure with context. Coverage includes finance, markets, company KPIs, economics, website/app traffic, sports, weather, elections, prediction markets, demographics, energy, real estate, health, and more.
+Tako searches the web and a proprietary knowledge graph of live structured data in the same call. Default sources are data + web, so one call answers a question that mixes a figure with context. Coverage includes finance, markets, company KPIs, economics, website traffic, sports, weather, elections, prediction markets, demographics, energy, real estate, health, and more.
 
-`tako_search` finds cards and web links. `tako_contents` fetches a url in full: a web page returns its text, and an exportable Tako card returns its data rows. `tako_available_data` answers what data Tako has on an entity or metric, including a metric's canonical name. `tako_graph_related` lists a node's related metrics, entities, competitors, and sources.
+`tako_search` finds cards and web links. `tako_contents` fetches a url in full: a web page returns its text, and an exportable Tako card returns its data rows. `tako_available_data` answers what data Tako has on an entity or metric, including a metric's canonical name. `tako_graph_related` lists a node's related metrics, entities, competitors, and sources. Use `tako_company_agent` for a list of companies or people, such as a registry screen, and `tako_agent` for a ranking, trend, or aggregate of metrics.
 ```
 
 ## Tools
@@ -57,32 +60,33 @@ Tako searches the web and a proprietary knowledge graph of live structured data 
 
 **Tako: Answer Agent**
 
-- Listed by default on: none (opt-in on `/mcp`)
+- Listed by default on: `/mcp/chatgpt`
 - Runs anonymously (on `/mcp`): no (answers with sign-in instructions)
 
 Description:
 
 Run Tako's Answer Agent on a question that needs research rather than a lookup. It plans, queries the data graph and the web over several steps, and returns a written `answer` with numbered citations plus the chart `cards` it built.
 
-Best for questions whose shape you'd have to work out first: cohorts ("which companies match…"), ranking or screening by criteria, multi-step aggregation, multi-hop reasoning. Also the fallback when `tako_search` finds nothing.
+Best for metric-driven research: ranking or screening by financial or economic metrics, multi-step aggregation, multi-hop reasoning. Also the fallback when `tako_search` finds nothing. Not for a known value or a two-entity comparison — `tako_search` answers those in one round trip.
 
-Not for a known value or a two-entity comparison — `tako_search` answers those in one round trip.
+A call returns within 45 s. If `status` is `running`, call again with `run_id`; don't start a new run. In your reply, link each card's `url`; the full list or chart lives on that page.
 
 Parameters:
 
 | Name | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `query` | string | yes |  | The question to research, in natural language. Ask one question per call; the agent plans its own sub-steps. |
-| `sources` | array | no | `["data","web"]` | Which corpora to search; default is both. Narrow to ["data"] once `tako_available_data` confirms coverage; narrow to ["web"] only for news or page text — website traffic is in the data graph. |
+| `query` | string | no |  | The question to research, in natural language. Ask one question per call; the agent plans its own sub-steps. Send `query` or `run_id`, not both. |
+| `run_id` | string | no |  | A `run_id` from an earlier call that returned `status: running`. Send it instead of `query` to keep waiting for that run. |
+| `sources` | array | no |  | Which corpora to search; default is both. Narrow to ["web"] only for news or page text — website traffic is in the data graph. A thread keeps its sources, so omit this on a follow-up. |
 | `thread_id` | string | no |  | A `thread_id` from an earlier run. Pass it back to ask a follow-up in that conversation; omit it to start a new one. |
 
 Fixed request inputs (the caller cannot change these):
 
-- `effort` = `"medium"` — The only Answer Agent effort level launched.
+_none_
 
 Fixed worker-side settings (not request fields):
 
-- `poll interval / budget` = `5 s / 295 s` — The call polls the run until it completes or the budget ends.
+- `call window` = `45 s` — A call returns within the window; resume a running run with run_id.
 
 Annotations:
 
@@ -97,16 +101,17 @@ Annotations:
   "type": "object",
   "properties": {
     "query": {
+      "description": "The question to research, in natural language. Ask one question per call; the agent plans its own sub-steps. Send `query` or `run_id`, not both.",
       "type": "string",
-      "minLength": 1,
-      "description": "The question to research, in natural language. Ask one question per call; the agent plans its own sub-steps."
+      "minLength": 1
+    },
+    "run_id": {
+      "type": "string",
+      "pattern": "^answer_run_[A-Za-z0-9-]+$",
+      "description": "A `run_id` from an earlier call that returned `status: running`. Send it instead of `query` to keep waiting for that run."
     },
     "sources": {
-      "default": [
-        "data",
-        "web"
-      ],
-      "description": "Which corpora to search; default is both. Narrow to [\"data\"] once `tako_available_data` confirms coverage; narrow to [\"web\"] only for news or page text — website traffic is in the data graph.",
+      "description": "Which corpora to search; default is both. Narrow to [\"web\"] only for news or page text — website traffic is in the data graph. A thread keeps its sources, so omit this on a follow-up.",
       "minItems": 1,
       "type": "array",
       "items": {
@@ -123,10 +128,7 @@ Annotations:
       "format": "uuid",
       "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
     }
-  },
-  "required": [
-    "query"
-  ]
+  }
 }
 ```
 </details>
@@ -138,8 +140,21 @@ Annotations:
   "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
   "properties": {
+    "status": {
+      "type": "string",
+      "enum": [
+        "completed",
+        "failed",
+        "running"
+      ]
+    },
+    "run_id": {
+      "type": "string"
+    },
+    "message": {
+      "type": "string"
+    },
     "answer": {
-      "description": "Its [n] markers join to `citations`.",
       "type": "string"
     },
     "guidance": {
@@ -174,7 +189,6 @@ Annotations:
             "type": "string"
           },
           "last_updated": {
-            "description": "When Tako last refreshed the card.",
             "type": "string"
           },
           "total_rows": {
@@ -201,6 +215,9 @@ Annotations:
             "type": "string"
           },
           "url": {
+            "type": "string"
+          },
+          "published": {
             "type": "string"
           },
           "source_index": {
@@ -261,8 +278,7 @@ Annotations:
         {
           "type": "null"
         }
-      ],
-      "description": "Null when not metered."
+      ]
     },
     "error": {
       "type": "object",
@@ -282,6 +298,8 @@ Annotations:
     }
   },
   "required": [
+    "status",
+    "run_id",
     "cards",
     "citations",
     "usage"
@@ -297,6 +315,8 @@ Annotations:
 
 ```json
 {
+  "status": "completed",
+  "run_id": "answer_run_sample",
   "answer": "Surf Air Mobility grew revenue fastest among the screened US airline companies from 2022 to 2025, with a three-year CAGR of 73.9% [1]. Global Crossing Airlines Group ranked second at 36.4% [1].\n\nAmong larger scheduled carriers, Alaska Air Group led at 13.9% CAGR, with revenue rising from $9.6 billion to $14.2 billion [1]. United Airlines Holdings followed at 9.4%, and Delta Air Lines at 8.5% [1]. Coverage of the 2025 filing season is still incomplete for smaller charter operators [3].\n\nThe ranking uses revenue CAGR, calculated as (2025 revenue / 2022 revenue)^(1/3) - 1, over the 21 US-headquartered companies with normalized revenue for both endpoint years [1].",
   "cards": [
     {
@@ -403,7 +423,7 @@ Description:
 
 Find what data Tako holds on an entity or a metric, and the canonical name it holds it under.
 
-Best for: coverage questions themselves, or a metric's canonical name before a priced search. Put a company, person, or place in `q` to list the metrics tracked on it; put a metric in `q` to list the entities it covers. Add `metric` when you know the measure — you get the resolved pair and a ready-to-run `next_call`.
+Best for: questions about what Tako covers. Put a company, person, or place in `q` to list the metrics tracked on it; put a metric in `q` to list the entities it covers. Add `metric` when you know the measure — you get the resolved pair and a ready-to-run `next_call`.
 
 Search on the canonical names it returns, not your own phrasing — `tako_search` matches the graph's names, not yours. A name here means the graph tracks it, not that a card exists. If the follow-up search comes back empty, say Tako has no card for it rather than rephrasing the query. Hand a node id to `tako_graph_related` to see what else connects to it.
 
@@ -847,6 +867,337 @@ tako_search: Carnival, Inc. Revenues
 ```
 </details>
 
+### tako_company_agent
+
+**Tako: Company Agent**
+
+- Listed by default on: `/mcp/chatgpt`
+- Runs anonymously (on `/mcp`): no (answers with sign-in instructions)
+
+Description:
+
+Run Tako's Company Agent on a question about which companies or people match registry facts. It searches the company registry and the web over several steps, and returns a written `answer` with numbered citations plus any list `cards` it built.
+
+Best for: screening companies by status, incorporation date, registered location, or industry; resolving named companies; finding a company's officers and directors. At `medium` and `high` effort it can also filter by financial metrics such as revenue or headcount.
+
+A call returns within 45 s. If `status` is `running`, call again with `run_id`; don't start a new run. In your reply, link each card's `url`; the full list or chart lives on that page.
+
+Parameters:
+
+| Name | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `query` | string | no |  | The question to research, in natural language. Ask one question per call; the agent plans its own sub-steps. Send `query` or `run_id`, not both. |
+| `run_id` | string | no |  | A `run_id` from an earlier call that returned `status: running`. Send it instead of `query` to keep waiting for that run. |
+| `sources` | array | no |  | Which sources to research: `data` for Tako's curated data, `web` for the open web. A new thread uses both. A thread keeps its sources, so omit this on a follow-up. |
+| `thread_id` | string | no |  | A `thread_id` from an earlier run. Pass it back to ask a follow-up in that conversation; omit it to start a new one. |
+| `effort` | string ("low" \\| "medium" \\| "high") | no |  | Research depth. `medium` is the default. `high` is stronger and slower. `low` answers from the company registry and the web only, and can't filter or rank by financial metrics such as revenue or headcount. Effort is fixed for a thread. |
+
+Fixed request inputs (the caller cannot change these):
+
+- `cards` = `true` — The agent may build list cards.
+
+Fixed worker-side settings (not request fields):
+
+- `call window` = `45 s` — A call returns within the window; resume a running run with run_id.
+
+Annotations:
+
+- `/mcp`: title: Tako: Company Agent; readOnlyHint: false; destructiveHint: false; idempotentHint: false; openWorldHint: true
+- `/mcp/chatgpt`: title: Tako: Company Agent; readOnlyHint: false; destructiveHint: false; idempotentHint: false; openWorldHint: true
+
+<details><summary>wire — Published input schema (JSON Schema)</summary>
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "query": {
+      "description": "The question to research, in natural language. Ask one question per call; the agent plans its own sub-steps. Send `query` or `run_id`, not both.",
+      "type": "string",
+      "minLength": 1
+    },
+    "run_id": {
+      "type": "string",
+      "pattern": "^company_run_[A-Za-z0-9-]+$",
+      "description": "A `run_id` from an earlier call that returned `status: running`. Send it instead of `query` to keep waiting for that run."
+    },
+    "sources": {
+      "description": "Which sources to research: `data` for Tako's curated data, `web` for the open web. A new thread uses both. A thread keeps its sources, so omit this on a follow-up.",
+      "minItems": 1,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "data",
+          "web"
+        ]
+      }
+    },
+    "thread_id": {
+      "description": "A `thread_id` from an earlier run. Pass it back to ask a follow-up in that conversation; omit it to start a new one.",
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+    },
+    "effort": {
+      "description": "Research depth. `medium` is the default. `high` is stronger and slower. `low` answers from the company registry and the web only, and can't filter or rank by financial metrics such as revenue or headcount. Effort is fixed for a thread.",
+      "type": "string",
+      "enum": [
+        "low",
+        "medium",
+        "high"
+      ]
+    }
+  }
+}
+```
+</details>
+
+<details><summary>wire — Published output schema (JSON Schema)</summary>
+
+```json
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": [
+        "completed",
+        "failed",
+        "running"
+      ]
+    },
+    "run_id": {
+      "type": "string"
+    },
+    "message": {
+      "type": "string"
+    },
+    "answer": {
+      "type": "string"
+    },
+    "guidance": {
+      "description": "Rejected queries only.",
+      "type": "string"
+    },
+    "cards": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "exportable": {
+            "type": "boolean",
+            "description": "false → the rows are locked."
+          },
+          "url": {
+            "type": "string"
+          },
+          "image_url": {
+            "type": "string"
+          },
+          "embed_url": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "last_updated": {
+            "type": "string"
+          },
+          "total_rows": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "exportable"
+        ],
+        "additionalProperties": {}
+      },
+      "description": "Pass an exportable card's `url` to tako_contents for its rows."
+    },
+    "citations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "index": {
+            "type": "number",
+            "description": "The number an [n] marker joins to; sparse."
+          },
+          "title": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "published": {
+            "type": "string"
+          },
+          "source_index": {
+            "description": "`web` → a page `tako_contents` can fetch. `data` → a source's home page.",
+            "type": "string",
+            "enum": [
+              "data",
+              "web"
+            ]
+          }
+        },
+        "required": [
+          "index",
+          "title"
+        ],
+        "additionalProperties": {}
+      }
+    },
+    "definitions": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "assumptions": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "methodology": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "thread_id": {
+      "description": "Send back as `thread_id` for a follow-up.",
+      "type": "string"
+    },
+    "usage": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "total_cost_usd": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "total_cost_usd"
+          ],
+          "additionalProperties": {}
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "error": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "additionalProperties": {}
+    }
+  },
+  "required": [
+    "status",
+    "run_id",
+    "cards",
+    "citations",
+    "usage"
+  ],
+  "additionalProperties": false
+}
+```
+</details>
+
+<details><summary>illustrative — Sample result (generated from the checked-in fixture)</summary>
+
+`structuredContent` (as served on `/mcp`):
+
+```json
+{
+  "status": "completed",
+  "run_id": "company_run_sample",
+  "answer": "Three active companies registered in Leeds were incorporated in 2024 and list software development as their industry [1]. Northern Lattice Ltd was incorporated first, on 12 February 2024 [1]. Its directors include Priya Nair, per its latest filing [2].",
+  "cards": [
+    {
+      "exportable": true,
+      "title": "Leeds Software Companies Incorporated in 2024",
+      "description": "Active companies registered in Leeds, incorporated in 2024, with software development as their industry.",
+      "url": "https://tako.com/card/Kd3vQ8mXr2LpT9-aYwNe/",
+      "image_url": "https://tako.com/api/v1/image/Kd3vQ8mXr2LpT9-aYwNe/",
+      "embed_url": "https://tako.com/embed/Kd3vQ8mXr2LpT9-aYwNe/?showShare=true",
+      "source": "Companies House"
+    }
+  ],
+  "citations": [
+    {
+      "index": 1,
+      "title": "Companies House",
+      "url": "https://www.gov.uk/government/organisations/companies-house",
+      "source_index": "data"
+    },
+    {
+      "index": 2,
+      "title": "Northern Lattice Ltd confirmation statement",
+      "url": "https://find-and-update.company-information.service.gov.uk/company/00000000/filing-history",
+      "source_index": "web"
+    }
+  ],
+  "thread_id": "5a2e8c71-0f3b-4d96-b1a4-7c6e9d2f8031",
+  "usage": {
+    "total_cost_usd": 0.04127,
+    "compute": {
+      "cost_usd": 0.04127
+    }
+  }
+}
+```
+
+`content[0].text`:
+
+```markdown
+Three active companies registered in Leeds were incorporated in 2024 and list software development as their industry [1]. Northern Lattice Ltd was incorporated first, on 12 February 2024 [1]. Its directors include Priya Nair, per its latest filing [2].
+
+## Cards (1)
+
+### Leeds Software Companies Incorporated in 2024
+Active companies registered in Leeds, incorporated in 2024, with software development as their industry.
+- url: https://tako.com/card/Kd3vQ8mXr2LpT9-aYwNe/ · exportable
+- image: https://tako.com/api/v1/image/Kd3vQ8mXr2LpT9-aYwNe/ · embed: https://tako.com/embed/Kd3vQ8mXr2LpT9-aYwNe/?showShare=true
+- source: Companies House
+
+## Citations (2)
+
+[1] Companies House — https://www.gov.uk/government/organisations/companies-house (data)
+[2] Northern Lattice Ltd confirmation statement — https://find-and-update.company-information.service.gov.uk/company/00000000/filing-history (web)
+
+thread_id: 5a2e8c71-0f3b-4d96-b1a4-7c6e9d2f8031 — send it back to ask a follow-up.
+
+usage: $0.04127
+```
+</details>
+
 ### tako_contents
 
 **Tako: Fetch Contents**
@@ -856,9 +1207,9 @@ tako_search: Carnival, Inc. Revenues
 
 Description:
 
-Fetch the full content behind a url: a web page's text, or an exportable Tako card's data rows. Batch up to 10 urls in one call — each one is billed and fails on its own.
+Fetch the full content behind a url: a web page's text, or an exportable Tako card's data rows. Batch up to 10 urls in one call — each fails on its own.
 
-Fetch only cards that `tako_search` marked `exportable: true`. Rows bill per 1,000 delivered, so set `max_rows` when the recent rows are enough. A website-traffic or SEO card also bills a per-unit data minimum that `max_rows` doesn't bound. If a page is long, such as a filing or an annual report, set `query` to a question to get back only the passages that answer it.
+Fetch only cards that `tako_search` marked `exportable: true`. Set `max_rows` when the recent rows are enough. If a page is long, such as a filing or an annual report, set `query` to a question to get back only the passages that answer it.
 
 Best for: reading one source in full — a page you need to quote, or the rows behind a card you need to compute over.
 
@@ -866,8 +1217,8 @@ Parameters:
 
 | Name | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `urls` | array | yes |  | The urls to fetch: a Tako card url or a web result url. One call for 8 urls costs the same as 8 separate calls and saves 7 round trips. |
-| `max_rows` | integer | no |  | Tako cards only: how many rows to return. Omit it for the whole card, up to 2,000 rows. Every row delivered is billed, so lower it when the recent rows are enough. |
+| `urls` | array | yes |  | The urls to fetch: a Tako card url or a web result url. One call for 8 urls saves 7 round trips. |
+| `max_rows` | integer | no |  | Tako cards only: how many rows to return. Omit it for the whole card, up to 2,000 rows. Charges scale with rows returned, so lower it when the recent rows are enough. |
 | `max_chars` | integer | no |  | Web pages only: character cap on the extracted text. Inline fetches default to 100,000 per url, less across a batch. Raise it for a long document; `truncated` reports a cut. With `query`, it caps the passages instead: 100 to 20,000, and 4,000 by default. |
 | `query` | string | no |  | Web pages only: a question the passages should answer. The result holds those passages instead of the page. Omit it to get the whole page. |
 
@@ -898,10 +1249,10 @@ Annotations:
         "type": "string",
         "minLength": 1
       },
-      "description": "The urls to fetch: a Tako card url or a web result url. One call for 8 urls costs the same as 8 separate calls and saves 7 round trips."
+      "description": "The urls to fetch: a Tako card url or a web result url. One call for 8 urls saves 7 round trips."
     },
     "max_rows": {
-      "description": "Tako cards only: how many rows to return. Omit it for the whole card, up to 2,000 rows. Every row delivered is billed, so lower it when the recent rows are enough.",
+      "description": "Tako cards only: how many rows to return. Omit it for the whole card, up to 2,000 rows. Charges scale with rows returned, so lower it when the recent rows are enough.",
       "type": "integer",
       "minimum": 1,
       "maximum": 2000
@@ -1430,18 +1781,18 @@ NVIDIA Corporation operates as a data center scale AI infrastructure company. Th
 
 Description:
 
-Search Tako's data graph and the live web in one call: many results at once, as structured cards plus web results, with the top card rendered inline as a chart.
+Search Tako's data graph and the live web in one call: many results at once, as structured cards plus web results. The first card's chart renders inline; some hosts also show every other card's chart, in search's order.
 
-It finds data; `tako_contents` fetches it. Each card carries a headline value, node ids, and a url — pass the url to `tako_contents` for rows (`exportable: true` cards) or a web result's full page text. When `exportable` is false the rows are locked — read the headline value from the card's `description`. Website-traffic and SEO cards bill a per-unit data minimum above the search price.
+It finds results; `tako_contents` fetches what's behind them. Each card carries a headline value, node ids, and a url — pass the url to `tako_contents` for rows (`exportable: true` cards) or a web result's full page text. When `exportable` is false the rows are locked — read the headline value from the card's `description`.
 
-Best for: breadth — fan out several narrow queries in parallel. Each query resolves one metric — for one entity, or a comparison set ("Apple revenue", "Nvidia vs AMD gross margin"); several metrics or topics in one query retrieve poorly. To learn what Tako covers, or a metric's canonical name, run `tako_available_data` first, then search on the canonical name it returns.
+Best for: breadth — fan out several narrow queries in parallel. Each query answers one question — one metric for one entity, a comparison set ("Apple revenue", "Nvidia vs AMD gross margin"), or one news or web lookup ("EU AI Act timeline"); several metrics or topics in one query retrieve poorly.
 
 Parameters:
 
 | Name | Type | Required | Default | Description |
 |---|---|---|---|---|
 | `query` | string | yes |  | Natural-language search query (e.g. "US GDP growth", "Intel vs Nvidia revenue"). Double-quote a multi-word name to keep it one entity ("tesla motors" club revenue); an unpaired quote disables quoting. Website-traffic data is keyed by domain — query "openai.com monthly visits", not "OpenAI website visits". |
-| `sources` | array | no | `["data","web"]` | Which corpora to search; default is both. Narrow to ["data"] once `tako_available_data` confirms coverage; narrow to ["web"] only for news or page text — website traffic is in the data graph. |
+| `sources` | array | no | `["data","web"]` | Which corpora to search; default is both. Narrow to ["web"] only for news or page text — website traffic is in the data graph. |
 | `country_code` | string | no |  | ISO 3166-1 alpha-2 country code for localized results. Omit it and the server uses US. Set it to localize for the user. |
 | `locale` | string | no |  | BCP-47 locale tag for language and formatting. Omit it and the server uses en-US. Set it to localize for the user. |
 
@@ -1472,7 +1823,7 @@ Annotations:
         "data",
         "web"
       ],
-      "description": "Which corpora to search; default is both. Narrow to [\"data\"] once `tako_available_data` confirms coverage; narrow to [\"web\"] only for news or page text — website traffic is in the data graph.",
+      "description": "Which corpora to search; default is both. Narrow to [\"web\"] only for news or page text — website traffic is in the data graph.",
       "minItems": 1,
       "type": "array",
       "items": {
@@ -1649,7 +2000,7 @@ Annotations:
       "description": "Cost-plus usage for this request (null when not metered)."
     },
     "guidance": {
-      "description": "Zero-card verdict and next action, or how a keyless caller unlocks a placeholder card.",
+      "description": "How a keyless caller unlocks a placeholder card.",
       "type": "string"
     },
     "metric_definitions": {
@@ -1833,10 +2184,6 @@ The chart-widget fields are declared only here; the widget reads them from `wind
         }
       ],
       "description": "Cost-plus usage for this request (null when not metered)."
-    },
-    "guidance": {
-      "description": "Zero-card verdict and next action, or how a keyless caller unlocks a placeholder card.",
-      "type": "string"
     },
     "metric_definitions": {
       "description": "What each metric means (unit, basis, caveats), keyed by metric name, deduped across cards.",
@@ -2575,7 +2922,7 @@ Annotations:
       "description": "Cost-plus usage for this request (null when not metered)."
     },
     "guidance": {
-      "description": "Zero-card verdict and next action, or how a keyless caller unlocks a placeholder card.",
+      "description": "Why a `strict: true` pin returned no cards.",
       "type": "string"
     },
     "metric_definitions": {

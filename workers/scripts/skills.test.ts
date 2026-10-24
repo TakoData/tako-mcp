@@ -43,6 +43,8 @@ import path from "node:path";
 import yaml from "js-yaml";
 import { describe, expect, it } from "vitest";
 
+import { EXPECTED_PLUGIN_TOOL_URL, resolveToolUrl } from "./plugin-tool-url.js";
+
 /** Repo root — this file lives at `workers/scripts/`. */
 const REPO_ROOT = path.resolve(import.meta.dirname, "..", "..");
 const SKILLS_DIR = path.join(REPO_ROOT, "skills");
@@ -58,8 +60,8 @@ function skillDirNames(): string[] {
 // The ONE sanctioned difference between a SKILL.md and its README copy. The
 // README block is step 2 of a numbered install flow, so it points back at the
 // server the reader just added; the installed file has no such context and
-// names the server instead. Both spellings appear exactly three times, once
-// per skill. Any OTHER difference is drift, and the parity test says so.
+// names the server instead. Each spelling appears once. Any OTHER difference
+// is drift, and the parity test says so.
 const README_CONTEXT = "Tako MCP server installed in Step 1.";
 const SKILL_CONTEXT = "Tako MCP server (server name `tako`).";
 
@@ -76,12 +78,8 @@ function frontmatterOf(markdown: string): string {
 describe("bundled plugin skills", () => {
   const names = skillDirNames();
 
-  it("ships the three research skills", () => {
-    expect(names).toEqual([
-      "tako-financial-research",
-      "tako-macroeconomics",
-      "tako-web-traffic",
-    ]);
+  it("ships the tako-agent and tako-search skills", () => {
+    expect(names).toEqual(["tako-agent", "tako-search"]);
   });
 
   for (const name of names) {
@@ -183,7 +181,26 @@ describe("plugin manifests", () => {
       ),
     ) as { mcpServers?: Record<string, { type?: string; url?: string }> };
     expect(plugin.mcpServers?.tako?.type).toBe("http");
-    expect(plugin.mcpServers?.tako?.url).toBe("https://mcp.tako.com/mcp");
+    expect(resolveToolUrl(plugin.mcpServers?.tako?.url ?? "")).toEqual(
+      EXPECTED_PLUGIN_TOOL_URL,
+    );
+  });
+
+  it("installs the plugin's endpoint in every README block", () => {
+    const plugin = JSON.parse(
+      fs.readFileSync(
+        path.join(REPO_ROOT, ".claude-plugin", "plugin.json"),
+        "utf8",
+      ),
+    ) as { mcpServers?: Record<string, { url?: string }> };
+    const readme = fs.readFileSync(path.join(REPO_ROOT, "README.md"), "utf8");
+    const installUrls = [
+      ...readme.matchAll(/claude mcp add tako-mcp --transport http "([^"]+)"/g),
+    ].map((match) => match[1]);
+    expect(installUrls.length).toBeGreaterThan(0);
+    for (const url of installUrls) {
+      expect(url).toBe(plugin.mcpServers?.tako?.url);
+    }
   });
 
   it("declares the plugin in the marketplace manifest", () => {

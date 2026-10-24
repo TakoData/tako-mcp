@@ -1,10 +1,9 @@
-description = "Check what proprietary data Tako has on an entity or metric (free, no credits spent)"
+description = "Check what proprietary data Tako has on an entity or metric"
 
 prompt = """
 Check Tako's coverage for: {{args}}
 
-Call `tako_available_data`. It is free and fast, so this is the cheap way to find out
-whether a figure exists before spending a priced search or answer.
+Call `tako_available_data`.
 
 Scope matters here: this probes the **proprietary data graph only**, not Tako's web search.
 A miss means the figure is not available as a typed series with a named provider. It does

@@ -41,9 +41,11 @@ describe("surface membership sets", () => {
     }
   });
 
-  it("chatgpt listing is the five submitted tools (spec D2)", () => {
+  it("chatgpt listing is the seven submitted tools (spec D2)", () => {
     expect([...CHATGPT_TOOL_NAMES].sort()).toEqual([
+      "tako_agent",
       "tako_available_data",
+      "tako_company_agent",
       "tako_contents",
       "tako_graph_related",
       "tako_search",
@@ -73,8 +75,8 @@ describe("resolveToolSet", () => {
 
   it("chatgpt ignores the allowlist and always serves the fixed set", () => {
     expect(resolveToolSet("chatgpt", null)).toBe(CHATGPT_TOOL_NAMES);
-    expect(resolveToolSet("chatgpt", new Set(["tako_agent"]))).toBe(CHATGPT_TOOL_NAMES);
-    expect(isToolOnSurface("tako_agent", "chatgpt", new Set(["tako_agent"]))).toBe(false);
+    expect(resolveToolSet("chatgpt", new Set(["tako_search_advanced"]))).toBe(CHATGPT_TOOL_NAMES);
+    expect(isToolOnSurface("tako_search_advanced", "chatgpt", new Set(["tako_search_advanced"]))).toBe(false);
     expect(isToolOnSurface("tako_visualize", "chatgpt", null)).toBe(true);
   });
 
@@ -121,8 +123,7 @@ describe("tool descriptions are tier-invariant", () => {
   // sit outside the free set, so the sentence distinguishes nothing; it reads
   // as a property of the one tool that carries it. `tako_contents` did carry
   // it and no longer does — the dispatch gate (`GENERIC_SIGN_IN_HINT`) states
-  // it where it applies, and search's zero-card guidance branches on
-  // reachability before naming the tool. #274 removed the mirror claim
+  // it where it applies. #274 removed the mirror claim
   // ("`tako_available_data` is free") from the instructions for the same
   // reason. This block audits the free set only; it does not require any
   // description to advertise the boundary.

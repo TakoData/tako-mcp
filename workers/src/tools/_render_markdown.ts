@@ -103,7 +103,7 @@ const searchCoreFields = {
   guidance: z
     .string()
     .optional()
-    .describe("Zero-card verdict and next action, or how a keyless caller unlocks a placeholder card."),
+    .describe("How a keyless caller unlocks a placeholder card."),
   metric_definitions: z
     .record(z.string(), z.string())
     .optional()
@@ -178,10 +178,13 @@ const answerFoldFields = {
 
 export const searchSlimOutputShape = z.looseObject(searchCoreFields);
 
+const { guidance: _keylessGuidance, ...searchOAuthFields } = searchCoreFields;
+
 /** chatgpt-surface variant: adds the widget fields `window.openai.toolOutput`
- *  reads (the widget ignores `cards`/`web_results`). */
+ *  reads (the widget ignores `cards`/`web_results`), and drops `guidance`,
+ *  whose one source is a keyless caller and `/mcp/chatgpt` requires OAuth. */
 export const searchChatgptOutputShape = z.looseObject({
-  ...searchCoreFields,
+  ...searchOAuthFields,
   ...autoChainShape,
 });
 
@@ -196,6 +199,7 @@ export const searchAdvancedOutputShape = z.looseObject({
     // `include_contents: true` caller into a priced refetch of rows it had
     // already paid to inline.
     .describe("The data cards. Rows ride in a card's `rows` only when the request asked to inline them — otherwise fetch an exportable card's rows with tako_contents on its url."),
+  guidance: z.string().optional().describe("Why a `strict: true` pin returned no cards."),
   ...answerFoldFields,
 });
 
@@ -477,8 +481,8 @@ function renderNameMap(title: string, map: Record<string, string>): string {
 export function renderSearchMarkdown(o: SearchOutput): string {
   const blocks: string[] = [];
   // The answer leads. A verdict ahead of it reads as "this answer failed"
-  // rather than "the data index has a gap" — the guidance is about coverage,
-  // and the prose above it may be a complete, correct web-grounded answer.
+  // rather than "the pinned filter matched no card" — the guidance is about the
+  // data cards, and the prose above it may be a complete, correct web-grounded answer.
   if (o.answer !== undefined) blocks.push(o.answer);
   if (o.guidance !== undefined) blocks.push(`> ${o.guidance}`);
   if (o.structured_output_error !== undefined) {
@@ -851,15 +855,20 @@ function renderAgentCard(c: ProjectedAgentCard): string {
 }
 
 function renderCitation(c: ProjectedCitation): string {
+  const published = c.published !== undefined ? `, ${c.published}` : "";
   const url = c.url !== undefined ? ` — ${c.url}` : "";
   const corpus = c.source_index !== undefined ? ` (${c.source_index})` : "";
-  return `[${c.index}] ${oneLine(c.title)}${url}${corpus}`;
+  return `[${c.index}] ${oneLine(c.title)}${published}${url}${corpus}`;
 }
 
 /** An agent run as markdown: the answer, the cards it built, the indexed
  *  sources its [n] markers join to, and the reasoning notes behind it. */
 export function renderAgentRunMarkdown(o: AgentRunOutput): string {
   const blocks: string[] = [];
+  if (o.status === "running") {
+    if (o.message !== undefined) blocks.push(oneLine(o.message));
+    blocks.push(`run_id: ${o.run_id}`);
+  }
   if (o.answer !== undefined) blocks.push(o.answer);
   if (o.guidance !== undefined) blocks.push(`> ${o.guidance}`);
   if (o.error !== undefined) {

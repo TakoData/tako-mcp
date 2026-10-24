@@ -127,8 +127,7 @@ describe("tako_search is the SIMPLE tool (spec D4)", () => {
 
   it("declares no defaults of its own beyond sources", () => {
     // `sources` keeps a default because the Worker READS it — to pick which
-    // per-source blocks to send and which zero-card guidance branch applies.
-    // It is not a value forwarded to the API.
+    // per-source blocks to send. It is not a value forwarded to the API.
     expect(tako_search.inputSchema.parse({ query: "x" })).toEqual({
       query: "x",
       sources: ["data", "web"],
@@ -329,27 +328,7 @@ describe("tako_search response mapping", () => {
 
     expect(out.web_results).toHaveLength(1);
     expect(out.web_results[0]?.url).toBe("https://example.com/a");
-    // Zero cards still carries guidance — but this is a WEB-ONLY search, so it
-    // must not claim anything about data coverage, and must not ban the one
-    // recovery available (refining the query). It previously asserted a blanket
-    // "do not re-search", which is the misfire.
-    //
-    // The assertions below used to be `/Refine and re-search/i` alone, which
-    // `REFINE_WEB_FREELY` ("refine and re-search freely") satisfied from the
-    // WRONG branch — so the test passed while the claim its own comment names
-    // went unchecked, and the rendered guidance really did report a graph
-    // verdict. Assert the absence of every data-axis claim, not a string two
-    // branches share.
-    const g = out.guidance ?? "";
-    expect(g).toMatch(/web source only/i);
-    expect(g).not.toMatch(/do not re-?search/i);
-    // No verdict about a source that was never queried.
-    expect(g).not.toMatch(/data graph does not cover/i);
-    expect(g).not.toMatch(/already shown the graph does not hold it/);
-    // No data-axis recovery either: the caller narrowed sources deliberately.
-    expect(g).not.toMatch(/node_id/);
-    expect(g).not.toMatch(/strict/);
-    expect(g).not.toMatch(/hard filter/);
+    expect(out.guidance).toBeUndefined();
   });
 
   it("tells a keyless caller that signing in gets a placeholder card's data, and says nothing to a signed-in one", async () => {
@@ -417,8 +396,7 @@ describe("tako_search response mapping", () => {
     expect(out.pub_id).toBeUndefined();
     expect(out.embed_url).toBeUndefined();
     expect(out.image_url).toBeUndefined();
-    // Zero results carry the anti-retry recovery protocol.
-    expect(out.guidance).toMatch(/tako_available_data/);
+    expect(out.guidance).toBeUndefined();
   });
 
   it("omits widget fields when the top card has no card_id", async () => {
@@ -684,5 +662,63 @@ describe("tako_search never inlines rows", () => {
       { id: "tesla-x1", name: "Tesla", type: "entity" },
       { id: "rev-9", name: "Revenue", type: "metric" },
     ]);
+  });
+});
+
+describe("tako_search extraMeta charts", () => {
+  const pngBytes = (width: number, height: number): Uint8Array => {
+    const bytes = new Uint8Array(64);
+    const view = new DataView(bytes.buffer);
+    view.setUint32(0, 0x89504e47);
+    view.setUint32(16, width);
+    view.setUint32(20, height);
+    return bytes;
+  };
+
+  const chartFor = (pubId: string) => ({
+    pub_id: pubId,
+    embed_url: `https://staging.trytako.com/embed/${pubId}/`,
+    image_url: `https://staging.trytako.com/api/v1/image/${pubId}/`,
+  });
+
+  const stubPngFetch = (failingPubId?: string) => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((async (input: RequestInfo | URL) => {
+      const url = new Request(input as RequestInfo).url;
+      if (failingPubId !== undefined && url.includes(failingPubId)) {
+        return new Response("nope", { status: 500 });
+      }
+      return new Response(pngBytes(2400, 1100), {
+        status: 206,
+        headers: { "content-type": "image/png" },
+      });
+    }) as typeof fetch);
+  };
+
+  it("extraMeta sends one entry per chart on chatgpt", async () => {
+    stubPngFetch("card_b");
+    const charts = [chartFor("card_a"), chartFor("card_b"), chartFor("card_c")];
+    const meta = await tako_search.extraMeta!(
+      { ...charts[0], charts } as never,
+      { ...CTX, surface: "chatgpt" } as never,
+    );
+    const entries = (meta as { charts?: Record<string, unknown>[] }).charts;
+    expect(entries).toHaveLength(3);
+    expect(entries?.[1]).not.toHaveProperty("image_natural_width");
+    expect(entries?.[1]?.pub_id).toBe("card_b");
+    expect(entries?.[0]).toMatchObject({
+      pub_id: "card_a",
+      image_natural_width: 2400,
+      image_natural_height: 1100,
+    });
+  });
+
+  it("extraMeta sends no charts for a single chart", async () => {
+    stubPngFetch();
+    const charts = [chartFor("card_a")];
+    const meta = await tako_search.extraMeta!(
+      { ...charts[0], charts } as never,
+      { ...CTX, surface: "chatgpt" } as never,
+    );
+    expect((meta as { charts?: unknown } | undefined)?.charts).toBeUndefined();
   });
 });

@@ -88,8 +88,9 @@ import type { ToolModule } from "./types.js";
 // `data.node_ids` and `data.strict`, whose describes are the surface a caller
 // reads while building the argument; the measured disagreement with the
 // backend's own "strong boost" wording is a code comment on those overrides;
-// the zero-card recovery is `guidance` on the result, which is where the model
-// reads it at the moment it applies; the highlights toggle is `web.highlights`.
+// a `strict: true` pin that returns no cards gets `guidance` on the result,
+// which is where the model reads it at the moment it applies; the highlights
+// toggle is `web.highlights`.
 const DESCRIPTION = [
   "Get one citation-backed answer (`include_answer: true`), or search Tako's data graph and the live web with the whole v3 request: per-source counts, inline card rows, graph pins, web domain and category filters, and the deep effort tier.",
   "",
@@ -160,9 +161,8 @@ const DATA_DESCRIBES = {
   max_rows: "Rows to inline per card when `include_contents` is true. Omit it and each card takes your account default (20 on the standard plan). Every inlined row bills; the ceiling is 2,000 rows.",
   // NAMES A SOURCE THIS CONNECTION HAS. `?tools=search_advanced` registers
   // this tool ALONE, so a describe that points only at `tako_available_data`
-  // sends that caller to a tool it cannot call — the reason
-  // `buildDataGapGuidance` gates the same name on `registeredTools`. A
-  // describe cannot branch, so it names the card's own `nodes` first, which
+  // sends that caller to a tool it cannot call. A describe cannot branch, so
+  // it names the card's own `nodes` first, which
   // this tool returns on every search.
   node_ids: "Graph node ids to pin, as a card's `nodes` or `tako_available_data` return them. Pin the metric's node id alone and set `strict: true` to make its card come back; a bare pin only nudges the ranking. Max 20.",
   // The DEFAULT is the load-bearing half, and `optionalWithoutDefaults` strips
@@ -262,9 +262,8 @@ const topLevel = optionalWithoutDefaults(SearchRequest.omit({ query: true, sourc
  * `app/backend/integration_tests/api_surface/test_search_semantics.py`,
  * "flat mode must empty cards" / "must empty web_results") moves every row to
  * `results[]`, and `_run_search.ts` parses `wire.cards` and `wire.web_results`
- * only. A caller who named it would pay for a search, get nothing back, and
- * read the zero-result protocol's pin-recovery guidance, which names a cause
- * that is not the one. The block is `.strict()`, so withholding the key makes
+ * only. A caller who named it would pay for a search and get nothing back.
+ * The block is `.strict()`, so withholding the key makes
  * that a local -32602 instead of a billed empty result.
  *
  * Consuming `results[]` is not the smaller fix. A `FlatResult` row carries no
@@ -502,13 +501,6 @@ const tako_search_advanced = {
   // change. This one they can, so the list stays empty.
   fixedInputs: [],
   async handler(input, ctx): Promise<SearchOutput> {
-    const named: Array<"data" | "web"> = [];
-    if (input.data !== undefined) named.push("data");
-    if (input.web !== undefined) named.push("web");
-    // Naming neither block means the server searches BOTH, so the zero-card
-    // guidance has to read it that way too — otherwise an empty result would
-    // report a coverage verdict about a source the request never narrowed.
-    const searched: Array<"data" | "web"> = named.length > 0 ? named : ["data", "web"];
     // "all", never a number: this tool SENDS sources.data.max_rows on the wire,
     // so the backend has already truncated to exactly what the caller asked
     // for — including the 2,000-row ceiling the simple tool cannot reach. A
@@ -524,7 +516,7 @@ const tako_search_advanced = {
       endpointFor(input) === "answer"
         ? { endpoint: "answer", body }
         : { endpoint: "search", body };
-    return runSearch(call, searched, rowCap, ctx, "tako_search_advanced");
+    return runSearch(call, rowCap, ctx, "tako_search_advanced");
   },
   renderText(output, _ctx) {
     void _ctx;

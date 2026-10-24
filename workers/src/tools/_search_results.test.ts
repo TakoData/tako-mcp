@@ -14,28 +14,21 @@ import { TOOL_REGISTRY } from "./_registry.js";
 
 import { ContentItem } from "../generated/schemas.js";
 
-import tako_search from "./tako_search.js";
-import tako_search_advanced from "./tako_search_advanced.js";
 import { searchAdvancedOutputShape } from "./_render_markdown.js";
 
 import {
-  BOTH_SOURCES_ARG,
   CONTENT_META_KEYS,
   CONTENT_PAYLOAD_KEYS,
-  buildDataGapGuidance,
   buildReferenceMaps,
   buildSearchOutput,
-  orderCardsByUsefulness,
+  cardCharts,
   projectCard,
   projectCardRows,
   projectWebResult,
   slimCardContent,
-  strictPinGuidance,
 } from "./_search_results.js";
 import type {
   ResultContent,
-  SearchedSources,
-  SearchToolName,
   TakoCard,
   WebResult,
 } from "./_search_results.js";
@@ -184,289 +177,40 @@ describe("slimCardContent — drop-all mode (capRows = null)", () => {
 });
 
 // `tako_search`'s call shape: no inlined rows, no web page text. Shared by the
-// buildSearchOutput tests below, which exercise guidance and ordering rather
+// buildSearchOutput tests below, which exercise guidance and card order rather
 // than the `tako_search_advanced` inline path.
 const OPTS = { rowCap: null, keepWebText: false, toolName: "tako_search" } as const;
 
 describe("buildSearchOutput — zero-card guidance", () => {
   const ENV: Env = { DJANGO_BASE_URL: "https://staging.trytako.com" };
+  const WEB: WebResult[] = [{ title: "t", url: "https://x.com" }];
 
-  it("attaches the full anti-retry protocol when cards AND web_results are both empty", () => {
-    const out = buildSearchOutput([], [], "req-1", null, ENV, ["data", "web"], false, "authenticated", OPTS);
-    // The load-bearing instruction: rewording does not converge and costs money.
-    expect(out.guidance).toMatch(/rewording alone will not change that/i);
-    expect(out.guidance).toMatch(/every retry is priced/i);
-    expect(out.guidance).toMatch(/tako_available_data/);
-  });
-
-  it("still fires on zero cards WITH web_results — steering to the web fallback", () => {
-    // The common default-source miss: no data card, some web hits. This is
-    // exactly the "reword and retry for a chart" loop case, so guidance must
-    // not be silently skipped here.
-    const out = buildSearchOutput([], [{ title: "t", url: "https://x.com" }], "req-3", null, ENV, ["data", "web"], false, "authenticated", OPTS);
-    expect(out.guidance).toMatch(/web_results/);
-    // The verdict is scoped to the graph, not to the whole call.
-    expect(out.guidance).toMatch(/data graph does not cover this query/i);
-  });
-
-  // THE MISFIRE. This branch used to say "do NOT re-search with rephrasings"
-  // flat out, which is right for hunting a data card and wrong for every
-  // question whose answer is on the web: a docs or reference lookup is won by
-  // re-searching per entity or per provider, and the guidance was telling the
-  // model to stop after one call. The ban must name the DATA axis and the
-  // carve-out must be explicit — a model reading this cannot be left to infer
-  // that web refinement is still allowed.
-  it("does not ban web re-searching when zero cards come back with web results", () => {
-    const out = buildSearchOutput([], [{ title: "t", url: "https://x.com" }], "req-3b", null, ENV, ["data", "web"], false, "authenticated", OPTS);
-    const g = out.guidance ?? "";
-    // The two-sentence rewrite keeps the MISFIRE fix by scoping: the no-reword
-    // verdict names the DATA GRAPH, never the call as a whole, so nothing here
-    // reads as a ban on refining a WEB query.
-    expect(g).toMatch(/data graph does not cover this query/i);
-    expect(g).not.toMatch(/do not re-?search/i);
-    expect(g).not.toMatch(/stop calling/i);
-  });
-
-  // The mirror of buildDataGapGuidance's `searchedWebToo` fix. A web-only search
-  // has zero cards by construction, so the graph verdict below would be built
-  // from evidence that does not exist.
-  it("renders no graph verdict for a web-only search that DID return web results", () => {
-    const out = buildSearchOutput([], [{ title: "t", url: "https://x.com" }], "req-3c", null, ENV, ["web"], false, "authenticated", OPTS);
-    const g = out.guidance ?? "";
-    expect(g).toMatch(/web source only/i);
-    expect(g).not.toMatch(/data graph does not cover/i);
-    // And none of the data-axis recovery, which does not apply to a deliberate
-    // web-only narrow.
-    expect(g).not.toMatch(/node_id/);
-    expect(g).not.toMatch(/strict/);
-    // It still names the way to GET a coverage answer, which is the cheap
-    // re-ask. Derived from BOTH_SOURCES_ARG rather than retyped: the point of
-    // that constant is that the advertised argument and the sendable one are
-    // the same value, and a literal here would reintroduce the second copy.
-    expect(g).toContain(JSON.stringify(BOTH_SOURCES_ARG.tako_search).slice(1, -1));
-    expect(g).toMatch(/tako_available_data/);
-  });
-
-  it("tailors the both-empty protocol for a data-only search (web fallback allowed on the single retry)", () => {
-    const out = buildSearchOutput([], [], "req-4", null, ENV, ["data"], false, "authenticated", OPTS);
-    expect(out.guidance).toMatch(/tako_available_data/);
-    // No web-axis carve-out here: the web was never searched, so there is no
-    // empty web result to reinterpret.
-    expect(out.guidance).not.toMatch(/narrower web question/);
-  });
-
-  // THE INVARIANT, checked on BOTH surfaces in one test on purpose. The answer
-  // path has always allowed ONE narrower web attempt; the search path used to
-  // end flatly at "stop calling Tako for this question" — same situation,
-  // opposite verdict, on the most common Tako-has-nothing path, which teaches a
-  // model that reads both that one of them is wrong.
-  //
-  // A string-identity check cannot hold this: BOTH surfaces are now capped at
-  // two sentences, so each states the carve-out as a clause in its own words
-  // and there is no shared constant left to compare against. Asserting each
-  // side separately would let a future edit delete either wording with the
-  // suite green, so both are asserted here.
-  it("both zero-result surfaces permit exactly one narrower web attempt", () => {
-    const search =
-      buildSearchOutput([], [], "req-4b", null, ENV, ["data", "web"], false, "authenticated", OPTS)
-        .guidance ?? "";
-    const answer = buildDataGapGuidance(false, true, "tako_search_advanced");
-    for (const [surface, g] of [
-      ["search", search],
-      ["answer", answer],
-    ] as const) {
-      // "genuinely narrower" is the phrasing BOTH carry. The nouns already
-      // differ — search says "narrower web question", answer says "narrower
-      // question" — which is exactly how far apart two hand-written statements
-      // of one rule drift, and why the invariant is asserted rather than the
-      // string.
-      expect(g, `${surface} drops the narrower-web carve-out`).toMatch(/genuinely narrower/i);
-      expect(g, `${surface} forbids the attempt the other surface allows`).not.toMatch(
-        /do not (re-?search|try) the web/i,
-      );
+  it("attaches no guidance to an unpinned zero-card result", () => {
+    for (const web of [[], WEB]) {
+      for (const tier of ["free", "authenticated"] as const) {
+        for (const extras of [{}, { answer: "No figure found." }]) {
+          const out = buildSearchOutput([], web, "req", null, ENV, false, tier, OPTS, extras);
+          const label = `web=${web.length} tier=${tier} answer=${"answer" in extras}`;
+          expect(out.guidance, label).toBeUndefined();
+        }
+      }
     }
   });
 
-  // A web-only search that came back empty has NO data verdict to report (the
-  // data source was never queried) and exactly one lever available: the query.
-  // This branch used to ban that lever — "do NOT retry this query or
-  // rephrasings of it" — which left the model with nothing to do at all.
-  it("tells a web-only search to refine, and claims nothing about graph coverage", () => {
-    const out = buildSearchOutput([], [], "req-5", null, ENV, ["web"], false, "authenticated", OPTS);
-    const g = out.guidance ?? "";
-    expect(g).not.toMatch(/node_id/);
-    expect(g).toMatch(/refine to one entity/i);
-    expect(g).toMatch(/says nothing about Tako's coverage/i);
-    expect(g).not.toMatch(/rewording alone will not change/i);
-  });
-
-  it("takes the DATA-verdict branch for a data-source search", () => {
-    // Was "treats the legacy tako alias as data" and keyed on /node_id/ in the
-    // guidance; the alias is gone and so is the pin recipe, so pin the branch
-    // by the verdict it is the only one to state.
-    const out = buildSearchOutput([], [], "req-6", null, ENV, ["data"], false, "authenticated", OPTS);
-    expect(out.guidance).toMatch(/tako_available_data/);
-    expect(out.guidance).toMatch(/every retry is priced/i);
+  it("blames the FILTER, not coverage, when the request carried a strict pin", () => {
+    // Reachable only from tako_search_advanced. Without this branch the model
+    // gets an empty `cards` list and no guidance after a hard filter returned
+    // nothing, and reads it as a coverage gap — a verdict the request cannot
+    // support (KE-812: pinned handles returned FEWER cards on 11 of 20 pairs),
+    // and one that contradicts that tool's own description.
+    const g = buildSearchOutput([], [], "req", null, ENV, true, "authenticated", OPTS).guidance ?? "";
+    expect(g).toMatch(/hard filter/i);
+    expect(g).toMatch(/node_ids/);
   });
 
   it("omits guidance when any card is present", () => {
-    const out = buildSearchOutput([{ card_id: "c1" }], [], "req-2", null, ENV, ["data", "web"], false, "authenticated", OPTS);
+    const out = buildSearchOutput([{ card_id: "c1" }], [], "req-2", null, ENV, false, "authenticated", OPTS);
     expect(out.guidance).toBeUndefined();
-  });
-});
-
-/**
- * EVERY guidance branch is two sentences: the verdict (which corpora this
- * response is evidence about) and the one next action. A branch that cannot
- * survive at two sentences dies (spec: 2026-08-26-model-facing-surface-
- * redesign, "guidance" decision).
- *
- * Counted rather than eyeballed because the three answer-endpoint branches
- * were the last ones over — five to six sentences and up to 740 chars each,
- * three of them spent on anti-instructions the one action already implies.
- * A sentence budget is the only thing that stops guidance regrowing: it is
- * written mid-failure, when more advice always feels like the safe choice.
- */
-describe("every guidance branch is two sentences", () => {
-  const ENV: Env = { DJANGO_BASE_URL: "https://staging.trytako.com" };
-  // Abbreviations end in a period too, so a naive split over-counts. The
-  // branches here contain none; if one gains one, extend this rather than
-  // loosening the count.
-  const sentences = (text: string): string[] =>
-    text.split(/(?<=[.!?])\s+/).filter((part) => part.trim() !== "");
-
-  const branches = (): Array<[string, string]> => {
-    const out: Array<[string, string]> = [];
-    for (const [label, sources] of [
-      ["search: data+web", ["data", "web"]],
-      ["search: data only", ["data"]],
-      ["search: web only", ["web"]],
-    ] as const) {
-      for (const webResults of [[], [{ url: "https://e.com" }]]) {
-        const g = buildSearchOutput(
-          [],
-          webResults as WebResult[],
-          "r",
-          null,
-          ENV,
-          sources as unknown as SearchedSources,
-          false,
-          "authenticated",
-          OPTS,
-        ).guidance;
-        if (g !== undefined) out.push([`${label} / ${webResults.length} web`, g]);
-      }
-    }
-    out.push(["answer: data only", buildDataGapGuidance(false, false, "tako_search_advanced")]);
-    out.push(["answer: web-grounded", buildDataGapGuidance(true, true, "tako_search_advanced")]);
-    out.push(["answer: nothing", buildDataGapGuidance(false, true, "tako_search_advanced")]);
-    out.push(["strict pin", strictPinGuidance("authenticated")]);
-    return out;
-  };
-
-  it("covers every branch, so the count cannot pass vacuously", () => {
-    expect(branches().length).toBeGreaterThanOrEqual(8);
-  });
-
-  it("no branch runs past two sentences", () => {
-    for (const [label, text] of branches()) {
-      expect(sentences(text).length, `${label}: ${text}`).toBeLessThanOrEqual(2);
-    }
-  });
-});
-
-/**
- * Guidance names an ARGUMENT, so the argument has to be one the receiving tool
- * accepts.
- *
- * `tako_search` publishes `sources` as an ARRAY. `tako_search_advanced`
- * publishes no `sources` key at all — the two blocks sit at the top level and
- * every level is `.strict()`. Both builders named `tako_search`'s form
- * unconditionally, so on the advanced tool the zero-result recovery step, the
- * one that exists to stop a priced retry loop, was itself an
- * `Unrecognized key: "sources"` before the request left the Worker.
- *
- * Only the tool's own schema knows this, which is why the assertion parses
- * rather than compares strings.
- */
-describe("the sources argument guidance names is one that tool accepts", () => {
-  const ENV: Env = { DJANGO_BASE_URL: "https://staging.trytako.com" };
-  const TOOLS = { tako_search, tako_search_advanced } as const;
-  const NAMES = Object.keys(TOOLS) as SearchToolName[];
-
-  it("every advertised argument parses against that tool's published schema", () => {
-    for (const name of NAMES) {
-      const parsed = TOOLS[name].inputSchema.safeParse({
-        query: "us gdp",
-        ...BOTH_SOURCES_ARG[name],
-      });
-      expect(parsed.success, `${name}: ${JSON.stringify(parsed.error?.issues)}`).toBe(true);
-    }
-  });
-
-  // Catches a HAND-WRITTEN argument too, not only the derived one: any code
-  // span that parses as a JSON object body is what a model will paste, so it
-  // is held to the same bar. A span that is prose (`related`, `tako_contents`)
-  // fails JSON.parse and is skipped — as would an argument written with
-  // unquoted keys, which is the one hole here and the reason the derived form
-  // stringifies.
-  const argumentsNamedIn = (text: string): Record<string, unknown>[] => {
-    const out: Record<string, unknown>[] = [];
-    for (const [, span] of text.matchAll(/`([^`]+)`/g)) {
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(`{${span}}`);
-      } catch {
-        continue;
-      }
-      if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
-        out.push(parsed as Record<string, unknown>);
-      }
-    }
-    return out;
-  };
-
-  it("every argument named in any guidance branch is sendable to the tool that emitted it", () => {
-    let checked = 0;
-    for (const name of NAMES) {
-      const branches: string[] = [];
-      for (const sources of [["data"], ["web"], ["data", "web"]] as SearchedSources[]) {
-        for (const web of [[], [{ url: "https://e.com" }]]) {
-          const g = buildSearchOutput(
-            [],
-            web as WebResult[],
-            "r",
-            null,
-            ENV,
-            sources,
-            false,
-            "authenticated",
-            { rowCap: null, keepWebText: false, toolName: name },
-          ).guidance;
-          if (g !== undefined) branches.push(g);
-        }
-      }
-      if (name === "tako_search_advanced") {
-        for (const hasWeb of [true, false]) {
-          for (const searchedWebToo of [true, false]) {
-            branches.push(buildDataGapGuidance(hasWeb, searchedWebToo, name));
-          }
-        }
-      }
-      for (const g of branches) {
-        for (const argument of argumentsNamedIn(g)) {
-          checked += 1;
-          const parsed = TOOLS[name].inputSchema.safeParse({ query: "us gdp", ...argument });
-          expect(
-            parsed.success,
-            `${name} guidance names an unsendable argument ${JSON.stringify(argument)}: ${JSON.stringify(parsed.error?.issues)}\n${g}`,
-          ).toBe(true);
-        }
-      }
-    }
-    // Vacuity guard: this passes trivially if no branch names an argument at
-    // all, which is also how the wording could silently stop being actionable.
-    expect(checked, "no guidance branch named an argument to check").toBeGreaterThan(0);
   });
 });
 
@@ -489,287 +233,14 @@ describe("payload layout — data serializes before boilerplate", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// orderCardsByUsefulness
-// ---------------------------------------------------------------------------
-//
-// The failure this ordering exists for, verbatim from prod (2026-07-29):
-// `tako_search "US inflation rate"` ranked `United States Inflation Rate`
-// (newest row 2024-01-01) ABOVE `United States CPI Inflation Rate (Seasonally
-// Adjusted)` (newest row 2026-06-01). Read top-down, that answers "what is US
-// inflation" with a 2½-year-old figure.
-
-const seriesCard = (
-  card_id: string,
-  lastTimestamp: string,
-  extra: Record<string, unknown> = {},
-): TakoCard =>
-  ({
-    card_id,
-    content: {
-      content_format: "json_compact",
-      dataset: {
-        columns: [{ name: "Timestamp", type: "datetime" }, { name: "v", type: "number" }],
-        rows: [["2020-01-01T00:00:00+00:00", 1], [lastTimestamp, 2]],
-      },
-    },
-    ...extra,
-  }) as TakoCard;
-
-describe("orderCardsByUsefulness", () => {
-  it("puts the fresher series first (the live stale-top-card failure)", () => {
-    const stale = seriesCard("annual", "2024-01-01T00:00:00+00:00");
-    const fresh = seriesCard("cpi_sa", "2026-06-01T00:00:00+00:00");
-    expect(orderCardsByUsefulness([stale, fresh]).map((c) => c.card_id)).toEqual([
-      "cpi_sa",
-      "annual",
-    ]);
-  });
-
-  // A `date`-typed column holding bare years is a real shape for annual
-  // series. Passed through unchanged, `2024` compares against ~1.7e12 for any
-  // string-dated card and sorts below every one of them — including genuinely
-  // staler ones. Same-card comparisons (capRecentRows) never saw this because
-  // both sides came from one parse path; ordering compares across cards.
-  const yearRowCard = (card_id: string, lastYear: number): TakoCard =>
-    ({
-      card_id,
-      content: {
-        content_format: "json_compact",
-        dataset: {
-          columns: [{ name: "Year", type: "date" }, { name: "v", type: "number" }],
-          rows: [[2000, 1], [lastYear, 2]],
-        },
-      },
-    }) as TakoCard;
-
-  it("compares bare-year rows on the same scale as string dates", () => {
-    const annual2026 = yearRowCard("annual_2026", 2026);
-    const stale2019 = seriesCard("stale_2019", "2019-01-01T00:00:00+00:00");
-    expect(orderCardsByUsefulness([stale2019, annual2026]).map((c) => c.card_id)).toEqual([
-      "annual_2026",
-      "stale_2019",
-    ]);
-  });
-
-  it("still orders two bare-year cards against each other", () => {
-    expect(
-      orderCardsByUsefulness([yearRowCard("old", 2011), yearRowCard("new", 2025)]).map(
-        (c) => c.card_id,
-      ),
-    ).toEqual(["new", "old"]);
-  });
-
-  it("demotes row-less Overview cards below real series cards", () => {
-    const overview = { card_id: "overview", title: "Earnings & Estimates Overview" } as TakoCard;
-    const series = seriesCard("gross_margin", "2026-06-01T00:00:00+00:00");
-    expect(orderCardsByUsefulness([overview, series]).map((c) => c.card_id)).toEqual([
-      "gross_margin",
-      "overview",
-    ]);
-  });
-
-  it("falls back to data_freshness.data_as_of when no rows are inlined", () => {
-    // include_contents:false strips rows, so the declared as-of date is the
-    // only recency signal left. The backend ships it as an OBJECT.
-    const older = { card_id: "older", data_freshness: { data_as_of: "2024-03-31" } } as TakoCard;
-    const newer = { card_id: "newer", data_freshness: { data_as_of: "2026-06-30" } } as TakoCard;
-    expect(orderCardsByUsefulness([older, newer]).map((c) => c.card_id)).toEqual([
-      "newer",
-      "older",
-    ]);
-  });
-
-  it("normalises a numeric data_as_of against a string-dated one (same rule as rows)", () => {
-    // The as-of tier is also a cross-card comparison, so it goes through
-    // `comparableEpoch` too. Un-normalised, `2011` would sort below a
-    // string-dated 2019 card and, worse, below every string-dated card forever.
-    const numericNewer = { card_id: "numeric_2026", data_freshness: { data_as_of: 2026 } } as TakoCard;
-    const stringOlder = { card_id: "string_2019", data_freshness: { data_as_of: "2019-01-01" } } as TakoCard;
-    expect(orderCardsByUsefulness([stringOlder, numericNewer]).map((c) => c.card_id)).toEqual([
-      "numeric_2026",
-      "string_2019",
-    ]);
-  });
-
-  it("breaks remaining ties on relevance, then on backend order (stable)", () => {
-    const low = { card_id: "low", relevance: "Low" } as TakoCard;
-    const high = { card_id: "high", relevance: "High" } as TakoCard;
-    expect(orderCardsByUsefulness([low, high]).map((c) => c.card_id)).toEqual(["high", "low"]);
-
-    const a = { card_id: "a" } as TakoCard;
-    const b = { card_id: "b" } as TakoCard;
-    const c = { card_id: "c" } as TakoCard;
-    expect(orderCardsByUsefulness([a, b, c]).map((x) => x.card_id)).toEqual(["a", "b", "c"]);
-  });
-
-  it("orders only — never drops, folds, or mutates the input", () => {
-    const input = [
-      seriesCard("stale", "2024-01-01T00:00:00+00:00"),
-      seriesCard("fresh", "2026-06-01T00:00:00+00:00"),
-      { card_id: "no_rows" } as TakoCard,
-    ];
-    const snapshot = JSON.stringify(input);
-    const out = orderCardsByUsefulness(input);
-    expect(out).toHaveLength(3);
-    expect([...out].map((c) => c.card_id).sort()).toEqual(["fresh", "no_rows", "stale"]);
-    expect(JSON.stringify(input)).toBe(snapshot); // immutable
-  });
-
-  it("drives the widget: buildSearchOutput lifts the REORDERED top card", () => {
+describe("buildSearchOutput keeps search's card order", () => {
+  it("lists and charts the cards in the order search returned them", () => {
     const ENV: Env = { DJANGO_BASE_URL: "https://staging.trytako.com" };
-    // Titles, because the projection drops `card_id` and the two cards are
-    // otherwise identical — without them the projected-card assertion below
-    // compares undefined to undefined and passes on any ordering.
-    const stale = seriesCard("stale_top", "2024-01-01T00:00:00+00:00", { title: "Stale series" });
-    const fresh = seriesCard("fresh_second", "2026-06-01T00:00:00+00:00", { title: "Fresh series" });
-    const out = buildSearchOutput([stale, fresh], [], "req-order", null, ENV, ["data"], false, "authenticated", OPTS);
-    // The widget lift is one observable: it must follow the REORDERED top card,
-    // not the wire order.
-    expect(out.pub_id).toBe("fresh_second");
-    // And the document is the other. The chart a host renders must not disagree
-    // with the list beneath it, so the first projected card has to be the same
-    // card the widget lifted.
-    expect(out.cards[0]?.title).toBe("Fresh series");
-  });
-});
-
-describe("orderCardsByUsefulness — as-of presence", () => {
-  it("ranks a card that declares data_freshness above one that declares none", () => {
-    // Both row-less (exportable:false cards carry no inline rows), so without
-    // this rule they tie and backend order wins — which put an
-    // `Earnings & Estimates Overview` above the actual gross-margin series.
-    const overview = { card_id: "overview", title: "Earnings & Estimates Overview" } as TakoCard;
-    const dated = {
-      card_id: "actuals",
-      data_freshness: { data_as_of: "2025-12-31" },
-    } as TakoCard;
-    expect(orderCardsByUsefulness([overview, dated]).map((c) => c.card_id)).toEqual([
-      "actuals",
-      "overview",
-    ]);
-  });
-
-  it("still puts a rowed card above a merely-dated one", () => {
-    const dated = { card_id: "dated", data_freshness: { data_as_of: "2026-06-30" } } as TakoCard;
-    const rowed = seriesCard("rowed", "2024-01-01T00:00:00+00:00");
-    expect(orderCardsByUsefulness([dated, rowed]).map((c) => c.card_id)).toEqual([
-      "rowed",
-      "dated",
-    ]);
-  });
-});
-
-describe("zero-card guidance never prescribes a tool the tier cannot call", () => {
-  const ENV: Env = { DJANGO_BASE_URL: "https://staging.trytako.com" };
-  // Every source combination `tako_search` can produce, plus the pinned path
-  // `tako_search_advanced` adds. `tako_search` is the WHOLE anonymous surface,
-  // so on the free tier none of these may route through another tool.
-  const SHAPES: ReadonlyArray<{
-    sources: Array<"data" | "web">;
-    web: boolean;
-    pin: boolean;
-  }> = [
-    { sources: ["data", "web"], web: false, pin: false },
-    { sources: ["data", "web"], web: true, pin: false },
-    { sources: ["data"], web: false, pin: false },
-    { sources: ["web"], web: false, pin: false },
-    { sources: ["web"], web: true, pin: false },
-    { sources: ["data", "web"], web: false, pin: true },
-  ];
-
-  const guidanceFor = (
-    shape: (typeof SHAPES)[number],
-    tier: "free" | "authenticated",
-  ): string =>
-    buildSearchOutput(
-      [],
-      shape.web ? [{ title: "t", url: "https://x.com" }] : [],
-      "req",
-      null,
-      ENV,
-      shape.sources,
-      shape.pin,
-      tier,
-      OPTS,
-    ).guidance ?? "";
-
-  it("names no other tool on the free tier, on any branch", () => {
-    // The bug this pins: all four branches opened with "call
-    // tako_available_data (free)", and three also routed to tako_contents.
-    // An anonymous zero-result caller got a numbered protocol in which every
-    // step answers a sign-in refusal.
-    for (const shape of SHAPES) {
-      const g = guidanceFor(shape, "free");
-      const label = `sources=${shape.sources.join(",")} web=${shape.web} pin=${shape.pin}`;
-      expect(g, label).not.toContain("tako_contents");
-      // tako_available_data may be NAMED as the thing sign-in unlocks, but
-      // never as a step to take now.
-      expect(g, label).not.toMatch(/(call|run|check) tako_available_data/i);
-      expect(g.length, label).toBeGreaterThan(0);
-    }
-  });
-
-  it("still prescribes the full protocol when authenticated", () => {
-    // Guards the other direction: a blanket strip would cost every paying
-    // caller the recovery that keeps them off the retry loop.
-    const g = guidanceFor({ sources: ["data", "web"], web: false, pin: false }, "authenticated");
-    expect(g).toMatch(/call tako_available_data/i);
-    expect(g).toMatch(/canonical metric name/i);
-  });
-
-  it("keeps the shape rules the anonymous caller CAN act on", () => {
-    // Removing the refusing steps must not leave an empty protocol: the query
-    // shape is the one lever an anonymous caller still has.
-    const g = guidanceFor({ sources: ["data", "web"], web: false, pin: false }, "free");
-    expect(g).toMatch(/one metric per query/i);
-    expect(g).toMatch(/rewording alone will not change/i);
-    expect(g).toMatch(/signed-in connection/i);
-  });
-});
-
-describe("zero-card guidance routes to the canonical name, never to a pin", () => {
-  const ENV: Env = { DJANGO_BASE_URL: "https://staging.trytako.com" };
-
-  it("sends the model to tako_available_data for the exact name", () => {
-    for (const sources of [["data", "web"], ["data"]] as ReadonlyArray<Array<"data" | "web">>) {
-      const g = buildSearchOutput([], [], "req", null, ENV, sources, false, "authenticated", OPTS).guidance ?? "";
-      expect(g).toContain("tako_available_data");
-      expect(g).toMatch(/canonical metric name/i);
-    }
-  });
-
-  it("never advises a pin on an UNPINNED call — tako_search takes none after the D4 split", () => {
-    // This guidance used to interpolate PINNED_RETRY. Advice for `node_ids` /
-    // `strict` on a tool that rejects both is a phantom parameter, and it is
-    // invisible to phantom_tool.test.ts — that guard reads published schemas
-    // and descriptions, and this is a runtime VALUE.
-    //
-    // `strictPin: false` is what `tako_search` always produces (it cannot send
-    // either field), so this is that tool's every path.
-    for (const sources of [["data", "web"], ["data"], ["web"]] as ReadonlyArray<Array<"data" | "web">>) {
-      const g = buildSearchOutput([], [], "req", null, ENV, sources, false, "authenticated", OPTS).guidance ?? "";
-      expect(g, `sources=${sources.join(",")}`).not.toMatch(/node_ids|strict/i);
-    }
-  });
-
-  it("blames the FILTER, not coverage, when the request carried a strict pin", () => {
-    // Reachable only from tako_search_advanced. Without this branch the model
-    // reads "the data is not covered, rewording will not change that" after a
-    // hard filter returned nothing — a coverage verdict the request cannot
-    // support (KE-812: pinned handles returned FEWER cards on 11 of 20 pairs),
-    // and one that contradicts that tool's own description.
-    const g = buildSearchOutput([], [], "req", null, ENV, ["data", "web"], true, "authenticated", OPTS).guidance ?? "";
-    expect(g).toMatch(/hard filter/i);
-    expect(g).toMatch(/node_ids/);
-    // The verdict the unpinned branch gives must NOT appear here.
-    expect(g).not.toMatch(/does not cover this query/i);
-    expect(g).not.toMatch(/every retry is priced/i);
-  });
-
-  it("keeps the pin branch off the web-only path, which never applied a data filter", () => {
-    const g = buildSearchOutput([], [], "req", null, ENV, ["web"], true, "authenticated", OPTS).guidance ?? "";
-    expect(g).not.toMatch(/hard filter/i);
+    const first = { card_id: "stale_first", title: "Stale series", data_freshness: { data_as_of: "2024-01-01" } } as TakoCard;
+    const second = { card_id: "fresh_second", title: "Fresh series", data_freshness: { data_as_of: "2026-09-01" } } as TakoCard;
+    const out = buildSearchOutput([first, second], [], "req-order", null, ENV, false, "authenticated", OPTS);
+    expect(out.cards.map((c) => c.title)).toEqual(["Stale series", "Fresh series"]);
+    expect(out.pub_id).toBe("stale_first");
   });
 });
 
@@ -1319,7 +790,6 @@ describe("projectCard — the nine-field model-facing card", () => {
         "req-drop-1",
         null,
         { DJANGO_BASE_URL: "https://staging.trytako.com" },
-        ["data"],
         false,
         "authenticated",
         { rowCap: "all", keepWebText: false, toolName: "tako_search_advanced" },
@@ -1669,4 +1139,51 @@ describe("the published snippet contract", () => {
       }
     });
   }
+});
+
+describe("cardCharts", () => {
+  const ENV: Env = { DJANGO_BASE_URL: "https://staging.trytako.com" };
+
+  it("cardCharts skips a card with no card_id and keeps the others in order", () => {
+    const charts = cardCharts([{ card_id: "a" }, { card_id: null }, { card_id: "c" }], ENV);
+    expect(charts.map((c) => c.pub_id)).toEqual(["a", "c"]);
+  });
+
+  it("the top-level chart fields describe the first chart", () => {
+    const out = buildSearchOutput(
+      [{ card_id: "a" }, { card_id: "b" }],
+      [],
+      "req-charts",
+      null,
+      ENV,
+      false,
+      "authenticated",
+      OPTS,
+    );
+    expect(out.charts?.length).toBe(2);
+    expect(out.pub_id).toBe(out.charts?.[0]?.pub_id);
+    expect(out.embed_url).toBe(out.charts?.[0]?.embed_url);
+    expect(out.image_url).toBe(out.charts?.[0]?.image_url);
+  });
+
+  it("renders no chart when search's first card has no card_id", () => {
+    const out = buildSearchOutput(
+      [{ card_id: null }, { card_id: "b" }],
+      [],
+      "req-chartless-first",
+      null,
+      ENV,
+      false,
+      "authenticated",
+      OPTS,
+    );
+    expect(out.pub_id).toBeUndefined();
+    expect(out.embed_url).toBeUndefined();
+    expect(out.charts).toBeUndefined();
+  });
+
+  it("a zero-card result carries no charts", () => {
+    const out = buildSearchOutput([], [], "req-none", null, ENV, false, "authenticated", OPTS);
+    expect(out.charts).toBeUndefined();
+  });
 });

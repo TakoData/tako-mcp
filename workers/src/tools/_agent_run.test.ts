@@ -17,8 +17,10 @@ import {
   noteMap,
   projectAgentCard,
   projectAgentRun,
+  projectRunningRun,
   projectCitation,
   refusalGuidance,
+  runningMessage,
 } from "./_agent_run.js";
 import { pickDeclared } from "./_pick_declared.js";
 
@@ -96,7 +98,7 @@ const wireRun = {
 };
 
 describe("projectAgentRun conformance", () => {
-  const output = projectAgentRun(wireRun);
+  const output = projectAgentRun(wireRun, "answer_run_sample");
 
   it("conforms to the advertised outputSchema", () => {
     const parsed = agentRunOutputShape.safeParse(output);
@@ -109,15 +111,19 @@ describe("projectAgentRun conformance", () => {
   });
 
   it("publishes the schema strict, so an undeclared root key would void the result", () => {
+    const strict0 = z.object(agentRunOutputShape.shape).strict();
+    expect(strict0.safeParse({ ...output, unknown_key: "leaked" }).success).toBe(false);
     // Mirrors what `registerTool` publishes: the SDK rebuilds our looseObject
     // as a strict z.object, which is why the projection — not the schema's
     // looseness — is the gate.
     const strict = z.object(agentRunOutputShape.shape).strict();
-    expect(strict.safeParse({ ...output, run_id: "leaked" }).success).toBe(false);
+    expect(strict.safeParse(output).success).toBe(true);
   });
 
-  it("drops the correlation ids, the lifecycle fields and the request_id", () => {
-    for (const key of ["run_id", "object", "status", "created_at", "completed_at", "request_id"]) {
+  it("carries the public run_id and status, and drops the other lifecycle fields", () => {
+    expect(output.run_id).toBe("answer_run_sample");
+    expect(output.status).toBe("completed");
+    for (const key of ["object", "created_at", "completed_at", "request_id"]) {
       expect(output, `${key} reached the model`).not.toHaveProperty(key);
     }
   });
@@ -193,10 +199,30 @@ describe("projectCitation", () => {
     });
   });
 
+  it("keeps a company web citation's publish date as `published` and drops its excerpt", () => {
+    expect(
+      projectCitation({
+        index: 3,
+        title: "10-K filing",
+        url: "https://example.com/10k",
+        source_name: "SEC",
+        source_index: "web",
+        excerpt: "Revenue grew 12%.",
+        publish_date: "2026-02-14T00:00:00Z",
+      }),
+    ).toEqual({
+      index: 3,
+      title: "10-K filing",
+      url: "https://example.com/10k",
+      published: "2026-02-14",
+      source_index: "web",
+    });
+  });
+
   it("preserves sparse indices, because the answer's [n] markers join to them", () => {
     const out = projectAgentRun({
       result: { citations: [{ index: 1, title: "a" }, { index: 12, title: "b" }] },
-    });
+    }, "answer_run_1");
     expect(out.citations.map((c) => c.index)).toEqual([1, 12]);
   });
 
@@ -243,7 +269,7 @@ describe("refusal", () => {
   it("turns refusal_code into the one guidance branch, with no answer", () => {
     const out = projectAgentRun({
       result: { answer: null, cards: [], citations: [], refusal_code: "rejected_input_classifier" },
-    });
+    }, "answer_run_1");
     expect(out.guidance).toBe(refusalGuidance("rejected_input_classifier"));
     expect(out.answer).toBeUndefined();
   });
@@ -254,7 +280,7 @@ describe("refusal", () => {
   });
 
   it("emits no guidance on a normal run", () => {
-    expect(projectAgentRun(wireRun).guidance).toBeUndefined();
+    expect(projectAgentRun(wireRun, "answer_run_sample").guidance).toBeUndefined();
   });
 });
 
@@ -263,7 +289,7 @@ describe("failed run without an error", () => {
     // `status` is not projected, but it is the only field separating a failed
     // run from a legitimately prose-free one. Without this the renderer emits
     // "The agent returned no answer." for a run that actually failed.
-    const out = projectAgentRun({ status: "failed", error: null, result: null });
+    const out = projectAgentRun({ status: "failed", error: null, result: null }, "answer_run_1");
     expect(out.error).toEqual({
       code: "agent_run_failed",
       message: "The agent run failed without a reason.",
@@ -276,43 +302,76 @@ describe("failed run without an error", () => {
       status: "failed",
       error: { code: "x", message: "boom" },
       result: null,
-    });
+    }, "answer_run_1");
     expect(out.error).toEqual({ code: "x", message: "boom" });
   });
 
   it("adds no error to a terminal run that simply carried no prose", () => {
-    expect(projectAgentRun({ result: null }).error).toBeUndefined();
+    expect(projectAgentRun({ result: null }, "answer_run_1").error).toBeUndefined();
   });
 });
 
-describe("non-terminal run", () => {
-  it("states the run did not finish, not that it returned nothing", () => {
-    // `pollAgentRun` throws on the budget rather than returning `status:
-    // "running"`, so nothing produces this today. Without the guard it
-    // projects to no answer and no error, and the renderer says "The agent
-    // returned no answer." about a live run.
-    const out = projectAgentRun({ status: "running", result: null, error: null });
-    expect(out.error).toEqual({
-      code: "agent_run_incomplete",
-      message: "The agent run ended while still running.",
+describe("status and run_id", () => {
+  it("projects a finished run with status and run_id", () => {
+    const out = projectAgentRun({ status: "completed", result: { answer: "x" } }, "answer_run_1");
+    expect(out.status).toBe("completed");
+    expect(out.run_id).toBe("answer_run_1");
+  });
+
+  it("projects a failed run as failed", () => {
+    expect(projectAgentRun({ status: "failed", result: null }, "answer_run_1").status).toBe("failed");
+  });
+
+  it("projects a running run with the resume message", () => {
+    const out = projectRunningRun({
+      toolName: "tako_company_agent",
+      publicRunId: "company_run_9",
+      elapsedS: 47,
+      progress: "Searching the company registry",
     });
+    expect(out.status).toBe("running");
+    expect(out.run_id).toBe("company_run_9");
+    expect(out.cards).toEqual([]);
+    expect(out.citations).toEqual([]);
+    expect(out.usage).toBeNull();
+    expect(out.message).toBe(
+      "The run is still working (47 s; latest step: Searching the company registry). Call `tako_company_agent` again with run_id=`company_run_9` to keep waiting. Don't start a new run for the same question. This result has no answer yet, so don't give the user figures or findings until the run returns them. If you end your turn before it finishes, tell the user it's still running and that they can ask you to check again. When they do, call `tako_company_agent` with run_id=`company_run_9` and no query.",
+    );
   });
 
-  it("covers `queued`, not just `running`", () => {
-    expect(projectAgentRun({ status: "queued", result: null }).error?.code).toBe("agent_run_incomplete");
+  it("runningMessage tells the model how to hand a still-running run to the user", () => {
+    expect(runningMessage("tako_company_agent", "company_run_x", 45)).toMatch(
+      /If you end your turn before it finishes, tell the user it's still running and that they can ask you to check again\. When they do, call `tako_company_agent` with run_id=`company_run_x` and no query\.$/,
+    );
   });
 
-  it("leaves a completed run that simply carried no prose alone", () => {
-    expect(projectAgentRun({ status: "completed", result: null }).error).toBeUndefined();
+  it("runningMessage tells the model not to answer before the run returns", () => {
+    expect(runningMessage("tako_agent", "answer_run_x", 45)).toContain(
+      "This result has no answer yet, so don't give the user figures or findings until the run returns them.",
+    );
+  });
+
+  it("words an absent progress without a step", () => {
+    const out = projectRunningRun({ toolName: "tako_agent", publicRunId: "answer_run_1", elapsedS: 45 });
+    expect(out.message).toContain("(45 s).");
+  });
+
+  it("publishes a running result the strict schema accepts", () => {
+    const out = projectRunningRun({ toolName: "tako_agent", publicRunId: "answer_run_1", elapsedS: 45 });
+    expect(z.object(agentRunOutputShape.shape).strict().safeParse(out).success).toBe(true);
+  });
+
+  it("leaves a completed run that simply carried no prose without an error", () => {
+    expect(projectAgentRun({ status: "completed", result: null }, "answer_run_1").error).toBeUndefined();
   });
 });
 
 describe("usage", () => {
   it("carries the headline cost, which the tool used to drop entirely", () => {
-    expect(projectAgentRun(wireRun).usage?.total_cost_usd).toBe(0.09314);
+    expect(projectAgentRun(wireRun, "answer_run_sample").usage?.total_cost_usd).toBe(0.09314);
   });
 
   it("is null, not absent, on an unmetered run", () => {
-    expect(projectAgentRun({ result: { answer: "a" } }).usage).toBeNull();
+    expect(projectAgentRun({ result: { answer: "a" } }, "answer_run_1").usage).toBeNull();
   });
 });
