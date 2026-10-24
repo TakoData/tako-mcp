@@ -335,13 +335,19 @@ describe("status and run_id", () => {
     expect(out.citations).toEqual([]);
     expect(out.usage).toBeNull();
     expect(out.message).toBe(
-      "The run is still working (47 s; latest step: Searching the company registry). Call `tako_company_agent` again with run_id=`company_run_9` to keep waiting. Don't start a new run for the same question. If you end your turn before it finishes, tell the user it's still running and that they can ask you to check again. When they do, call `tako_company_agent` with run_id=`company_run_9` and no query.",
+      "The run is still working (47 s; latest step: Searching the company registry). Call `tako_company_agent` again with run_id=`company_run_9` to keep waiting. Don't start a new run for the same question. This result has no answer yet, so don't give the user figures or findings until the run returns them. If you end your turn before it finishes, tell the user it's still running and that they can ask you to check again. When they do, call `tako_company_agent` with run_id=`company_run_9` and no query.",
     );
   });
 
   it("runningMessage tells the model how to hand a still-running run to the user", () => {
     expect(runningMessage("tako_company_agent", "company_run_x", 45)).toMatch(
       /If you end your turn before it finishes, tell the user it's still running and that they can ask you to check again\. When they do, call `tako_company_agent` with run_id=`company_run_x` and no query\.$/,
+    );
+  });
+
+  it("runningMessage tells the model not to answer before the run returns", () => {
+    expect(runningMessage("tako_agent", "answer_run_x", 45)).toContain(
+      "This result has no answer yet, so don't give the user figures or findings until the run returns them.",
     );
   });
 
