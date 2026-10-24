@@ -113,4 +113,6 @@ place that cannot explain it.
   the first incident.
 - Partner clients appear on the consent screen under their `client_name`,
   so use the partner's real product name — that string is what users read
-  when deciding whether to approve access.
+  when deciding whether to approve access. The screen also names the host of the
+  redirect URI and warns that Tako doesn't verify the name, so register a
+  redirect URI on a domain users associate with the partner.
