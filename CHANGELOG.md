@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.6.0](https://github.com/TakoData/tako-mcp/compare/v1.5.0...v1.6.0) (2026-10-24)
+
+
+### Features
+
+* **plugin:** add tako_visualize to the Claude plugin and Gemini extension ([#360](https://github.com/TakoData/tako-mcp/issues/360)) ([914bf6e](https://github.com/TakoData/tako-mcp/commit/914bf6ea4a7ce7406b7e368893c239a0ab1fbc60))
+
 ## [1.5.0](https://github.com/TakoData/tako-mcp/compare/v1.4.5...v1.5.0) (2026-10-24)
 
 
