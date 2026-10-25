@@ -7,7 +7,11 @@ export type GeneratedSkill = {
   readonly name: string;
   readonly uri: string;
   readonly text: string;
-  readonly frontmatter: Readonly<Record<string, unknown>>;
+  readonly frontmatter: {
+    readonly name: string;
+    readonly description: string;
+    readonly [key: string]: unknown;
+  };
   readonly digest: string;
   readonly size: number;
   readonly toolNames: readonly string[];

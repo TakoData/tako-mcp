@@ -4,11 +4,17 @@ import { join } from "node:path";
 
 import yaml from "js-yaml";
 
+export interface SkillFrontmatter {
+  name: string;
+  description: string;
+  [key: string]: unknown;
+}
+
 export interface SkillRecord {
   name: string;
   uri: string;
   text: string;
-  frontmatter: Record<string, unknown>;
+  frontmatter: SkillFrontmatter;
   digest: string;
   size: number;
   toolNames: string[];
@@ -29,7 +35,7 @@ export function skillMarkdownPaths(skillsDir: string): string[] {
   return skillDirNames(skillsDir).map((dirName) => join(skillsDir, dirName, SKILL_FILE));
 }
 
-function parseFrontmatter(dirName: string, text: string): Record<string, unknown> {
+function parseFrontmatter(dirName: string, text: string): SkillFrontmatter {
   const block = FRONTMATTER_FENCE.exec(text)?.[1];
   if (block === undefined) {
     throw new Error(`skills/${dirName}/${SKILL_FILE}: no YAML frontmatter fence found`);
@@ -47,7 +53,7 @@ function parseFrontmatter(dirName: string, text: string): Record<string, unknown
       `skills/${dirName}/${SKILL_FILE}: frontmatter name "${frontmatter.name}" differs from directory "${dirName}"`,
     );
   }
-  return frontmatter;
+  return { ...frontmatter, name: frontmatter.name, description: frontmatter.description };
 }
 
 function namedTools(text: string, toolNames: readonly string[]): string[] {
@@ -89,7 +95,11 @@ export function renderSkillsModule(skills: readonly SkillRecord[]): string {
     "  readonly name: string;",
     "  readonly uri: string;",
     "  readonly text: string;",
-    "  readonly frontmatter: Readonly<Record<string, unknown>>;",
+    "  readonly frontmatter: {",
+    "    readonly name: string;",
+    "    readonly description: string;",
+    "    readonly [key: string]: unknown;",
+    "  };",
     "  readonly digest: string;",
     "  readonly size: number;",
     "  readonly toolNames: readonly string[];",
