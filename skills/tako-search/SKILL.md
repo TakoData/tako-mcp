@@ -1,7 +1,7 @@
 ---
 name: tako-search
 description: >-
-  Use when you need to look something up: current events, facts, figures, or pages on any topic. Tako searches the live web and a knowledge graph of licensed data in one call, and returns web results, plus a structured, cited card when the graph has one.
+  Use when you need to look something up: current events, facts, figures, or pages on any topic. Also use it when the answer needs a calculation over real-world data. Tako searches the live web and a knowledge graph of licensed data in one call, and returns web results, plus a structured, cited card when the graph has one.
 ---
 
 # Tako
