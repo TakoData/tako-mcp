@@ -488,7 +488,6 @@ const README_PATH = resolve(REPO_ROOT, "README.md");
 // form survive in llms-full.txt, so close it by enumeration rather than waiting
 // for the next survivor.
 const SKILLS_DIR = resolve(REPO_ROOT, "skills");
-const SKILL_PATHS = skillMarkdownPaths(SKILLS_DIR);
 const SKILLS_MODULE_PATH = resolve(WORKERS_DIR, "src", "generated", "skills.ts");
 const SUBMISSION_PATH = resolve(REPO_ROOT, "chatgpt-app-submission.json");
 const SNAPSHOT_PATH = resolve(REPO_ROOT, "chatgpt-app-snapshot.json");
@@ -499,7 +498,7 @@ const TOOLS_DOC_PATH = resolve(REPO_ROOT, "docs", "TOOLS.md");
  * deleted: `smithery.yaml` advertised all four against a bare `/mcp`, and
  * `agent.json` still claimed `tako_visualize` was "on by default for ChatGPT
  * and Claude" — true only under the classifier. Enumerated here for the
- * opt-in-disclosure guard for the same reason `SKILL_PATHS` is: close the gap
+ * opt-in-disclosure guard for the same reason the skills are: close the gap
  * by enumeration rather than waiting for the next survivor.
  */
 const LISTING_PATHS = [
@@ -523,21 +522,23 @@ const LISTING_PATHS = [
  * Outputs count as inputs: the drift comparisons at the end of `--check` read
  * the committed copy of every artifact the generator writes.
  */
-export const GUARD_INPUT_PATHS: readonly string[] = [
-  METADATA_PATH,
-  REGISTRY_PATH,
-  LOBEHUB_PATH,
-  BARREL_PATH,
-  SUBMISSION_PATH,
-  SNAPSHOT_PATH,
-  TOOLS_DOC_PATH,
-  LLMS_FULL_PATH,
-  LLMS_PATH,
-  README_PATH,
-  ...SKILL_PATHS,
-  SKILLS_MODULE_PATH,
-  ...LISTING_PATHS,
-].map((absolute) => relative(REPO_ROOT, absolute).split(sep).join("/"));
+export function guardInputPaths(): string[] {
+  return [
+    METADATA_PATH,
+    REGISTRY_PATH,
+    LOBEHUB_PATH,
+    BARREL_PATH,
+    SUBMISSION_PATH,
+    SNAPSHOT_PATH,
+    TOOLS_DOC_PATH,
+    LLMS_FULL_PATH,
+    LLMS_PATH,
+    README_PATH,
+    ...skillMarkdownPaths(SKILLS_DIR),
+    SKILLS_MODULE_PATH,
+    ...LISTING_PATHS,
+  ].map((absolute) => relative(REPO_ROOT, absolute).split(sep).join("/"));
+}
 
 // Filename conventions for the tools/ directory. A tool module is any `.ts`
 // file that does NOT match one of the following:
@@ -1907,7 +1908,7 @@ async function main(): Promise<void> {
   assertPinFormInDocs([
     { file: "llms-full.txt", text: llmsFull, requireStrict: true },
     { file: "README.md", text: readFileSync(README_PATH, "utf8"), requireStrict: false },
-    ...SKILL_PATHS.map((path) => ({
+    ...skillMarkdownPaths(SKILLS_DIR).map((path) => ({
       file: relative(REPO_ROOT, path),
       text: readFileSync(path, "utf8"),
       requireStrict: false,
