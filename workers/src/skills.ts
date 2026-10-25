@@ -55,7 +55,7 @@ export function registerSkills(server: McpServer, skills: readonly GeneratedSkil
     if (request.params?.cursor !== undefined) {
       throw new McpError(ErrorCode.InvalidParams, "skills/list issues no cursors");
     }
-    return { skills: [...entriesByUri.values()] };
+    return { resultType: "complete", skills: [...entriesByUri.values()] };
   });
 
   server.server.setRequestHandler(SkillsGetRequest, (request) => {

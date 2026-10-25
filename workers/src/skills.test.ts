@@ -102,7 +102,7 @@ describe("registerSkills", () => {
   it("skills/list returns one entry per served skill", async () => {
     const client = await connectWith([search]);
     const result = await client.request({ method: "skills/list", params: {} }, AnyResult);
-    expect(result).toEqual({ skills: [searchEntry] });
+    expect(result).toEqual({ resultType: "complete", skills: [searchEntry] });
   });
 
   it("skills/get returns the list entry", async () => {
@@ -147,6 +147,11 @@ describe("registerSkills", () => {
     expect(client.getServerCapabilities()).not.toHaveProperty("resources");
     expect(
       await errorCodeOf(client.request({ method: "skills/list", params: {} }, AnyResult)),
+    ).toBe(-32601);
+    expect(
+      await errorCodeOf(
+        client.request({ method: "skills/get", params: { uri: SEARCH_URI } }, AnyResult),
+      ),
     ).toBe(-32601);
   });
 });

@@ -1250,12 +1250,29 @@ describe("worker routing", () => {
     expect(capabilities.extensions?.[SKILLS_EXTENSION]).toBeUndefined();
   });
 
+  it("POST /mcp?tools=search answers -32601 to the skills methods", async () => {
+    const url = "https://example.com/mcp?tools=search";
+    expect((await postRpc(url, "skills/list")).error?.code).toBe(-32601);
+    expect(
+      (await postRpc(url, "skills/get", { uri: "skill://tako-search/SKILL.md" })).error?.code,
+    ).toBe(-32601);
+  });
+
+  it("POST /mcp resources/list lists exactly the served skill", async () => {
+    const resources = (await postRpc("https://example.com/mcp", "resources/list")).result
+      ?.resources as Array<{ uri: string }>;
+    expect(resources.map((resource) => resource.uri)).toEqual(["skill://tako-search/SKILL.md"]);
+  });
+
   it("POST /mcp/chatgpt does not serve skills", async () => {
     const url = "https://example.com/mcp/chatgpt";
     const initialized = await postRpc(url, "initialize", INITIALIZE_PARAMS);
     const capabilities = initialized.result?.capabilities as { extensions?: Record<string, unknown> };
     expect(capabilities.extensions?.[SKILLS_EXTENSION]).toBeUndefined();
     expect((await postRpc(url, "skills/list")).error?.code).toBe(-32601);
+    expect(
+      (await postRpc(url, "skills/get", { uri: "skill://tako-search/SKILL.md" })).error?.code,
+    ).toBe(-32601);
     const resources = (await postRpc(url, "resources/list")).result?.resources as Array<{ uri: string }>;
     expect(resources.filter((resource) => resource.uri.startsWith("skill://"))).toEqual([]);
   });

@@ -92,6 +92,13 @@ describe("readSkills", () => {
     expect(() => readSkills(dir, TOOL_NAMES)).toThrow(/dir-name[\s\S]*other-name|other-name[\s\S]*dir-name/);
   });
 
+  it("rejects a skill directory that holds files other than SKILL.md", () => {
+    const dir = tempSkillsDir({ extra: skillMarkdown("extra", "Call `tako_search`.") });
+    fs.mkdirSync(path.join(dir, "extra", "references"));
+    fs.writeFileSync(path.join(dir, "extra", "references", "notes.md"), "notes\n");
+    expect(() => readSkills(dir, TOOL_NAMES)).toThrow(/extra[\s\S]*references/);
+  });
+
   it("the committed generated module is current", () => {
     expect(renderSkillsModule(skills)).toBe(fs.readFileSync(GENERATED_PATH, "utf8"));
   });

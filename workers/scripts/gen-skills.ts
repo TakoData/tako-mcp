@@ -56,6 +56,15 @@ function parseFrontmatter(dirName: string, text: string): SkillFrontmatter {
   return { ...frontmatter, name: frontmatter.name, description: frontmatter.description };
 }
 
+function assertSingleFileSkill(skillsDir: string, dirName: string): void {
+  const supportingFiles = readdirSync(join(skillsDir, dirName)).filter((entry) => entry !== SKILL_FILE);
+  if (supportingFiles.length > 0) {
+    throw new Error(
+      `skills/${dirName}: holds ${supportingFiles.join(", ")} besides ${SKILL_FILE}; /mcp serves only ${SKILL_FILE}, so a skill's resources list would be incomplete`,
+    );
+  }
+}
+
 function namedTools(text: string, toolNames: readonly string[]): string[] {
   return toolNames
     .filter((toolName) => new RegExp(`(?<![A-Za-z0-9_])${toolName}(?![A-Za-z0-9_])`).test(text))
@@ -65,6 +74,7 @@ function namedTools(text: string, toolNames: readonly string[]): string[] {
 /** One record per skill directory under `skillsDir`, with the registered tools each skill names. */
 export function readSkills(skillsDir: string, toolNames: readonly string[]): SkillRecord[] {
   return skillDirNames(skillsDir).map((dirName) => {
+    assertSingleFileSkill(skillsDir, dirName);
     const text = readFileSync(join(skillsDir, dirName, SKILL_FILE), "utf8");
     const frontmatter = parseFrontmatter(dirName, text);
     const named = namedTools(text, toolNames);
