@@ -46,11 +46,12 @@ export type AgentCallInput = {
 
 const AGENT_CALL_WINDOW_SENTENCE = `A call returns within ${AGENT_CALL_WINDOW_MS / 1000} s. If \`status\` is \`running\`, call again with \`run_id\`; don't start a new run.`;
 
-/** The description sentence that keeps each card's Tako page link in the model's reply. */
-export const AGENT_CARD_LINK_SENTENCE = "In your reply, link each card's `url`; the full list or chart lives on that page.";
+/** The description sentence that says where the cards render and what each card's `url` opens. */
+export const AGENT_CARD_RENDER_SENTENCE =
+  "On ChatGPT, the cards render inline. Each card's `url` opens the full chart or list on Tako.";
 
 /** The description line both agent tools end with. */
-export const AGENT_DESCRIPTION_LAST_LINE = `${AGENT_CALL_WINDOW_SENTENCE} ${AGENT_CARD_LINK_SENTENCE}`;
+export const AGENT_DESCRIPTION_LAST_LINE = `${AGENT_CALL_WINDOW_SENTENCE} ${AGENT_CARD_RENDER_SENTENCE}`;
 
 /** The `query` input both agent tools take. */
 export const agentQueryInput = z
