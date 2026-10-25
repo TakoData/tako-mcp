@@ -1311,8 +1311,8 @@ describe("ChatGPT agent results", () => {
     expect(carouselFrames(m)).toHaveLength(3);
   });
 
-  it("still labels a zero-card search result at once", () => {
-    const m = mountWidget(html(), { toolOutput: { cards: [], web_results: [], usage: {} } });
+  it("labels a search result whose cards have no chart at once, without waiting for _meta", () => {
+    const m = mountWidget(html(), { toolOutput: { cards: [{ title: "No id" }], web_results: [], usage: {} } });
     expect(emptyLabel(m).classList.contains("hidden")).toBe(false);
   });
 });

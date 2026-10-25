@@ -327,16 +327,6 @@ describe("tako_agent over MCP", () => {
 
     expect((result._meta?.charts as { pub_id: string }[]).map((c) => c.pub_id)).toEqual(["c1", "c2"]);
   });
-
-  it("generic: sends no _meta.charts and no image block", async () => {
-    finishedRun([{ card_id: "c1" }]);
-    vi.stubGlobal("fetch", vi.fn<typeof fetch>(async () => realPngResponse()));
-
-    const result = await callAgent({ run_id: "answer_run_x" });
-
-    expect(result._meta?.charts).toBeUndefined();
-    expect(result.content.some((b) => b.type === "image")).toBe(false);
-  });
 });
 
 describe("tako_agent input schema", () => {

@@ -1,3 +1,6 @@
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { CfWorkerJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/cfworker";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../django.js", async (importOriginal) => {
@@ -6,6 +9,7 @@ vi.mock("../django.js", async (importOriginal) => {
 });
 import { djangoPost, djangoGet } from "../django.js";
 import type { Env } from "../env.js";
+import { createMcpServer } from "../mcp.js";
 import { parseToolsParam } from "./_tools_param.js";
 import { CHATGPT_TOOL_NAMES, GENERIC_DEFAULT_TOOL_NAMES, resolveToolSet } from "./_surface.js";
 import { TOOL_REGISTRY } from "./_registry.js";
@@ -153,5 +157,35 @@ describe("tako_company_agent", () => {
     expect(GENERIC_DEFAULT_TOOL_NAMES.has("tako_company_agent")).toBe(false);
     expect(resolveToolSet("chatgpt", requested)).toBe(CHATGPT_TOOL_NAMES);
     expect(CHATGPT_TOOL_NAMES.has("tako_company_agent")).toBe(true);
+  });
+});
+
+describe("tako_company_agent over MCP", () => {
+  it("chatgpt: ships every card as _meta.charts and keeps charts out of structuredContent", async () => {
+    vi.mocked(djangoGet).mockResolvedValue({
+      run_id: "x",
+      status: "completed",
+      result: { answer: "done", cards: [{ card_id: "c1" }, { card_id: "c2" }], citations: [] },
+    });
+    vi.stubGlobal("fetch", vi.fn<typeof fetch>(async () => Promise.reject(new Error("offline"))));
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const server = createMcpServer({ ...ctx, surface: "chatgpt" }, { surface: "chatgpt" });
+    const client = new Client(
+      { name: "company-agent-test", version: "0.0.0" },
+      { jsonSchemaValidator: new CfWorkerJsonSchemaValidator() },
+    );
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+
+    try {
+      const result = await client.callTool({ name: "tako_company_agent", arguments: { run_id: "company_run_x" } });
+
+      expect(result.structuredContent).not.toHaveProperty("charts");
+      expect(result._meta).toMatchObject({ charts: [{ pub_id: "c1" }, { pub_id: "c2" }] });
+    } finally {
+      await client.close();
+      await server.close();
+    }
   });
 });
