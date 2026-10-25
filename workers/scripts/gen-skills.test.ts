@@ -3,7 +3,6 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import yaml from "js-yaml";
 import { describe, expect, it } from "vitest";
 
 import { TOOL_REGISTRY } from "../src/tools/_registry.js";
@@ -13,12 +12,6 @@ const WORKERS_DIR = path.resolve(import.meta.dirname, "..");
 const SKILLS_DIR = path.resolve(WORKERS_DIR, "..", "skills");
 const GENERATED_PATH = path.join(WORKERS_DIR, "src", "generated", "skills.ts");
 const TOOL_NAMES = TOOL_REGISTRY.map((tool) => tool.name);
-
-function frontmatterOf(markdown: string): string {
-  const captured = /^---\n([\s\S]*?)\n---\n/.exec(markdown)?.[1];
-  if (captured === undefined) throw new Error("no YAML frontmatter fence found");
-  return captured;
-}
 
 function tempSkillsDir(skills: Record<string, string>): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gen-skills-"));
@@ -36,8 +29,7 @@ function skillMarkdown(name: string, body: string): string {
 describe("readSkills", () => {
   const skills = readSkills(SKILLS_DIR, TOOL_NAMES);
 
-  it("reads one record per skill directory", () => {
-    expect(skills.map((skill) => skill.name)).toEqual(["tako-agent", "tako-search"]);
+  it("gives each skill a skill:// URI under its name", () => {
     for (const skill of skills) {
       expect(skill.uri).toBe(`skill://${skill.name}/SKILL.md`);
     }
@@ -60,13 +52,12 @@ describe("readSkills", () => {
     }
   });
 
-  it("frontmatter equals a fresh YAML parse", () => {
-    for (const skill of skills) {
-      expect(skill.frontmatter).toEqual(
-        yaml.load(frontmatterOf(skill.text), { schema: yaml.CORE_SCHEMA }),
-      );
-      expect(skill.frontmatter.name).toBe(skill.name);
-    }
+  it("serves a date-like frontmatter value as the string the file holds", () => {
+    const dir = tempSkillsDir({
+      dated: "---\nname: dated\ndescription: A test skill.\nupdated: 2026-10-25\n---\n\nCall `tako_search`.\n",
+    });
+    const [dated] = readSkills(dir, TOOL_NAMES);
+    expect(dated?.frontmatter.updated).toBe("2026-10-25");
   });
 
   it("derives the tools each skill names", () => {
@@ -111,10 +102,16 @@ describe("readSkills", () => {
 });
 
 describe("skillMarkdownPaths", () => {
-  it("lists every SKILL.md under the skills directory, sorted", () => {
-    expect(skillMarkdownPaths(SKILLS_DIR)).toEqual([
-      path.join(SKILLS_DIR, "tako-agent", "SKILL.md"),
-      path.join(SKILLS_DIR, "tako-search", "SKILL.md"),
+  it("lists the SKILL.md of each skill directory, sorted, and skips the rest", () => {
+    const dir = tempSkillsDir({
+      zeta: skillMarkdown("zeta", "Call `tako_search`."),
+      alpha: skillMarkdown("alpha", "Call `tako_search`."),
+    });
+    fs.mkdirSync(path.join(dir, "drafts"));
+    fs.writeFileSync(path.join(dir, "README.md"), "");
+    expect(skillMarkdownPaths(dir)).toEqual([
+      path.join(dir, "alpha", "SKILL.md"),
+      path.join(dir, "zeta", "SKILL.md"),
     ]);
   });
 });

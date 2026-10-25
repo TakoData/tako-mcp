@@ -8,7 +8,7 @@ import { z } from "zod";
 
 import { SKILLS, type GeneratedSkill } from "./generated/skills.js";
 import { registerSkills, skillsForTools } from "./skills.js";
-import { GENERIC_DEFAULT_TOOL_NAMES } from "./tools/_surface.js";
+import { CHATGPT_TOOL_NAMES, GENERIC_DEFAULT_TOOL_NAMES } from "./tools/_surface.js";
 import { PLUGIN_TOOL_NAMES } from "../scripts/plugin-tool-url.js";
 
 const CLAUDE_PLUGIN_TOOLS = new Set(PLUGIN_TOOL_NAMES);
@@ -65,6 +65,10 @@ describe("skillsForTools", () => {
 
   it("serves both skills on the Claude plugin tool set", () => {
     expect(namesOf(skillsForTools(CLAUDE_PLUGIN_TOOLS))).toEqual(["tako-agent", "tako-search"]);
+  });
+
+  it("serves every skill on the ChatGPT tool set, which the ChatGPT zip ships unfiltered", () => {
+    expect(namesOf(skillsForTools(CHATGPT_TOOL_NAMES))).toEqual(namesOf(SKILLS));
   });
 
   it("serves tako-agent alone when only the agent tools are registered", () => {
