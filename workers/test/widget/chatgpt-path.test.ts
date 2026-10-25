@@ -1280,6 +1280,22 @@ describe("ChatGPT agent results", () => {
     expect(nth(writes, 0).embed_url).toBe(EMBED_URL);
   });
 
+  it("repaints from widget state when a reload restores the result without _meta", () => {
+    const m = mountWidget(html(), {
+      toolOutput: AGENT_OUTPUT,
+      widgetState: { pub_id: PUB_ID, embed_url: EMBED_URL, image_url: IMAGE_URL, charts: [carouselChart(PUB_ID)] },
+    });
+    expect(renderedIframe(m)).toBe(true);
+  });
+
+  it("repaints the carousel from widget state when a reload restores the result without _meta", () => {
+    const m = mountWidget(html(), {
+      toolOutput: AGENT_OUTPUT,
+      widgetState: { pub_id: PUB_ID, embed_url: EMBED_URL, image_url: IMAGE_URL, charts: threeCharts() },
+    });
+    expect(carouselFrames(m)).toHaveLength(3);
+  });
+
   it("still labels a zero-card search result at once", () => {
     const m = mountWidget(html(), { toolOutput: { cards: [], web_results: [], usage: {} } });
     expect(emptyLabel(m).classList.contains("hidden")).toBe(false);

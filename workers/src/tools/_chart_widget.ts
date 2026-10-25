@@ -2255,7 +2255,11 @@ const WIDGET_HTML = `<!doctype html>
       meta = metaWithTopChartDims(meta, structuredContent);
       structuredContent = promoted;
     }
-    if (awaitingAgentCharts(structuredContent, meta)) return false;
+    if (awaitingAgentCharts(structuredContent, meta)) {
+      var mirror = widgetStateMirror();
+      if (!hasChart(mirror)) return false;
+      structuredContent = mirror;
+    }
     // No-chart short-circuit: structured content arrived but contains
     // no chart fields at all. \`tako_search\` produces this shape when it
     // returns zero cards (a clean empty result) or when the top card has
@@ -2718,6 +2722,11 @@ const WIDGET_HTML = `<!doctype html>
       structuredContent.cards.length > 0 &&
       !(meta && typeof meta === "object" && Array.isArray(meta.charts))
     );
+  }
+
+  function widgetStateMirror() {
+    var oa = window.openai;
+    return oa && typeof oa === "object" ? oa.widgetState : null;
   }
 
   function collapseAndClose() {
