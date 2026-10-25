@@ -25,16 +25,18 @@ import { AnswerAgentRunRequest } from "../generated/schemas.js";
 import {
   AGENT_CALL_WINDOW_FIXED_INPUT,
   AGENT_DESCRIPTION_LAST_LINE,
+  agentChartsMeta,
   agentQueryInput,
   agentThreadIdInput,
   runAgentCall,
 } from "./_agent_call.js";
 import { AgentInputError, runIdInputSchema } from "./_agent_product.js";
 import { agentRunOutputShape, type AgentRunOutput } from "./_agent_run.js";
+import { buildChartAppUiResourceFromOutputPubId } from "./_chart_widget.js";
 import { looseArray } from "./_loose_array.js";
 import { renderAgentRunMarkdown } from "./_render_markdown.js";
 import { AGENT_SOURCES_THREAD_RULE, SOURCES_DESCRIBE } from "./_shared_prose.js";
-import type { ToolModule } from "./types.js";
+import type { AppUiResource, ToolModule } from "./types.js";
 
 const DESCRIPTION = [
   "Run Tako's Answer Agent on a question that needs research rather than a lookup. It plans, queries the data graph and the web over several steps, and returns a written `answer` with numbered citations plus the chart `cards` it built.",
@@ -107,8 +109,9 @@ const takoAgent = {
   // (`_agent_run.ts`). `agentRunSchema` stays the internal shape the wait
   // validates the wire against; `projectAgentRun` maps it to this one, so no
   // unknown backend key can reach the model and no field rides in one channel
-  // only. One schema for both surfaces: this tool mounts no widget, so there
-  // are no per-surface fields and no `outputSchemaBySurface`.
+  // only. One schema for both surfaces: the ChatGPT widget reads its charts
+  // from `_meta`, so there are no per-surface fields and no
+  // `outputSchemaBySurface`.
   outputSchema: agentRunOutputShape,
   annotations: {
     title: "Tako: Answer Agent",
@@ -136,6 +139,12 @@ const takoAgent = {
   renderText(output, _ctx) {
     void _ctx;
     return renderAgentRunMarkdown(output as AgentRunOutput);
+  },
+  extraMeta(output, ctx) {
+    return agentChartsMeta(output as AgentRunOutput, ctx);
+  },
+  appUiResource(env, requestOrigin): AppUiResource {
+    return buildChartAppUiResourceFromOutputPubId(env, requestOrigin);
   },
 } satisfies ToolModule<typeof inputSchema, Output>;
 

@@ -1467,3 +1467,19 @@ export function cardCharts(
   }
   return charts;
 }
+
+export type ChartMeta = CardChart & { image_natural_width?: number; image_natural_height?: number };
+
+export function withTopChartDims(
+  charts: readonly CardChart[],
+  topPubId: string | undefined,
+  topMeta: Record<string, unknown> | undefined,
+): ChartMeta[] {
+  const width = topMeta?.image_natural_width;
+  const height = topMeta?.image_natural_height;
+  return charts.map((chart) =>
+    chart.pub_id === topPubId && typeof width === "number" && typeof height === "number"
+      ? { ...chart, image_natural_width: width, image_natural_height: height }
+      : { ...chart },
+  );
+}

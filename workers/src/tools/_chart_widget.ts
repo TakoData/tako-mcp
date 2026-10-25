@@ -742,6 +742,7 @@ const WIDGET_HTML = `<!doctype html>
   var empty = document.getElementById("tako-empty");
   var rendered = false;
   var singleFrameAwaitingMeta = false;
+  var agentChartsPending = false;
   var singleFramePayload = null;
   var refitCommittedFrame = null;
   // Origin of the iframe we loaded — used to gate the height handshake
@@ -2245,6 +2246,20 @@ const WIDGET_HTML = `<!doctype html>
     // Also here, not just on the MCP handshake: ChatGPT never sends
     // \`hostContext\`, so \`window.openai.theme\` is only readable on this path.
     applyHostSurface();
+    if (isAgentResult(structuredContent) && structuredContent.status === "running") {
+      collapseAndClose();
+      log("running agent result, closed widget");
+      return true;
+    }
+    structuredContent = promoteAgentChart(structuredContent, meta);
+    if (awaitingAgentCharts(structuredContent, meta)) {
+      var mirror = widgetStateMirror();
+      if (!hasChart(mirror)) {
+        agentChartsPending = true;
+        return false;
+      }
+      structuredContent = mirror;
+    }
     // No-chart short-circuit: structured content arrived but contains
     // no chart fields at all. \`tako_search\` produces this shape when it
     // returns zero cards (a clean empty result) or when the top card has
@@ -2660,6 +2675,56 @@ const WIDGET_HTML = `<!doctype html>
     return "cards" in o || "answer" in o || "web_results" in o;
   }
 
+  function isAgentResult(o) {
+    return !!o && typeof o === "object" && typeof o.run_id === "string" && typeof o.status === "string";
+  }
+
+  function copyWith(o, fields) {
+    var out = {};
+    Object.keys(o).forEach(function (k) { out[k] = o[k]; });
+    Object.keys(fields).forEach(function (k) { out[k] = fields[k]; });
+    return out;
+  }
+
+  function firstMetaChart(structuredContent, meta) {
+    var charts = carouselCharts(pickChartList(structuredContent, meta));
+    return charts.length > 0 ? charts[0] : null;
+  }
+
+  function promoteAgentChart(structuredContent, meta) {
+    if (hasChart(structuredContent)) return structuredContent;
+    var top = firstMetaChart(structuredContent, meta);
+    if (!top) return structuredContent;
+    return copyWith(structuredContent, {
+      pub_id: top.pub_id,
+      embed_url: top.embed_url,
+      image_url: top.image_url,
+      dark_mode: ${DEFAULT_DARK_MODE},
+      width: ${DEFAULT_WIDTH},
+      height: ${DEFAULT_HEIGHT},
+    });
+  }
+
+  function awaitingAgentCharts(structuredContent, meta) {
+    return (
+      isAgentResult(structuredContent) &&
+      !hasChart(structuredContent) &&
+      Array.isArray(structuredContent.cards) &&
+      structuredContent.cards.length > 0 &&
+      !(meta && typeof meta === "object" && Array.isArray(meta.charts))
+    );
+  }
+
+  function widgetStateMirror() {
+    var oa = window.openai;
+    return oa && typeof oa === "object" ? oa.widgetState : null;
+  }
+
+  function collapseAndClose() {
+    collapse(false);
+    requestHostClose();
+  }
+
   // Does this object say the CALL ITSELF failed? Two spellings, both
   // positive claims rather than inferences: the MCP envelope's
   // \`isError: true\`, and the server's own \`_meta["tako/error"]\`
@@ -2903,6 +2968,11 @@ const WIDGET_HTML = `<!doctype html>
     if (rendered) return;
     if (errorSeen || pickErrorFromOpenAi()) {
       collapseFailed();
+      return;
+    }
+    if (agentChartsPending) {
+      collapseAndClose();
+      log("agent charts never arrived, closed widget");
       return;
     }
     collapse(false);
@@ -3705,8 +3775,10 @@ export function buildChartAppUiResource(
 /**
  * `appUiResource` variant that derives the per-call widget URI from the top
  * card's `pub_id` on the tool OUTPUT (the input is a query/spec, not a pub_id).
- * Shared by tako_search, tako_search_advanced and tako_visualize, which all render a
- * chart widget this way.
+ * Shared by tako_search, tako_search_advanced, tako_visualize, tako_agent and
+ * tako_company_agent, which all render a chart widget this way. An agent
+ * result has no top-level `pub_id`; the first entry of its `charts` is its top
+ * card.
  *
  * No top card → `undefined`, NOT the static URI. A chart-less result has
  * nothing for a widget to draw, and naming a resource anyway is what asks a
@@ -3720,16 +3792,21 @@ export function buildChartAppUiResourceFromOutputPubId(
   requestOrigin?: string,
 ): AppUiResource {
   return buildChartAppUiResource(env, requestOrigin, (_input, output) => {
-    const pubId =
-      typeof (output as { pub_id?: unknown } | undefined)?.pub_id === "string"
-        ? (output as { pub_id: string }).pub_id
-        : "";
-    if (pubId === "") return undefined;
+    const pubId = topOutputPubId(output);
+    if (pubId === undefined) return undefined;
     return appUiTemplateUriPattern(env).replace(
       "{pub_id}",
       encodeURIComponent(pubId),
     );
   });
+}
+
+function topOutputPubId(output: unknown): string | undefined {
+  const o = output as { pub_id?: unknown; charts?: unknown } | undefined;
+  const charts: unknown[] = Array.isArray(o?.charts) ? o.charts : [];
+  const firstChart = charts[0] as { pub_id?: unknown } | undefined;
+  const pubId = o?.pub_id ?? firstChart?.pub_id;
+  return typeof pubId === "string" && pubId !== "" ? pubId : undefined;
 }
 
 // Re-export for tests that want to assert the widget HTML contains

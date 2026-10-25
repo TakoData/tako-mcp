@@ -153,7 +153,7 @@
       "user_prompt": "Using Tako, rank the five largest US semiconductor companies by revenue growth over the last three fiscal years, and explain what drove the leader.",
       "file_attachment_urls": null,
       "tools_triggered": "tako_agent",
-      "expected_output": "tako_agent returns a written answer with numbered citations and the chart cards it built. The reply ranks the companies, explains the leader's growth, and links each card's Tako page. If the first call returns status running, the model calls tako_agent again with the same run_id until the run finishes.",
+      "expected_output": "tako_agent returns a written answer with numbered citations and the chart cards it built. The reply ranks the companies and explains the leader's growth, and links each card's Tako page. The chart cards render inline above the reply. If the first call returns status running, the model calls tako_agent again with the same run_id until the run finishes.",
       "expected_output_url": null
     },
     {
@@ -161,7 +161,7 @@
       "user_prompt": "Using Tako, find active UK software companies incorporated in 2024 and registered in Manchester.",
       "file_attachment_urls": null,
       "tools_triggered": "tako_company_agent",
-      "expected_output": "tako_company_agent returns a written answer with citations and a list card of matching companies. The reply summarizes the matches and links the card's Tako page, where the full list lives.",
+      "expected_output": "tako_company_agent returns a written answer with citations and a list card of matching companies. The reply summarizes the matches and links the card's Tako page, where the full list lives. The list card renders inline above the reply.",
       "expected_output_url": null
     },
     {
@@ -169,7 +169,7 @@
       "user_prompt": "Using Tako's company agent at high effort, who are the current directors of Dyson Technology Limited?",
       "file_attachment_urls": null,
       "tools_triggered": "tako_company_agent",
-      "expected_output": "tako_company_agent starts a high-effort run and returns status running with a run_id; the model calls again with that run_id until the run finishes. If the model ends its turn first, it tells the user the run is still going, and when the user asks it to check again, it resumes the same run_id without starting a new run. The answer lists the company's current directors from the public company registry, with citations, and links the card's Tako page.",
+      "expected_output": "tako_company_agent starts a high-effort run and returns status running with a run_id; the model calls again with that run_id until the run finishes. If the model ends its turn first, it tells the user the run is still going, and when the user asks it to check again, it resumes the same run_id without starting a new run. The answer lists the company's current directors from the public company registry, with citations, and links the card's Tako page. The card renders inline when the run finishes.",
       "expected_output_url": null
     },
     {

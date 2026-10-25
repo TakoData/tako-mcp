@@ -19,6 +19,7 @@ import type { Env } from "../env.js";
 import { AgentInputError } from "./_agent_product.js";
 import { AGENT_CALL_WINDOW_MS, AgentWireDriftError, waitForRun } from "./_agent_wait.js";
 import { runAgentCall } from "./_agent_call.js";
+import { PNG_HEAD_FETCH_TIMEOUT_MS } from "./_chart_widget.js";
 import type { ToolContext } from "./types.js";
 
 const signal = new AbortController().signal;
@@ -135,6 +136,17 @@ describe("runAgentCall", () => {
 
     expect(vi.mocked(djangoGet).mock.calls[0]?.[3]?.timeoutMs).toBeLessThanOrEqual(30_000);
     expect(vi.mocked(waitForRun).mock.calls[0]?.[3]?.windowMs).toBe(AGENT_CALL_WINDOW_MS - 12_000);
+  });
+
+  it("leaves the chart dimension read inside the call window on the chatgpt surface", async () => {
+    vi.mocked(djangoPost).mockResolvedValue({ run_id: "r1", thread_id: "t1", created_at: CREATED_AT });
+    vi.mocked(waitForRun).mockResolvedValue({ kind: "running" });
+
+    await runAgentCall({ ...ctx, surface: "chatgpt" }, "answer", { query: "q" }, startBody);
+
+    expect(vi.mocked(waitForRun).mock.calls[0]?.[3]?.windowMs).toBe(
+      AGENT_CALL_WINDOW_MS - PNG_HEAD_FETCH_TIMEOUT_MS,
+    );
   });
 
   it("falls back to the current time when created_at is missing", async () => {

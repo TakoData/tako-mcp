@@ -579,6 +579,14 @@ describe("worker routing", () => {
       "ui/resourceUri": "ui://tako/embed/chart",
       "openai/outputTemplate": "ui://tako/embed/chart",
     });
+    for (const name of ["tako_agent", "tako_company_agent"]) {
+      const agentTool = body.result.tools.find((t) => t.name === name);
+      expect(agentTool?._meta, name).toMatchObject({
+        ui: { resourceUri: "ui://tako/embed/chart" },
+        "ui/resourceUri": "ui://tako/embed/chart",
+        "openai/outputTemplate": "ui://tako/embed/chart",
+      });
+    }
   });
 
   it("POST /mcp tools/list serves canonical MCP annotations to every client", async () => {

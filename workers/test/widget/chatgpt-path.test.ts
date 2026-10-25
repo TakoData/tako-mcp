@@ -684,40 +684,48 @@ describe("ChatGPT reload rehydration", () => {
   });
 });
 
+const CAROUSEL_PUB_IDS = [PUB_ID, "Lm3nQ8rT2vWx9yZa1bCd", "Ef4gH5iJ6kL7mN8oP9qR"];
+
+interface CarouselChart {
+  pub_id: string;
+  embed_url: string;
+  image_url: string;
+  image_natural_width?: number;
+  image_natural_height?: number;
+}
+
+function carouselChart(pubId: string, withDims = true): CarouselChart {
+  const chart: CarouselChart = {
+    pub_id: pubId,
+    embed_url: `https://tako.com/embed/${pubId}/?dark_mode=auto&showShare=true`,
+    image_url: `https://tako.com/api/v1/image/${pubId}/?dark_mode=true`,
+  };
+  if (withDims) {
+    chart.image_natural_width = 2400;
+    chart.image_natural_height = 1100;
+  }
+  return chart;
+}
+
+function nth<T>(items: readonly T[], i: number): T {
+  const item = items[i];
+  if (item === undefined) throw new Error(`no item at index ${i}`);
+  return item;
+}
+
+function threeCharts(withDims = true): CarouselChart[] {
+  return CAROUSEL_PUB_IDS.map((id) => carouselChart(id, withDims));
+}
+
+function carouselFrames(m: Mounted): HTMLIFrameElement[] {
+  return Array.from(
+    m.widgetWin.document.querySelectorAll<HTMLIFrameElement>(
+      "#tako-carousel iframe",
+    ),
+  );
+}
+
 describe("ChatGPT carousel", () => {
-  const CAROUSEL_PUB_IDS = [PUB_ID, "Lm3nQ8rT2vWx9yZa1bCd", "Ef4gH5iJ6kL7mN8oP9qR"];
-
-  interface CarouselChart {
-    pub_id: string;
-    embed_url: string;
-    image_url: string;
-    image_natural_width?: number;
-    image_natural_height?: number;
-  }
-
-  function carouselChart(pubId: string, withDims = true): CarouselChart {
-    const chart: CarouselChart = {
-      pub_id: pubId,
-      embed_url: `https://tako.com/embed/${pubId}/?dark_mode=auto&showShare=true`,
-      image_url: `https://tako.com/api/v1/image/${pubId}/?dark_mode=true`,
-    };
-    if (withDims) {
-      chart.image_natural_width = 2400;
-      chart.image_natural_height = 1100;
-    }
-    return chart;
-  }
-
-  function nth<T>(items: readonly T[], i: number): T {
-    const item = items[i];
-    if (item === undefined) throw new Error(`no item at index ${i}`);
-    return item;
-  }
-
-  function threeCharts(withDims = true): CarouselChart[] {
-    return CAROUSEL_PUB_IDS.map((id) => carouselChart(id, withDims));
-  }
-
   function mountCarousel(
     charts: CarouselChart[],
     extra: Record<string, unknown> = {},
@@ -727,14 +735,6 @@ describe("ChatGPT carousel", () => {
       toolResponseMetadata: { charts },
       ...extra,
     });
-  }
-
-  function carouselFrames(m: Mounted): HTMLIFrameElement[] {
-    return Array.from(
-      m.widgetWin.document.querySelectorAll<HTMLIFrameElement>(
-        "#tako-carousel iframe",
-      ),
-    );
   }
 
   function carouselSlides(m: Mounted): HTMLElement[] {
@@ -1159,5 +1159,160 @@ describe("ChatGPT carousel", () => {
     expect(nth(heights, heights.length - 1)).toBeGreaterThanOrEqual(singleFrameHeight);
     postEmbedHeight(m, nth(frames, 1).contentWindow!, 800);
     expect(nth(heights, heights.length - 1)).toBe(800);
+  });
+});
+
+describe("ChatGPT agent results", () => {
+  const AGENT_OUTPUT = {
+    status: "completed",
+    run_id: "answer_run_r1",
+    answer: "a",
+    cards: [{ title: "One", exportable: false }],
+    citations: [],
+    usage: null,
+  };
+
+  function emptyLabel(m: Mounted): HTMLElement {
+    return m.widgetWin.document.getElementById("tako-empty") as HTMLElement;
+  }
+
+  it("renders a one-card result in the single frame from _meta.charts", () => {
+    const m = mountWidget(html(), {
+      toolOutput: AGENT_OUTPUT,
+      toolResponseMetadata: {
+        image_natural_width: 2400,
+        image_natural_height: 1100,
+        charts: [carouselChart(PUB_ID)],
+      },
+    });
+    expect(renderedIframe(m)).toBe(true);
+  });
+
+  it("requests search's fallback height when the chart has no PNG dimensions", () => {
+    const heights: number[] = [];
+    const m = mountWidget(html(), {
+      toolOutput: AGENT_OUTPUT,
+      toolResponseMetadata: { charts: [carouselChart(PUB_ID, false)] },
+      notifyIntrinsicHeight: (h: number) => heights.push(h),
+    });
+    fireFrameLoad(m);
+    expect(nth(heights, heights.length - 1)).toBe(720);
+  });
+
+  it("renders a multi-card result as the carousel, in order", () => {
+    const m = mountWidget(html(), {
+      toolOutput: AGENT_OUTPUT,
+      toolResponseMetadata: { charts: threeCharts() },
+    });
+    const frames = carouselFrames(m);
+    expect(frames).toHaveLength(3);
+    frames.forEach((f, i) => {
+      expect(f.getAttribute("src")).toContain(nth(CAROUSEL_PUB_IDS, i));
+    });
+  });
+
+  it("closes a running result without the label", () => {
+    const requestClose = vi.fn();
+    const heights: number[] = [];
+    const m = mountWidget(html(), {
+      toolOutput: { status: "running", run_id: "answer_run_r1", message: "m", cards: [], citations: [], usage: null },
+      requestClose,
+      notifyIntrinsicHeight: (h: number) => heights.push(h),
+    });
+    expect(requestClose).toHaveBeenCalledTimes(1);
+    expect(emptyLabel(m).classList.contains("hidden")).toBe(true);
+    expect(heights).toEqual([1, 0]);
+  });
+
+  it("labels and closes a finished result with no cards", () => {
+    const requestClose = vi.fn();
+    const m = mountWidget(html(), {
+      toolOutput: { ...AGENT_OUTPUT, cards: [] },
+      toolResponseMetadata: { charts: [] },
+      requestClose,
+    });
+    expect(emptyLabel(m).classList.contains("hidden")).toBe(false);
+    expect(requestClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("labels and closes a result whose chart list is empty although it has cards", () => {
+    const requestClose = vi.fn();
+    const m = mountWidget(html(), {
+      toolOutput: AGENT_OUTPUT,
+      toolResponseMetadata: { charts: [] },
+      requestClose,
+    });
+    expect(emptyLabel(m).classList.contains("hidden")).toBe(false);
+    expect(requestClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("waits for late _meta instead of labelling a result with cards", () => {
+    vi.useFakeTimers();
+    try {
+      const requestClose = vi.fn();
+      const openai: Record<string, unknown> = { toolOutput: AGENT_OUTPUT, requestClose };
+      const m = mountWidget(html(), openai);
+      expect(emptyLabel(m).classList.contains("hidden")).toBe(true);
+      expect(requestClose).not.toHaveBeenCalled();
+      openai.toolResponseMetadata = { charts: [carouselChart(PUB_ID)] };
+      vi.advanceTimersByTime(250);
+      expect(renderedIframe(m)).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("collapses blank and asks ChatGPT to close when _meta never arrives", () => {
+    vi.useFakeTimers();
+    try {
+      const requestClose = vi.fn();
+      const m = mountWidget(html(), { toolOutput: AGENT_OUTPUT, requestClose });
+      vi.advanceTimersByTime(10_001);
+      expect(emptyLabel(m).classList.contains("hidden")).toBe(true);
+      expect(renderedIframe(m)).toBe(false);
+      expect(requestClose).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("renders the cards of a failed run that has them", () => {
+    const m = mountWidget(html(), {
+      toolOutput: { ...AGENT_OUTPUT, status: "failed" },
+      toolResponseMetadata: { charts: [carouselChart(PUB_ID)] },
+    });
+    expect(renderedIframe(m)).toBe(true);
+  });
+
+  it("mirrors the promoted chart into widget state", () => {
+    const writes: Array<{ embed_url?: string }> = [];
+    mountWidget(html(), {
+      toolOutput: AGENT_OUTPUT,
+      toolResponseMetadata: { charts: [carouselChart(PUB_ID)] },
+      setWidgetState: (s: { embed_url?: string }) => writes.push(s),
+    });
+    expect(writes).toHaveLength(1);
+    expect(nth(writes, 0).embed_url).toBe(EMBED_URL);
+  });
+
+  it("repaints from widget state when a reload restores the result without _meta", () => {
+    const m = mountWidget(html(), {
+      toolOutput: AGENT_OUTPUT,
+      widgetState: { pub_id: PUB_ID, embed_url: EMBED_URL, image_url: IMAGE_URL, charts: [carouselChart(PUB_ID)] },
+    });
+    expect(renderedIframe(m)).toBe(true);
+  });
+
+  it("repaints the carousel from widget state when a reload restores the result without _meta", () => {
+    const m = mountWidget(html(), {
+      toolOutput: AGENT_OUTPUT,
+      widgetState: { pub_id: PUB_ID, embed_url: EMBED_URL, image_url: IMAGE_URL, charts: threeCharts() },
+    });
+    expect(carouselFrames(m)).toHaveLength(3);
+  });
+
+  it("labels a search result whose cards have no chart at once, without waiting for _meta", () => {
+    const m = mountWidget(html(), { toolOutput: { cards: [{ title: "No id" }], web_results: [], usage: {} } });
+    expect(emptyLabel(m).classList.contains("hidden")).toBe(false);
   });
 });
