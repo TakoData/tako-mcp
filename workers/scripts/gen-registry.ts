@@ -81,6 +81,7 @@ import { graphRelatedOutputShape, graphSearchOutputShape, projectRelated } from 
 import type { Env } from "../src/env.js";
 import type { Surface } from "../src/surface.js";
 import type { ToolAnnotations, ToolModule } from "../src/tools/types.js";
+import { readSkills, renderSkillsModule, skillMarkdownPaths } from "./gen-skills.js";
 
 // ---------------------------------------------------------------------------
 // Curated tool surface
@@ -486,10 +487,9 @@ const README_PATH = resolve(REPO_ROOT, "README.md");
 // only given llms-full.txt and README. That is the same gap that let the broken
 // form survive in llms-full.txt, so close it by enumeration rather than waiting
 // for the next survivor.
-const SKILL_PATHS = [
-  resolve(REPO_ROOT, "skills", "tako-agent", "SKILL.md"),
-  resolve(REPO_ROOT, "skills", "tako-search", "SKILL.md"),
-];
+const SKILLS_DIR = resolve(REPO_ROOT, "skills");
+const SKILL_PATHS = skillMarkdownPaths(SKILLS_DIR);
+const SKILLS_MODULE_PATH = resolve(WORKERS_DIR, "src", "generated", "skills.ts");
 const SUBMISSION_PATH = resolve(REPO_ROOT, "chatgpt-app-submission.json");
 const SNAPSHOT_PATH = resolve(REPO_ROOT, "chatgpt-app-snapshot.json");
 const TOOLS_DOC_PATH = resolve(REPO_ROOT, "docs", "TOOLS.md");
@@ -535,6 +535,7 @@ export const GUARD_INPUT_PATHS: readonly string[] = [
   LLMS_PATH,
   README_PATH,
   ...SKILL_PATHS,
+  SKILLS_MODULE_PATH,
   ...LISTING_PATHS,
 ].map((absolute) => relative(REPO_ROOT, absolute).split(sep).join("/"));
 
@@ -1939,6 +1940,9 @@ async function main(): Promise<void> {
   const registry = buildRegistry(metadata, registryTools);
   const registryJson = serializeJson(registry);
   const barrel = buildBarrel(modules);
+  const skillsModule = renderSkillsModule(
+    readSkills(SKILLS_DIR, modules.map((m) => m.tool.name)),
+  );
   const committedLobehub = JSON.parse(
     readFileSync(LOBEHUB_PATH, "utf8"),
   ) as Record<string, unknown>;
@@ -1981,6 +1985,15 @@ async function main(): Promise<void> {
       );
       drift = true;
     }
+    const committedSkillsModule = existsSync(SKILLS_MODULE_PATH)
+      ? readFileSync(SKILLS_MODULE_PATH, "utf8")
+      : "";
+    if (committedSkillsModule !== skillsModule) {
+      console.error(
+        `[registry:check] drift: ${SKILLS_MODULE_PATH} does not match generator output`,
+      );
+      drift = true;
+    }
     // A missing file counts as drift: the doc is generated, so its absence is
     // the same failure as a stale copy.
     const committedToolsDoc = existsSync(TOOLS_DOC_PATH)
@@ -2013,10 +2026,12 @@ async function main(): Promise<void> {
   writeFileSync(BARREL_PATH, barrel);
   writeFileSync(LOBEHUB_PATH, lobehubJson);
   writeFileSync(TOOLS_DOC_PATH, toolsDoc);
+  writeFileSync(SKILLS_MODULE_PATH, skillsModule);
   console.log(`wrote ${REGISTRY_PATH}`);
   console.log(`wrote ${BARREL_PATH}`);
   console.log(`wrote ${LOBEHUB_PATH}`);
   console.log(`wrote ${TOOLS_DOC_PATH}`);
+  console.log(`wrote ${SKILLS_MODULE_PATH}`);
   for (const line of paramDiff) console.log(`[registry:gen] parameters ${line}`);
   console.log(`(${modules.length} tools)`);
 }
