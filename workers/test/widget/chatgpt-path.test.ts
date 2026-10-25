@@ -1179,9 +1179,24 @@ describe("ChatGPT agent results", () => {
   it("renders a one-card result in the single frame from _meta.charts", () => {
     const m = mountWidget(html(), {
       toolOutput: AGENT_OUTPUT,
-      toolResponseMetadata: { charts: [carouselChart(PUB_ID)] },
+      toolResponseMetadata: {
+        image_natural_width: 2400,
+        image_natural_height: 1100,
+        charts: [carouselChart(PUB_ID)],
+      },
     });
     expect(renderedIframe(m)).toBe(true);
+  });
+
+  it("requests search's fallback height when the chart has no PNG dimensions", () => {
+    const heights: number[] = [];
+    const m = mountWidget(html(), {
+      toolOutput: AGENT_OUTPUT,
+      toolResponseMetadata: { charts: [carouselChart(PUB_ID, false)] },
+      notifyIntrinsicHeight: (h: number) => heights.push(h),
+    });
+    fireFrameLoad(m);
+    expect(nth(heights, heights.length - 1)).toBe(720);
   });
 
   it("renders a multi-card result as the carousel, in order", () => {
@@ -1247,7 +1262,7 @@ describe("ChatGPT agent results", () => {
     }
   });
 
-  it("collapses blank, without the label, when _meta never arrives", () => {
+  it("collapses blank and asks ChatGPT to close when _meta never arrives", () => {
     vi.useFakeTimers();
     try {
       const requestClose = vi.fn();
@@ -1255,7 +1270,7 @@ describe("ChatGPT agent results", () => {
       vi.advanceTimersByTime(10_001);
       expect(emptyLabel(m).classList.contains("hidden")).toBe(true);
       expect(renderedIframe(m)).toBe(false);
-      expect(requestClose).not.toHaveBeenCalled();
+      expect(requestClose).toHaveBeenCalledTimes(1);
     } finally {
       vi.useRealTimers();
     }

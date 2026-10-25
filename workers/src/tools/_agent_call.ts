@@ -18,6 +18,7 @@ import {
 } from "./_agent_product.js";
 import {
   type AgentRunOutput,
+  type AgentRunWireLike,
   agentRunCharts,
   projectAgentRun,
   projectRunningRun,
@@ -33,7 +34,7 @@ import {
   type WaitOutcome,
   waitForRun,
 } from "./_agent_wait.js";
-import { buildChartExtraMeta } from "./_chart_widget.js";
+import { buildChartExtraMeta, PNG_HEAD_FETCH_TIMEOUT_MS } from "./_chart_widget.js";
 import { nonEmpty, withTopChartDims } from "./_search_results.js";
 import type { FixedInput, ToolContext } from "./types.js";
 
@@ -46,12 +47,11 @@ export type AgentCallInput = {
 
 const AGENT_CALL_WINDOW_SENTENCE = `A call returns within ${AGENT_CALL_WINDOW_MS / 1000} s. If \`status\` is \`running\`, call again with \`run_id\`; don't start a new run.`;
 
-/** The description sentence that says where the cards render and what each card's `url` opens. */
-export const AGENT_CARD_RENDER_SENTENCE =
-  "On ChatGPT, the cards render inline. Each card's `url` opens the full chart or list on Tako.";
+/** The description sentence that keeps each card's Tako page link in the model's reply. */
+export const AGENT_CARD_LINK_SENTENCE = "In your reply, link each card's `url`; the full list or chart lives on that page.";
 
 /** The description line both agent tools end with. */
-export const AGENT_DESCRIPTION_LAST_LINE = `${AGENT_CALL_WINDOW_SENTENCE} ${AGENT_CARD_RENDER_SENTENCE}`;
+export const AGENT_DESCRIPTION_LAST_LINE = `${AGENT_CALL_WINDOW_SENTENCE} ${AGENT_CARD_LINK_SENTENCE}`;
 
 /** The `query` input both agent tools take. */
 export const agentQueryInput = z
@@ -187,6 +187,11 @@ function waitFailedGuidance(publicRunId: string): string {
   return `Run \`${publicRunId}\` started, but waiting on it failed. Call this tool again with run_id=\`${publicRunId}\`; don't start a new run.`;
 }
 
+function callDeadline(ctx: ToolContext): number {
+  const chartMetaReserveMs = ctx.surface === "chatgpt" ? PNG_HEAD_FETCH_TIMEOUT_MS : 0;
+  return Date.now() + AGENT_CALL_WINDOW_MS - chartMetaReserveMs;
+}
+
 function remainingMs(deadline: number): number {
   return Math.max(0, deadline - Date.now());
 }
@@ -206,6 +211,18 @@ function refusalLookupTool(ctx: ToolContext, product: AgentProduct): string | un
     : undefined;
 }
 
+function projectTerminalRun(
+  ctx: ToolContext,
+  product: AgentProduct,
+  run: AgentRunWireLike,
+  publicRunId: string,
+): AgentRunOutput {
+  return {
+    ...projectAgentRun(run, publicRunId, refusalLookupTool(ctx, product)),
+    charts: agentRunCharts(run, ctx.env),
+  };
+}
+
 function projectOutcome(
   ctx: ToolContext,
   product: AgentProduct,
@@ -215,10 +232,7 @@ function projectOutcome(
 ): AgentRunOutput {
   const publicRunId = toPublicRunId(product, backendRunId);
   if (outcome.kind === "terminal") {
-    return {
-      ...projectAgentRun(outcome.run, publicRunId, refusalLookupTool(ctx, product)),
-      charts: agentRunCharts(outcome.run, ctx.env),
-    };
+    return projectTerminalRun(ctx, product, outcome.run, publicRunId);
   }
   const args: Parameters<typeof projectRunningRun>[0] = {
     toolName: AGENT_TOOL_NAME[product],
@@ -281,11 +295,7 @@ async function resumeRun(
   try {
     const wire = await readRun(ctx, product, backendRunId, requestTimeoutMs(deadline));
     if (isTerminal(wire.status)) {
-      const run = parseRun(product, backendRunId, wire);
-      return {
-        ...projectAgentRun(run, publicRunId, refusalLookupTool(ctx, product)),
-        charts: agentRunCharts(run, ctx.env),
-      };
+      return projectTerminalRun(ctx, product, parseRun(product, backendRunId, wire), publicRunId);
     }
     const startedAtMs = createdAtMs(wire.created_at);
     const outcome = await waitForRun(ctx, product, backendRunId, {
@@ -319,7 +329,7 @@ export async function runAgentCall(
   input: AgentCallInput,
   startBody: () => unknown,
 ): Promise<AgentRunOutput> {
-  const deadline = Date.now() + AGENT_CALL_WINDOW_MS;
+  const deadline = callDeadline(ctx);
   const hasQuery = input.query !== undefined;
   const hasRunId = input.run_id !== undefined;
   if (hasQuery === hasRunId) {
@@ -346,7 +356,7 @@ export async function agentChartsMeta(
   const top = charts[0];
   if (top === undefined) return { charts: [] };
   const topMeta = await buildChartExtraMeta(top.image_url, {
-    bakeImage: false,
+    bakeImage: ctx.surface !== "chatgpt",
     env: ctx.env,
     origin: ctx.origin,
     pubId: top.pub_id,

@@ -69,7 +69,7 @@ Run Tako's Answer Agent on a question that needs research rather than a lookup. 
 
 Best for metric-driven research: ranking or screening by financial or economic metrics, multi-step aggregation, multi-hop reasoning. Also the fallback when `tako_search` finds nothing. Not for a known value or a two-entity comparison — `tako_search` answers those in one round trip.
 
-A call returns within 45 s. If `status` is `running`, call again with `run_id`; don't start a new run. On ChatGPT, the cards render inline. Each card's `url` opens the full chart or list on Tako.
+A call returns within 45 s. If `status` is `running`, call again with `run_id`; don't start a new run. In your reply, link each card's `url`; the full list or chart lives on that page.
 
 Parameters:
 
@@ -880,7 +880,7 @@ Run Tako's Company Agent on a question about which companies or people match reg
 
 Best for: screening companies by status, incorporation date, registered location, or industry; resolving named companies; finding a company's officers and directors. At `medium` and `high` effort it can also filter by financial metrics such as revenue or headcount.
 
-A call returns within 45 s. If `status` is `running`, call again with `run_id`; don't start a new run. On ChatGPT, the cards render inline. Each card's `url` opens the full chart or list on Tako.
+A call returns within 45 s. If `status` is `running`, call again with `run_id`; don't start a new run. In your reply, link each card's `url`; the full list or chart lives on that page.
 
 Parameters:
 

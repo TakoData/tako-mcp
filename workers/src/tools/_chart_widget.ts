@@ -742,6 +742,7 @@ const WIDGET_HTML = `<!doctype html>
   var empty = document.getElementById("tako-empty");
   var rendered = false;
   var singleFrameAwaitingMeta = false;
+  var agentChartsPending = false;
   var singleFramePayload = null;
   var refitCommittedFrame = null;
   // Origin of the iframe we loaded — used to gate the height handshake
@@ -2250,14 +2251,13 @@ const WIDGET_HTML = `<!doctype html>
       log("running agent result, closed widget");
       return true;
     }
-    var promoted = promoteAgentChart(structuredContent, meta);
-    if (promoted !== structuredContent) {
-      meta = metaWithTopChartDims(meta, structuredContent);
-      structuredContent = promoted;
-    }
+    structuredContent = promoteAgentChart(structuredContent, meta);
     if (awaitingAgentCharts(structuredContent, meta)) {
       var mirror = widgetStateMirror();
-      if (!hasChart(mirror)) return false;
+      if (!hasChart(mirror)) {
+        agentChartsPending = true;
+        return false;
+      }
       structuredContent = mirror;
     }
     // No-chart short-circuit: structured content arrived but contains
@@ -2699,18 +2699,9 @@ const WIDGET_HTML = `<!doctype html>
       pub_id: top.pub_id,
       embed_url: top.embed_url,
       image_url: top.image_url,
-    });
-  }
-
-  function metaWithTopChartDims(meta, structuredContent) {
-    if (!meta || typeof meta !== "object" || typeof meta.image_natural_width === "number") return meta;
-    var top = firstMetaChart(structuredContent, meta);
-    if (!top || typeof top.image_natural_width !== "number" || typeof top.image_natural_height !== "number") {
-      return meta;
-    }
-    return copyWith(meta, {
-      image_natural_width: top.image_natural_width,
-      image_natural_height: top.image_natural_height,
+      dark_mode: ${DEFAULT_DARK_MODE},
+      width: ${DEFAULT_WIDTH},
+      height: ${DEFAULT_HEIGHT},
     });
   }
 
@@ -2977,6 +2968,11 @@ const WIDGET_HTML = `<!doctype html>
     if (rendered) return;
     if (errorSeen || pickErrorFromOpenAi()) {
       collapseFailed();
+      return;
+    }
+    if (agentChartsPending) {
+      collapseAndClose();
+      log("agent charts never arrived, closed widget");
       return;
     }
     collapse(false);
@@ -3779,8 +3775,10 @@ export function buildChartAppUiResource(
 /**
  * `appUiResource` variant that derives the per-call widget URI from the top
  * card's `pub_id` on the tool OUTPUT (the input is a query/spec, not a pub_id).
- * Shared by tako_search, tako_search_advanced and tako_visualize, which all render a
- * chart widget this way.
+ * Shared by tako_search, tako_search_advanced, tako_visualize, tako_agent and
+ * tako_company_agent, which all render a chart widget this way. An agent
+ * result has no top-level `pub_id`; the first entry of its `charts` is its top
+ * card.
  *
  * No top card → `undefined`, NOT the static URI. A chart-less result has
  * nothing for a widget to draw, and naming a resource anyway is what asks a
@@ -3794,16 +3792,21 @@ export function buildChartAppUiResourceFromOutputPubId(
   requestOrigin?: string,
 ): AppUiResource {
   return buildChartAppUiResource(env, requestOrigin, (_input, output) => {
-    const pubId =
-      typeof (output as { pub_id?: unknown } | undefined)?.pub_id === "string"
-        ? (output as { pub_id: string }).pub_id
-        : "";
-    if (pubId === "") return undefined;
+    const pubId = topOutputPubId(output);
+    if (pubId === undefined) return undefined;
     return appUiTemplateUriPattern(env).replace(
       "{pub_id}",
       encodeURIComponent(pubId),
     );
   });
+}
+
+function topOutputPubId(output: unknown): string | undefined {
+  const o = output as { pub_id?: unknown; charts?: unknown } | undefined;
+  const charts: unknown[] = Array.isArray(o?.charts) ? o.charts : [];
+  const firstChart = charts[0] as { pub_id?: unknown } | undefined;
+  const pubId = o?.pub_id ?? firstChart?.pub_id;
+  return typeof pubId === "string" && pubId !== "" ? pubId : undefined;
 }
 
 // Re-export for tests that want to assert the widget HTML contains
