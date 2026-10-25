@@ -2245,6 +2245,17 @@ const WIDGET_HTML = `<!doctype html>
     // Also here, not just on the MCP handshake: ChatGPT never sends
     // \`hostContext\`, so \`window.openai.theme\` is only readable on this path.
     applyHostSurface();
+    if (isAgentResult(structuredContent) && structuredContent.status === "running") {
+      collapseAndClose();
+      log("running agent result, closed widget");
+      return true;
+    }
+    var promoted = promoteAgentChart(structuredContent, meta);
+    if (promoted !== structuredContent) {
+      meta = metaWithTopChartDims(meta, structuredContent);
+      structuredContent = promoted;
+    }
+    if (awaitingAgentCharts(structuredContent, meta)) return false;
     // No-chart short-circuit: structured content arrived but contains
     // no chart fields at all. \`tako_search\` produces this shape when it
     // returns zero cards (a clean empty result) or when the top card has
@@ -2658,6 +2669,60 @@ const WIDGET_HTML = `<!doctype html>
   function looksComplete(o) {
     if (!o || typeof o !== "object") return false;
     return "cards" in o || "answer" in o || "web_results" in o;
+  }
+
+  function isAgentResult(o) {
+    return !!o && typeof o === "object" && typeof o.run_id === "string" && typeof o.status === "string";
+  }
+
+  function copyWith(o, fields) {
+    var out = {};
+    Object.keys(o).forEach(function (k) { out[k] = o[k]; });
+    Object.keys(fields).forEach(function (k) { out[k] = fields[k]; });
+    return out;
+  }
+
+  function firstMetaChart(structuredContent, meta) {
+    var charts = carouselCharts(pickChartList(structuredContent, meta));
+    return charts.length > 0 ? charts[0] : null;
+  }
+
+  function promoteAgentChart(structuredContent, meta) {
+    if (hasChart(structuredContent)) return structuredContent;
+    var top = firstMetaChart(structuredContent, meta);
+    if (!top) return structuredContent;
+    return copyWith(structuredContent, {
+      pub_id: top.pub_id,
+      embed_url: top.embed_url,
+      image_url: top.image_url,
+    });
+  }
+
+  function metaWithTopChartDims(meta, structuredContent) {
+    if (!meta || typeof meta !== "object" || typeof meta.image_natural_width === "number") return meta;
+    var top = firstMetaChart(structuredContent, meta);
+    if (!top || typeof top.image_natural_width !== "number" || typeof top.image_natural_height !== "number") {
+      return meta;
+    }
+    return copyWith(meta, {
+      image_natural_width: top.image_natural_width,
+      image_natural_height: top.image_natural_height,
+    });
+  }
+
+  function awaitingAgentCharts(structuredContent, meta) {
+    return (
+      isAgentResult(structuredContent) &&
+      !hasChart(structuredContent) &&
+      Array.isArray(structuredContent.cards) &&
+      structuredContent.cards.length > 0 &&
+      !(meta && typeof meta === "object" && Array.isArray(meta.charts))
+    );
+  }
+
+  function collapseAndClose() {
+    collapse(false);
+    requestHostClose();
   }
 
   // Does this object say the CALL ITSELF failed? Two spellings, both
