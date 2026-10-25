@@ -18,16 +18,18 @@ import { CompanyAgentEffort, type CompanyAgentRunRequest } from "../generated/sc
 import {
   AGENT_CALL_WINDOW_FIXED_INPUT,
   AGENT_DESCRIPTION_LAST_LINE,
+  agentChartsMeta,
   agentQueryInput,
   agentThreadIdInput,
   runAgentCall,
 } from "./_agent_call.js";
 import { AgentInputError, runIdInputSchema } from "./_agent_product.js";
 import { agentRunOutputShape, type AgentRunOutput } from "./_agent_run.js";
+import { buildChartAppUiResourceFromOutputPubId } from "./_chart_widget.js";
 import { looseArray } from "./_loose_array.js";
 import { renderAgentRunMarkdown } from "./_render_markdown.js";
 import { AGENT_SOURCES_THREAD_RULE } from "./_shared_prose.js";
-import type { ToolModule } from "./types.js";
+import type { AppUiResource, ToolModule } from "./types.js";
 
 const DESCRIPTION = [
   "Run Tako's Company Agent on a question about which companies or people match registry facts. It searches the company registry and the web over several steps, and returns a written `answer` with numbered citations plus any list `cards` it built.",
@@ -98,6 +100,12 @@ const takoCompanyAgent = {
   renderText(output, _ctx) {
     void _ctx;
     return renderAgentRunMarkdown(output as AgentRunOutput);
+  },
+  extraMeta(output, ctx) {
+    return agentChartsMeta(output as AgentRunOutput, ctx);
+  },
+  appUiResource(env, requestOrigin): AppUiResource {
+    return buildChartAppUiResourceFromOutputPubId(env, requestOrigin);
   },
 } satisfies ToolModule<typeof inputSchema, Output>;
 

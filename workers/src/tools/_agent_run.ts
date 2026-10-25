@@ -44,13 +44,17 @@
  *
  * Kept against the drop list: `cards[].image_url` and `cards[].embed_url`
  * (Jay, 2026-08-31). An agent run's cards ARE its deliverable, and unlike
- * `tako_search` this tool mounts no widget and ships no PNG block, so those
- * two urls are the only way a host can render or link the chart it paid for.
+ * `tako_search` this tool ships no PNG block and mounts a widget only on
+ * `/mcp/chatgpt`, so elsewhere those two urls are the only way a host can
+ * render or link the chart it paid for.
  */
 import { z } from "zod";
 
+import type { Env } from "../env.js";
 import { withShareOptIn } from "./_chart_widget.js";
 import {
+  type CardChart,
+  cardCharts,
   dateOnly,
   nonEmpty,
   sourceNamesOf,
@@ -207,8 +211,8 @@ export type ProjectedCitation = {
 };
 
 /** Advertised structuredContent for `tako_agent`: the projected run. One
- *  shape, both surfaces — this tool mounts no widget, so there are no
- *  per-surface widget fields to declare.
+ *  shape, both surfaces — the ChatGPT widget reads its charts from `_meta`,
+ *  so there are no per-surface widget fields to declare.
  *
  *  Declared HERE, beside `projectAgentRun`, not in `_render_markdown.ts`: the
  *  advertised shape and the projection that fills it drift the moment they
@@ -254,6 +258,7 @@ export type AgentRunOutput = {
   thread_id?: string;
   usage: Usage | null;
   error?: { code: string; message: string };
+  charts?: CardChart[];
 };
 
 /**
@@ -466,6 +471,19 @@ export function projectAgentRun(
     out.error = { code: "agent_run_failed", message: "The agent run failed without a reason." };
   }
   return out;
+}
+
+/** One chart per card the run built that has a `card_id`, in run order. */
+export function agentRunCharts(run: AgentRunWireLike, env: Env): CardChart[] {
+  const cards = run.result?.cards;
+  if (!Array.isArray(cards)) return [];
+  const ids = cards.map((card: unknown) => ({
+    card_id:
+      card !== null && typeof card === "object"
+        ? nonEmpty((card as Record<string, unknown>).card_id)
+        : undefined,
+  }));
+  return cardCharts(ids, env);
 }
 
 /** The text that tells the model how to keep waiting for a run. */

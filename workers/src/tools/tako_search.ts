@@ -31,7 +31,7 @@ import {
 } from "./_render_markdown.js";
 import { runSearch } from "./_run_search.js";
 import { SOURCES_DESCRIBE } from "./_shared_prose.js";
-import type { CardChart, SearchOutput } from "./_search_results.js";
+import { type SearchOutput, withTopChartDims } from "./_search_results.js";
 import type { AppUiResource, ToolContentBlock, ToolContext, ToolModule } from "./types.js";
 
 const DESCRIPTION = [
@@ -145,22 +145,6 @@ export function buildSearchBody(input: Input, tier: Tier): z.input<typeof Search
   return body satisfies z.input<typeof SearchRequest>; // ← build-time guard: backend request drift breaks here
 }
 
-
-type ChartMeta = CardChart & { image_natural_width?: number; image_natural_height?: number };
-
-function withTopChartDims(
-  charts: readonly CardChart[],
-  topPubId: string | undefined,
-  topMeta: Record<string, unknown> | undefined,
-): ChartMeta[] {
-  const width = topMeta?.image_natural_width;
-  const height = topMeta?.image_natural_height;
-  return charts.map((chart) =>
-    chart.pub_id === topPubId && typeof width === "number" && typeof height === "number"
-      ? { ...chart, image_natural_width: width, image_natural_height: height }
-      : { ...chart },
-  );
-}
 
 const tako_search = {
   name: "tako_search",

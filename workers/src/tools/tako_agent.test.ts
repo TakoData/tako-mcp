@@ -144,6 +144,29 @@ describe("tako_agent", () => {
     expect(out.answer).toBe("done");
   });
 
+  it("carries a chart for each card with a card_id, in run order", async () => {
+    const out = await runToCompletion({
+      answer: "a",
+      cards: [{ card_id: "c1", title: "One" }, { title: "No id" }, { card_id: "c2", title: "Two" }],
+      citations: [],
+    });
+
+    expect(out.charts?.map((c) => c.pub_id)).toEqual(["c1", "c2"]);
+    expect(out.charts?.[0]?.embed_url).toBe("https://trytako.com/embed/c1/?dark_mode=auto&showShare=true");
+  });
+
+  it("carries charts when a resume finds the run already finished", async () => {
+    vi.mocked(djangoGet).mockResolvedValue({
+      run_id: "x",
+      status: "completed",
+      result: { answer: "done", cards: [{ card_id: "c9" }], citations: [] },
+    });
+
+    const out = await tool.handler({ run_id: "answer_run_x", sources: ["data"] }, ctx);
+
+    expect(out.charts?.map((c) => c.pub_id)).toEqual(["c9"]);
+  });
+
   it("rejects a company run_id at input validation and names tako_company_agent", () => {
     const parsed = tool.inputSchema.safeParse({ run_id: "company_run_x" });
 
@@ -214,11 +237,13 @@ describe("tako_agent", () => {
 });
 
 describe("tako_agent over MCP", () => {
-  async function callAgent(args: Record<string, unknown>) {
-    const server = createMcpServer(ctx, {
-      surface: "generic",
-      requestedToolNames: new Set(["tako_agent"]),
-    });
+  async function callAgent(args: Record<string, unknown>, surface: "generic" | "chatgpt" = "generic") {
+    const server = createMcpServer(
+      { ...ctx, surface },
+      surface === "chatgpt"
+        ? { surface }
+        : { surface, requestedToolNames: new Set(["tako_agent"]) },
+    );
     const client = new Client(
       { name: "agent-test", version: "0.0.0" },
       { jsonSchemaValidator: new CfWorkerJsonSchemaValidator() },
@@ -230,6 +255,8 @@ describe("tako_agent over MCP", () => {
       return (await client.callTool({ name: "tako_agent", arguments: args })) as {
         isError?: boolean;
         content: Array<{ type: string; text?: string }>;
+        structuredContent?: Record<string, unknown>;
+        _meta?: Record<string, unknown>;
       };
     } finally {
       await client.close();
@@ -254,6 +281,61 @@ describe("tako_agent over MCP", () => {
     );
     expect(djangoPost).not.toHaveBeenCalled();
     expect(djangoGet).not.toHaveBeenCalled();
+  });
+
+  function realPngResponse(): Response {
+    const b64 =
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+    const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+    return new Response(bytes, { status: 200, headers: { "content-type": "image/png" } });
+  }
+
+  function finishedRun(cards: Record<string, unknown>[]): void {
+    vi.mocked(djangoGet).mockResolvedValue({
+      run_id: "x",
+      status: "completed",
+      result: { answer: "done", cards, citations: [] },
+    });
+  }
+
+  it("chatgpt: ships every card as _meta.charts and keeps charts out of structuredContent", async () => {
+    finishedRun([{ card_id: "c1" }, { card_id: "c2" }]);
+    vi.stubGlobal("fetch", vi.fn<typeof fetch>(async () => realPngResponse()));
+
+    const result = await callAgent({ run_id: "answer_run_x" }, "chatgpt");
+
+    expect(result.structuredContent?.charts).toBeUndefined();
+    const charts = result._meta?.charts as { pub_id: string; image_natural_width?: number }[];
+    expect(charts.map((c) => c.pub_id)).toEqual(["c1", "c2"]);
+    expect(charts[0]?.image_natural_width).toBe(1);
+    expect(charts[1]?.image_natural_width).toBeUndefined();
+  });
+
+  it("chatgpt: sends an empty chart list when no card has a card_id", async () => {
+    finishedRun([{ title: "No id" }]);
+
+    const result = await callAgent({ run_id: "answer_run_x" }, "chatgpt");
+
+    expect(result._meta?.charts).toEqual([]);
+  });
+
+  it("chatgpt: keeps the chart list when the PNG read fails", async () => {
+    finishedRun([{ card_id: "c1" }, { card_id: "c2" }]);
+    vi.stubGlobal("fetch", vi.fn<typeof fetch>(async () => Promise.reject(new Error("offline"))));
+
+    const result = await callAgent({ run_id: "answer_run_x" }, "chatgpt");
+
+    expect((result._meta?.charts as { pub_id: string }[]).map((c) => c.pub_id)).toEqual(["c1", "c2"]);
+  });
+
+  it("generic: sends no _meta.charts and no image block", async () => {
+    finishedRun([{ card_id: "c1" }]);
+    vi.stubGlobal("fetch", vi.fn<typeof fetch>(async () => realPngResponse()));
+
+    const result = await callAgent({ run_id: "answer_run_x" });
+
+    expect(result._meta?.charts).toBeUndefined();
+    expect(result.content.some((b) => b.type === "image")).toBe(false);
   });
 });
 

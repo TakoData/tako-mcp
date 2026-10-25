@@ -16,7 +16,12 @@ import {
   toBackendRunId,
   toPublicRunId,
 } from "./_agent_product.js";
-import { type AgentRunOutput, projectAgentRun, projectRunningRun } from "./_agent_run.js";
+import {
+  type AgentRunOutput,
+  agentRunCharts,
+  projectAgentRun,
+  projectRunningRun,
+} from "./_agent_run.js";
 import {
   AGENT_CALL_WINDOW_MS,
   AgentWireDriftError,
@@ -28,7 +33,8 @@ import {
   type WaitOutcome,
   waitForRun,
 } from "./_agent_wait.js";
-import { nonEmpty } from "./_search_results.js";
+import { buildChartExtraMeta } from "./_chart_widget.js";
+import { nonEmpty, withTopChartDims } from "./_search_results.js";
 import type { FixedInput, ToolContext } from "./types.js";
 
 /** The inputs both agent tools share: start a run with `query`, or resume one with `run_id`. */
@@ -208,7 +214,10 @@ function projectOutcome(
 ): AgentRunOutput {
   const publicRunId = toPublicRunId(product, backendRunId);
   if (outcome.kind === "terminal") {
-    return projectAgentRun(outcome.run, publicRunId, refusalLookupTool(ctx, product));
+    return {
+      ...projectAgentRun(outcome.run, publicRunId, refusalLookupTool(ctx, product)),
+      charts: agentRunCharts(outcome.run, ctx.env),
+    };
   }
   const args: Parameters<typeof projectRunningRun>[0] = {
     toolName: AGENT_TOOL_NAME[product],
@@ -271,11 +280,11 @@ async function resumeRun(
   try {
     const wire = await readRun(ctx, product, backendRunId, requestTimeoutMs(deadline));
     if (isTerminal(wire.status)) {
-      return projectAgentRun(
-        parseRun(product, backendRunId, wire),
-        publicRunId,
-        refusalLookupTool(ctx, product),
-      );
+      const run = parseRun(product, backendRunId, wire);
+      return {
+        ...projectAgentRun(run, publicRunId, refusalLookupTool(ctx, product)),
+        charts: agentRunCharts(run, ctx.env),
+      };
     }
     const startedAtMs = createdAtMs(wire.created_at);
     const outcome = await waitForRun(ctx, product, backendRunId, {
@@ -319,4 +328,27 @@ export async function runAgentCall(
   }
   if (input.run_id !== undefined) return resumeRun(ctx, product, input.run_id, deadline);
   return startRun(ctx, product, input, startBody, deadline);
+}
+
+/**
+ * The `_meta` both agent tools ship where the chart widget is live: every
+ * renderable card as `charts`, with PNG dimensions on the first one when the
+ * ranged read succeeds. Returns `{ charts: [] }` for a finished run with no
+ * renderable card, and `undefined` for a `running` result.
+ */
+export async function agentChartsMeta(
+  output: AgentRunOutput,
+  ctx: ToolContext,
+): Promise<Record<string, unknown> | undefined> {
+  if (output.status === "running") return undefined;
+  const charts = output.charts ?? [];
+  const top = charts[0];
+  if (top === undefined) return { charts: [] };
+  const topMeta = await buildChartExtraMeta(top.image_url, {
+    bakeImage: false,
+    env: ctx.env,
+    origin: ctx.origin,
+    pubId: top.pub_id,
+  });
+  return { ...topMeta, charts: withTopChartDims(charts, top.pub_id, topMeta) };
 }

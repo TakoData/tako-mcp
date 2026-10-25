@@ -24,13 +24,11 @@ const ctx: ToolContext = {
   sendProgress: vi.fn(async () => {}),
 };
 
-function completedStream(): void {
+function completedStream(
+  result: Record<string, unknown> = { answer: "Acme Corp matches [1].", cards: [], citations: [] },
+): void {
   const frames = [
-    {
-      kind: "agent_result",
-      id: "a1",
-      data: { answer: "Acme Corp matches [1].", cards: [], citations: [] },
-    },
+    { kind: "agent_result", id: "a1", data: result },
     { kind: "run_summary", status: "completed", created_at: "2026-10-22T00:00:00Z", error: null, usage: null },
   ].map(
     (block) =>
@@ -73,6 +71,20 @@ describe("tako_company_agent", () => {
     expect(vi.mocked(djangoPost).mock.calls[0]![2]).toBe("/api/v1/agent/company/runs");
     const body = vi.mocked(djangoPost).mock.calls[0]![3] as Record<string, unknown>;
     expect(body).toEqual({ query: "UK companies dissolved in 2024", cards: true });
+  });
+
+  it("carries a chart for each card with a card_id, in run order", async () => {
+    vi.mocked(djangoPost).mockResolvedValue({ run_id: RUN, thread_id: "t1" });
+    completedStream({
+      answer: "a",
+      cards: [{ card_id: "c1", title: "One" }, { title: "No id" }, { card_id: "c2", title: "Two" }],
+      citations: [],
+    });
+
+    const out = await tool.handler({ query: "q" }, ctx);
+
+    expect(out.charts?.map((c) => c.pub_id)).toEqual(["c1", "c2"]);
+    expect(out.charts?.[0]?.embed_url).toBe("https://trytako.com/embed/c1/?dark_mode=auto&showShare=true");
   });
 
   it("sends effort and source_indexes only when the caller set them", () => {
