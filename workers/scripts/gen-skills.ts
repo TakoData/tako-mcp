@@ -57,7 +57,9 @@ function parseFrontmatter(dirName: string, text: string): SkillFrontmatter {
 }
 
 function assertSingleFileSkill(skillsDir: string, dirName: string): void {
-  const supportingFiles = readdirSync(join(skillsDir, dirName)).filter((entry) => entry !== SKILL_FILE);
+  const supportingFiles = readdirSync(join(skillsDir, dirName)).filter(
+    (entry) => entry !== SKILL_FILE && !entry.startsWith("."),
+  );
   if (supportingFiles.length > 0) {
     throw new Error(
       `skills/${dirName}: holds ${supportingFiles.join(", ")} besides ${SKILL_FILE}; /mcp serves only ${SKILL_FILE}, so a skill's resources list would be incomplete`,

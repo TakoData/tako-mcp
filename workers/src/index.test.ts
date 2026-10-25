@@ -4,6 +4,7 @@ import type { Env } from "./env.js";
 import worker from "./index.js";
 import { SERVER_VERSION } from "./mcp.js";
 import { CHATGPT_CLOSED_WORLD_TOOLS } from "./tools/_surface.js";
+import { PLUGIN_TOOL_NAMES } from "../scripts/plugin-tool-url.js";
 
 // Valid RFC 6750 b64token — any non-empty ASCII token works for these tests
 // because `extractBearer` only validates shape, not value. Django's the one
@@ -36,8 +37,7 @@ const INITIALIZE_PARAMS = {
   clientInfo: { name: "test-client", version: "0.0.0" },
 };
 const SKILLS_EXTENSION = "io.modelcontextprotocol/skills";
-const CLAUDE_PLUGIN_MCP_URL =
-  "https://example.com/mcp?tools=search,available_data,contents,graph_related,agent,company_agent";
+const CLAUDE_PLUGIN_MCP_URL = `https://example.com/mcp?tools=${PLUGIN_TOOL_NAMES.join(",")}`;
 
 interface SkillEntry {
   uri: string;
@@ -1205,12 +1205,12 @@ describe("worker routing", () => {
     expect(body.error?.code).toBe(-32601);
   });
 
-  it("POST /mcp?tools=search resources/list answers -32601 for claude UAs too — the UA changes nothing", async () => {
+  it("POST /mcp resources/list lists only the served skill for claude UAs too — the UA changes nothing", async () => {
     // The UA classifier is gone (spec D2): a claude UA on /mcp gets the
     // same generic surface as everyone else, so no widget resource is
-    // registered and no resources capability is declared. claude.ai's widget
+    // registered and the served skill is the only resource. claude.ai's widget
     // path is a fast-follow gated on anthropics/claude-ai-mcp#753 and #40.
-    const res = await SELF.fetch("https://example.com/mcp?tools=search", {
+    const res = await SELF.fetch("https://example.com/mcp", {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -1226,12 +1226,10 @@ describe("worker routing", () => {
       }),
     });
     expect(res.status).toBe(200);
-    const body = (await res.json()) as {
-      result?: { resources: unknown[] };
-      error?: { code: number };
-    };
-    expect(body.result).toBeUndefined();
-    expect(body.error?.code).toBe(-32601);
+    const body = (await res.json()) as { result?: { resources: Array<{ uri: string }> } };
+    const withoutUa = (await postRpc("https://example.com/mcp", "resources/list")).result?.resources;
+    expect(body.result?.resources.map((resource) => resource.uri)).toEqual(["skill://tako-search/SKILL.md"]);
+    expect(body.result?.resources).toEqual(withoutUa);
   });
 
   it("POST /mcp initialize declares the skills extension", async () => {

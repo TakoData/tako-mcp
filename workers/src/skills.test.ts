@@ -9,15 +9,9 @@ import { z } from "zod";
 import { SKILLS, type GeneratedSkill } from "./generated/skills.js";
 import { registerSkills, skillsForTools } from "./skills.js";
 import { GENERIC_DEFAULT_TOOL_NAMES } from "./tools/_surface.js";
+import { PLUGIN_TOOL_NAMES } from "../scripts/plugin-tool-url.js";
 
-const CLAUDE_PLUGIN_TOOLS = new Set([
-  "tako_search",
-  "tako_available_data",
-  "tako_contents",
-  "tako_graph_related",
-  "tako_agent",
-  "tako_company_agent",
-]);
+const CLAUDE_PLUGIN_TOOLS = new Set(PLUGIN_TOOL_NAMES);
 const AnyResult = z.object({}).passthrough();
 const SEARCH_URI = "skill://tako-search/SKILL.md";
 

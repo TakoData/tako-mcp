@@ -16,12 +16,13 @@ the descriptions before you ship it.
 | Results | The tool's output and `guidance` | After a call | Report what this call found and what it cost |
 | Hand-written copies | `docs/gemini/GEMINI.md`, `commands/*.toml`, `llms-full.txt`, `agent.json`, `README.md`, and the test cases in `chatgpt-app-submission.json` | The Gemini context file in every Gemini session; the rest when an agent or a reviewer opens them | Restate the skill and the descriptions. No check compares their advice with the descriptions, so update them in the same change |
 
-The skills reach only hosts that install the plugin: the Claude plugin, the
-Gemini extension, and the ChatGPT plugin package. The ChatGPT package ships
-only `tako-search`, because no eval has measured `tako-agent` there yet
-(`chatgpt-plugin/build.sh`). A host connected to bare
-`/mcp` sees only the instructions, the descriptions, and the results, so each
-tool description must still stand on its own.
+The Claude plugin, the Gemini extension, and the ChatGPT plugin package install
+every skill in `skills/` (`chatgpt-plugin/build.sh` builds the ChatGPT zip).
+`/mcp` also serves the skills through the MCP Skills extension, but a
+connection gets a skill only when it registers every tool the skill names, and
+only a host that supports the extension loads it. A host without the extension
+sees only the instructions, the descriptions, and the results, so each tool
+description must still stand on its own.
 
 ## The skill decides whether the model calls Tako
 

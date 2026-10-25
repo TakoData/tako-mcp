@@ -99,6 +99,12 @@ describe("readSkills", () => {
     expect(() => readSkills(dir, TOOL_NAMES)).toThrow(/extra[\s\S]*references/);
   });
 
+  it("ignores dotfiles in a skill directory", () => {
+    const dir = tempSkillsDir({ extra: skillMarkdown("extra", "Call `tako_search`.") });
+    fs.writeFileSync(path.join(dir, "extra", ".DS_Store"), "");
+    expect(readSkills(dir, TOOL_NAMES).map((skill) => skill.name)).toEqual(["extra"]);
+  });
+
   it("the committed generated module is current", () => {
     expect(renderSkillsModule(skills)).toBe(fs.readFileSync(GENERATED_PATH, "utf8"));
   });
