@@ -39,10 +39,11 @@ covers.
   fixed the sports prompts it was written for, and a word list tuned to one set
   of prompts fails on the next. Treat the remaining misses as the measured cost
   of a general trigger.
-- **Name each task, not its variants.** A question that asks for a
+- **Name a missed task in one sentence.** A question that asks for a
   calculation reads as analysis, not a lookup, so "look something up" didn't
-  load the skill for it. One sentence that names the task, "a calculation over
-  real-world data", loaded it without naming growth rates or correlations.
+  load the skill for it. Adding "a calculation over real-world data" raised
+  loading from 0 to 19 of 30 Claude Code sessions. The sentence names no
+  calculation, so it doesn't break the word-list rule above.
 - **Put the workflow in the body.** The body loads only after the model opens
   the skill, so it doesn't change triggering. Use it for query shapes, the
   card checks, and the report template.
@@ -102,8 +103,12 @@ same domains raised it to 24 of 26.
 
 Runs on 2026-10-25 (TAKO-5270) tested the `tako-search` description with and
 without "Also use it when the answer needs a calculation over real-world
-data." Ten questions asked for a calculation over a Tako series, such as a
-CAGR or a correlation, without naming a card.
+data." Ten hand-written questions asked for a calculation over a Tako
+series, such as a CAGR or a correlation, without naming a card. Each has an
+expected value computed from the card's rows. Claude Code 2.1.310 ran each
+question three times against staging. `gpt-6-luna` on Codex 0.164.0 ran each
+question three times, and the TAKO-5267 lookups and no-lookup tasks twice,
+against a stub that served the seven-tool plugin listing.
 
 | Host | Measure | Without the sentence | With it |
 |---|---|---|---|
@@ -111,13 +116,15 @@ CAGR or a correlation, without naming a card.
 | Claude Code | Sessions that computed in code | 18 of 30 | 22 of 30 |
 | Claude Code | Correct answers | 30 of 30 | 30 of 30 |
 | Codex (`gpt-6-luna`, stub server) | Computation questions that start with `tako_search` | 15 of 30 | 18 of 30 |
+| Codex | Computation questions that start an agent | 0 of 30 | 1 of 30 |
 | Codex | Lookups that start with `tako_search` | 59 of 136 | 74 of 136 |
+| Codex | Lookups that start an agent | 2 of 136 | 3 of 136 |
 | Codex | No-lookup tasks that call Tako | 1 of 30 | 0 of 30 |
 
 The Claude Code prompts named Tako, so every session called it; the sentence
-decides whether the agent opens the skill and follows its workflow. Codex
-moved within noise on the computation questions and lost nothing on lookups
-or controls.
+decides whether the agent opens the skill and follows its workflow. On Codex,
+the computation questions moved within noise, and lookups that start an agent
+stayed inside the 1-in-20 gate.
 
 ## Tool descriptions say how to call the tool
 
