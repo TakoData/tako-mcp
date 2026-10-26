@@ -57,7 +57,9 @@ opt-in `tako_search_advanced` returns a prose answer instead — name `search_ad
 - **Contact details cost extra.** A people list withholds emails and phones, and the
   `tako_contents` result's `note` names them. When the user asks for contact details, call
   `tako_contents` with `premium: true`, and `offset` and `max_rows` set to only the rows
-  they want, because each of those rows is billed.
+  they want, because Tako bills each of those rows. Check the name on each row you get,
+  because the row order can change between calls. The card's page then shows those details
+  to anyone who opens it, so don't link it unless the user wants to share them.
 - **Search first.** Use `tako_available_data` for questions about what Tako covers. It
   reports on the graph only, so a miss there means fall back to the web half, not give up.
 - **When no card answers the question**, answer from the web results. To read a page in

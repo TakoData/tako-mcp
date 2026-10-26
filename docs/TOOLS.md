@@ -1228,8 +1228,8 @@ Parameters:
 | `query` | string | no |  | Web pages only: a question the passages should answer. The result holds those passages instead of the page. Omit it to get the whole page. |
 | `delivery` | string ("inline" \\| "link") | no |  | Tako cards only. `inline` returns the data in the result. `link` returns a download link: a CSV file, or a JSON file with `format: "card"`. It expires in 5 minutes. Use `link` when you can run shell commands and want to analyze the data in code. If the download fails, call again inline with `max_rows` at 2,000 or less. |
 | `format` | string ("rows" \\| "card") | no |  | Tako cards only. `rows` returns the card's data as one table. `card` returns the card's own structure, such as a company card's tabs or a game's box score. A card type without its own structure returns `rows`. Web pages ignore it. |
-| `offset` | integer | no |  | Tako cards only: rows to skip. With `max_rows`, it fetches one slice, such as one person's row. |
-| `premium` | boolean | no |  | Tako cards only: `true` returns withheld cells, such as a person's email and phone. Each row with one is billed, so set it only when the user asks. |
+| `offset` | integer | no |  | Tako list cards only: rows to skip. With `max_rows: 1`, it fetches one person's row. |
+| `premium` | boolean | no |  | Tako cards only: `true` returns withheld cells, such as a person's email and phone. Tako bills each row with one, so set it only when the user asks. |
 
 Fixed request inputs (the caller cannot change these):
 
@@ -1294,13 +1294,13 @@ Annotations:
       ]
     },
     "offset": {
-      "description": "Tako cards only: rows to skip. With `max_rows`, it fetches one slice, such as one person's row.",
+      "description": "Tako list cards only: rows to skip. With `max_rows: 1`, it fetches one person's row.",
       "type": "integer",
       "minimum": 0,
       "maximum": 100000
     },
     "premium": {
-      "description": "Tako cards only: `true` returns withheld cells, such as a person's email and phone. Each row with one is billed, so set it only when the user asks.",
+      "description": "Tako cards only: `true` returns withheld cells, such as a person's email and phone. Tako bills each row with one, so set it only when the user asks.",
       "type": "boolean"
     }
   },

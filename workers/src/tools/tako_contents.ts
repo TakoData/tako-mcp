@@ -57,6 +57,7 @@ import { looseArray } from "./_loose_array.js";
 import { logWireGuardFailure } from "./_log.js";
 import { renderContentsText } from "./_render_markdown.js";
 import { PASSAGE_BREAK_DESCRIBE } from "./_shared_prose.js";
+import { contentsAcceptsPremium } from "./_surface.js";
 import type { ToolContext, ToolModule } from "./types.js";
 
 /** Max urls per call. The backend takes one url per request, so a batch fans
@@ -283,13 +284,13 @@ const inputSchema = chatgptInputSchema
       .lte(MAX_LINK_ROWS)
       .optional()
       .describe(
-        "Tako cards only: rows to skip. With `max_rows`, it fetches one slice, such as one person's row.",
+        "Tako list cards only: rows to skip. With `max_rows: 1`, it fetches one person's row.",
       ),
     premium: z
       .boolean()
       .optional()
       .describe(
-        "Tako cards only: `true` returns withheld cells, such as a person's email and phone. Each row with one is billed, so set it only when the user asks.",
+        "Tako cards only: `true` returns withheld cells, such as a person's email and phone. Tako bills each row with one, so set it only when the user asks.",
       ),
   })
   .superRefine((input, refinement) => {
@@ -298,6 +299,13 @@ const inputSchema = chatgptInputSchema
         code: "custom",
         path: ["max_rows"],
         message: 'max_rows above 2,000 needs `delivery: "link"`. An inline result stops at 2,000 rows.',
+      });
+    }
+    if (input.premium === true && input.max_rows === undefined) {
+      refinement.addIssue({
+        code: "custom",
+        path: ["max_rows"],
+        message: "premium needs `max_rows`. Set it to the rows the user wants, because Tako bills each row that holds a withheld cell.",
       });
     }
     if (input.format === "card" && input.premium === true) {
@@ -455,29 +463,29 @@ async function fetchCard(
   body: z.input<typeof ContentsRequest> & { max_chars: number },
   ctx: ToolContext,
 ): Promise<ProjectedContentsItem> {
-  const premiumInput = offersPremium(ctx);
+  const canRequestPremium = contentsAcceptsPremium(ctx.surface);
   try {
-    return projectContentsItem(await postContents(body, ctx), url, { premiumInput });
+    return projectContentsItem(await postContents(body, ctx), url, { canRequestPremium });
   } catch (err) {
     if (!isUnsupportedContentFormat(err)) throw err;
     console.warn("[tako] tako_contents card fallback tool=tako_contents status=422");
   }
   const rowsBody = { ...body, ...wireFormatFor(url, { ...input, format: "rows" }) };
-  return projectContentsItem(await postContents(rowsBody, ctx), url, { cardNote: CARD_FALLBACK_NOTE, premiumInput });
+  return projectContentsItem(await postContents(rowsBody, ctx), url, { cardNote: CARD_FALLBACK_NOTE, canRequestPremium });
 }
 
-function offersPremium(ctx: ToolContext): boolean {
-  return ctx.surface !== "chatgpt";
+function parseBackendError(body: string): z.infer<typeof BaseAPIError> | undefined {
+  try {
+    const parsed = BaseAPIError.safeParse(JSON.parse(body));
+    return parsed.success ? parsed.data : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function isUnsupportedContentFormat(err: unknown): boolean {
   if (!(err instanceof DjangoHttpError) || err.status !== 422) return false;
-  try {
-    const parsed = BaseAPIError.safeParse(JSON.parse(err.body));
-    return parsed.success && parsed.data.error_type === "UNSUPPORTED_CONTENT_FORMAT";
-  } catch {
-    return false;
-  }
+  return parseBackendError(err.body)?.error_type === "UNSUPPORTED_CONTENT_FORMAT";
 }
 
 async function fetchPage(
@@ -490,7 +498,7 @@ async function fetchPage(
 ): Promise<ProjectedContentsItem> {
   const projected = projectContentsItem(await postContents(body, ctx), url, {
     effectiveMaxChars: body.max_chars,
-    premiumInput: offersPremium(ctx),
+    canRequestPremium: contentsAcceptsPremium(ctx.surface),
     ...(note !== undefined ? { note } : {}),
   });
   // Observability for tuning BATCH_CHAR_BUDGET (a guessed starting number —
@@ -543,10 +551,10 @@ async function postContents(
     // other tool emits while the model still reads the guidance in the text
     // channel.
     if (err instanceof DjangoHttpError && err.status === 403) {
-      const detail = extractErrorDetail(err.body);
+      const detail = parseBackendError(err.body)?.error_message ?? extractErrorDetail(err.body);
       err.modelGuidance =
         body.premium === true
-          ? `Tako refused this request with \`premium\`${detail !== undefined ? ` (${detail})` : ""}. Fetch the card again without \`premium\`, and tell the user that contact details aren't available on this connection.`
+          ? `Tako refused this request with \`premium\`${detail !== undefined ? ` (${detail})` : ""}. Fetch the card again without \`premium\`, and if that call succeeds, tell the user that contact details aren't available on this connection.`
           : `Tako's export gate refused this card${detail !== undefined ? ` (${detail})` : ""}, so its rows can't be returned on any path — an \`exportable: true\` card can still land here. Read the headline value from the card's \`description\` instead of retrying.`;
       throw err;
     }

@@ -135,21 +135,38 @@ export interface ContentsWireItem {
   expires_at?: string | null | undefined;
   card_data?: Record<string, unknown> | null | undefined;
   redacted_cells?: Record<string, number[]> | null | undefined;
+  premium?: boolean | null | undefined;
+  premium_rows?: Record<string, number> | null | undefined;
+  offset?: number | null | undefined;
 }
 
 export const CARD_FALLBACK_NOTE = "This card type has no structure of its own, so this is its data as rows.";
 
 export function withheldNote(
   redactedCells: Record<string, number[]> | null | undefined,
-  premiumInput: boolean,
+  canRequestPremium: boolean,
 ): string | undefined {
   if (redactedCells == null) return undefined;
   const columns = Object.keys(redactedCells).filter((column) => (redactedCells[column] ?? []).length > 0);
   if (columns.length === 0) return undefined;
   const rowCount = new Set(columns.flatMap((column) => redactedCells[column] ?? [])).size;
   const withheld = `Tako withheld ${columns.map((column) => `\`${column}\``).join(", ")} in ${rowCount} ${rowCount === 1 ? "row" : "rows"}.`;
-  if (!premiumInput) return withheld;
+  if (!canRequestPremium) return withheld;
   return `${withheld} To get them, call again with \`premium: true\`, which bills each of those rows.`;
+}
+
+export const PREMIUM_REVEAL_NOTE =
+  "Tako now shows the revealed cells on this card's page to anyone who opens it, so don't link the card unless the user wants to share them.";
+
+export const OFFSET_ORDER_NOTE = "The row order can change between calls, so check the name on each row you get.";
+
+function offsetNote(item: ContentsWireItem): string | undefined {
+  return typeof item.offset === "number" && item.offset > 0 ? OFFSET_ORDER_NOTE : undefined;
+}
+
+function revealNote(item: ContentsWireItem): string | undefined {
+  const revealed = item.premium === true && Object.values(item.premium_rows ?? {}).some((count) => count > 0);
+  return revealed ? PREMIUM_REVEAL_NOTE : undefined;
 }
 
 /** What an item says when the backend delivered no payload: no rows, text,
@@ -177,7 +194,7 @@ export function projectContentsItem(
     note?: string | undefined;
     cardNote?: string | undefined;
     effectiveMaxChars?: number | undefined;
-    premiumInput?: boolean | undefined;
+    canRequestPremium?: boolean | undefined;
   },
 ): ProjectedContentsItem {
   const isCard = item.content_format != null;
@@ -207,7 +224,7 @@ export function projectContentsItem(
       };
     }
     if (item.card_data != null) card = item.card_data;
-    const notes = [opts.cardNote, withheldNote(item.redacted_cells, opts.premiumInput === true)];
+    const notes = [opts.cardNote, withheldNote(item.redacted_cells, opts.canRequestPremium === true), offsetNote(item), revealNote(item)];
     const present = notes.filter((part): part is string => part !== undefined);
     note = present.length > 0 ? present.join(" ") : undefined;
   } else if (typeof item.data === "string") {

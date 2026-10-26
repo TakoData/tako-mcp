@@ -127,6 +127,28 @@ describe("runSearch on the answer endpoint", () => {
   });
 });
 
+describe("runSearch withheld-cells guidance", () => {
+  const peopleCard = {
+    card_id: "people",
+    title: "Jane Doe",
+    content: { cost: 0.001, total_rows: 2, truncated: false, premium: false, premium_rows: { person_contact: 2 } },
+  };
+  const search = (registeredTools: ReadonlySet<string>) => {
+    mockFetchSequence([jsonResponse(200, { cards: [peopleCard], web_results: [], request_id: "r" })]);
+    return runSearch({ endpoint: "search", body: { query: "Jane Doe" } }, null, { ...CTX, registeredTools }, "tako_search");
+  };
+
+  it("points to tako_contents premium when the connection registers tako_contents", async () => {
+    const out = await search(new Set(["tako_search", "tako_contents"]));
+    expect(out.guidance).toMatch(/`tako_contents` with `premium: true`/);
+  });
+
+  it("names no tako_contents on a connection that registers tako_search alone", async () => {
+    const out = await search(new Set(["tako_search"]));
+    expect(out.guidance).toBeUndefined();
+  });
+});
+
 describe("runSearch on the search endpoint", () => {
   it("POSTs /api/v3/search/ and emits no answer field", async () => {
     const fetchMock = mockFetchSequence([

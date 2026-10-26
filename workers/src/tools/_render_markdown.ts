@@ -181,8 +181,10 @@ export const searchSlimOutputShape = z.looseObject(searchCoreFields);
 const { guidance: _keylessGuidance, ...searchOAuthFields } = searchCoreFields;
 
 /** chatgpt-surface variant: adds the widget fields `window.openai.toolOutput`
- *  reads (the widget ignores `cards`/`web_results`), and drops `guidance`,
- *  whose one source is a keyless caller and `/mcp/chatgpt` requires OAuth. */
+ *  reads (the widget ignores `cards`/`web_results`), and drops `guidance`.
+ *  Its sources are a keyless caller, which `/mcp/chatgpt` refuses because it
+ *  requires OAuth, and `withheldCellsGuidance`, which names a `premium` input
+ *  that this surface's `tako_contents` doesn't take. */
 export const searchChatgptOutputShape = z.looseObject({
   ...searchOAuthFields,
   ...autoChainShape,

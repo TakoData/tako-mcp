@@ -394,14 +394,15 @@ function capCsv(csv: string, cap: number): { data: string; truncated: boolean } 
  * summary, which search already returns without rows, and the second echoes
  * the request's offset.
  *
- * Known caveat, live only once a card actually carries a premium column (today
- * none does, and `premium` is false on every search and answer card): both
+ * Known caveat, live now that people cards carry premium columns: both
  * `premium_rows` and `redacted_cells` are stated against the rows the BACKEND
  * delivered, and the numeric-cap branch below re-slices those rows. The count
- * then overstates and the positions index the pre-cap rows. Re-mapping needs a
- * dropped-row offset out of all three cap helpers (`capCsv`, and `capRecentRows`
- * for records and dataset), which none of them reports today. Do that when a
- * premium column ships, not before.
+ * then overstates and the positions index the pre-cap rows. Neither reaches
+ * the model as data today: a projected card carries only `rows`, and
+ * `withheldCellsGuidance` reads `premium_rows` only for a count above zero.
+ * Re-mapping needs a dropped-row offset out of all three cap helpers
+ * (`capCsv`, and `capRecentRows` for records and dataset), which none of them
+ * reports today. Do that before a projected card exposes either field.
  */
 export const CONTENT_PAYLOAD_KEYS = ["data", "records", "dataset", "card_data"] as const;
 export const CONTENT_META_KEYS = [
@@ -1392,7 +1393,7 @@ export function buildSearchOutput(
     keepWebText: boolean;
     /** The tool this output belongs to, named in the projection log. */
     toolName: SearchToolName;
-    premiumInput: boolean;
+    canRequestPremium: boolean;
   },
   extras: SearchOutputExtras = {},
 ): SearchOutput {
@@ -1402,7 +1403,7 @@ export function buildSearchOutput(
   );
   const web = webResults.map((w) => projectWebResult(w, opts.keepWebText));
   const withheld = withheldDataGuidance(rawCards);
-  const withheldCells = tier !== "free" && opts.premiumInput ? withheldCellsGuidance(rawCards) : undefined;
+  const withheldCells = tier !== "free" && opts.canRequestPremium ? withheldCellsGuidance(rawCards) : undefined;
   const base: SearchOutput = {
     cards,
     web_results: web,

@@ -12,7 +12,7 @@ vi.mock("../django.js", async (importOriginal) => ({
 
 import { DjangoBadRequestError, DjangoError, DjangoHttpError, DjangoNotFoundError, DjangoTimeoutError, DjangoUnauthorizedError, djangoPost } from "../django.js";
 import { djangoErrorToToolResult } from "../mcp.js";
-import { CARD_FALLBACK_NOTE, chatgptContentsOutputShape, EMPTY_PAYLOAD_ERROR } from "./_contents.js";
+import { CARD_FALLBACK_NOTE, chatgptContentsOutputShape, EMPTY_PAYLOAD_ERROR, OFFSET_ORDER_NOTE, PREMIUM_REVEAL_NOTE } from "./_contents.js";
 import tool, {
   BATCH_CHAR_BUDGET,
   chatgptInputSchema,
@@ -997,7 +997,7 @@ describe("tako_contents premium and offset", () => {
   });
 
   it("refuses premium and a nonzero offset with format card", () => {
-    const premium = tool.inputSchema.safeParse({ urls: [cardUrl], format: "card", premium: true });
+    const premium = tool.inputSchema.safeParse({ urls: [cardUrl], format: "card", premium: true, max_rows: 1 });
     expect(premium.success).toBe(false);
     expect(premium.error!.issues[0]!.path).toEqual(["premium"]);
     const offset = tool.inputSchema.safeParse({ urls: [cardUrl], format: "card", offset: 5 });
@@ -1005,12 +1005,33 @@ describe("tako_contents premium and offset", () => {
     expect(offset.error!.issues[0]!.path).toEqual(["offset"]);
   });
 
-  it("chatgpt surface strips premium and offset", async () => {
-    const parsed = tool.inputSchemaBySurface!.chatgpt!.parse({ urls: [cardUrl], premium: true, offset: 3 });
-    vi.mocked(djangoPost).mockResolvedValue(peopleCard(null));
-    await tool.handler(parsed, { ...ctx, surface: "chatgpt" as const });
-    expect(sentBody(0)).not.toHaveProperty("premium");
-    expect(sentBody(0)).not.toHaveProperty("offset");
+  it("refuses premium without max_rows, so a billed fetch never defaults to 2,000 rows", () => {
+    const parsed = tool.inputSchema.safeParse({ urls: [cardUrl], premium: true });
+    expect(parsed.success).toBe(false);
+    expect(parsed.error!.issues[0]!.path).toEqual(["max_rows"]);
+    expect(tool.inputSchema.safeParse({ urls: [cardUrl], premium: true, max_rows: 1 }).success).toBe(true);
+  });
+
+  it("warns that a premium fetch shows the revealed cells to anyone who opens the card", async () => {
+    vi.mocked(djangoPost).mockResolvedValue(
+      card({ ...peopleCard(null).contents[0], premium: true, premium_rows: { person_contact: 1 } }),
+    );
+    const out = await tool.handler(tool.inputSchema.parse({ urls: [cardUrl], premium: true, max_rows: 1 }), ctx);
+    expect(out.results[0]!.note).toBe(PREMIUM_REVEAL_NOTE);
+  });
+
+  it("tells the model to check the row's name when it skipped rows", async () => {
+    vi.mocked(djangoPost).mockResolvedValue(card({ ...peopleCard(null).contents[0], offset: 3 }));
+    const out = await tool.handler(tool.inputSchema.parse({ urls: [cardUrl], offset: 3, max_rows: 1 }), ctx);
+    expect(out.results[0]!.note).toBe(OFFSET_ORDER_NOTE);
+  });
+
+  it("adds no reveal warning when the premium fetch revealed no record", async () => {
+    vi.mocked(djangoPost).mockResolvedValue(
+      card({ ...peopleCard(null).contents[0], premium: true, premium_rows: { person_contact: 0 } }),
+    );
+    const out = await tool.handler(tool.inputSchema.parse({ urls: [cardUrl], premium: true, max_rows: 1 }), ctx);
+    expect(out.results[0]).not.toHaveProperty("note");
   });
 
   it("names the withheld cells and the rows that hold them, and points to premium", async () => {
@@ -1032,7 +1053,7 @@ describe("tako_contents premium and offset", () => {
 
   it("adds no note when nothing was withheld", async () => {
     vi.mocked(djangoPost).mockResolvedValue(peopleCard(null));
-    const out = await tool.handler(tool.inputSchema.parse({ urls: [cardUrl], premium: true }), ctx);
+    const out = await tool.handler(tool.inputSchema.parse({ urls: [cardUrl], premium: true, max_rows: 1 }), ctx);
     expect(out.results[0]).not.toHaveProperty("note");
   });
 
@@ -1042,15 +1063,18 @@ describe("tako_contents premium and offset", () => {
         path: "/api/v1/contents/",
         method: "POST",
         status: 403,
-        body: '{"detail":"This account may not request premium contents."}',
+        body: JSON.stringify({
+          error_message: "This account may not request premium contents.",
+          error_type: "FORBIDDEN",
+        }),
       }),
     );
     const err = await tool
-      .handler(tool.inputSchema.parse({ urls: [cardUrl], premium: true }), ctx)
+      .handler(tool.inputSchema.parse({ urls: [cardUrl], premium: true, max_rows: 1 }), ctx)
       .catch((e: unknown) => e);
     const guidance = (err as DjangoHttpError).modelGuidance ?? "";
     expect(guidance).toContain("This account may not request premium contents.");
-    expect(guidance).toMatch(/without `premium`/);
+    expect(guidance).toMatch(/without `premium`, and if that call succeeds/);
     expect(guidance).not.toMatch(/export gate/);
     expect(guidance.split(/(?<=\.)\s+/).filter((s) => s.length > 0)).toHaveLength(2);
   });
