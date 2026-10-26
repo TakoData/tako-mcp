@@ -391,26 +391,27 @@ If the user asks for Tako's agent and the `tako-agent` skill is installed, follo
 
 ## Find people and companies
 
-`tako_search` returns a list card for a person's name, for a set of people, and for a set of companies. Each row is one person or company.
+`tako_search` finds people and company records and returns them as a list card. Each row is one person or company, with their title, employer, location, LinkedIn, and a `tako_url` to their own page. Use it when the user wants people or companies themselves: a list of prospects, or the record of someone they name.
 
-**A person by name.** The full name alone returns a list of the people with that name, such as "Patrick Collison". Use it to find someone the web knows little about, or to tell namesakes apart.
-
-- Search reads every word as part of the name, so a question or an added title or employer drops the list: "Jensen Huang Nvidia" returns no list. Those queries still return web results and other cards, which can answer a question about a well-known person.
-- Search doesn't match nicknames: "Tim Cook" and "Timothy Cook" return different people. If no row fits, try the other form of the name.
-
-**People by role.** Name who and where.
+**People by attributes.** Name who and where.
 
 - Who: a role or title ("engineers", "CFO", "VPs of sales", "head of marketing", "founders", "interns"), or a word for a company's people ("employees", "staff", "leadership team"). "Executives", "leadership", and "management" return C-suite and VP-level people.
 - Where: an employer, a place, or both: "engineers at Stripe", "CFOs in Austin", "engineers at Google in London". A place needs a role, so "people in Austin" returns no list. A role alone ("CFOs") and an employer alone ("Stripe") also return no list.
-- To find who holds a role at one company, search the role and the company: "Airbnb CFO". A question works here: "who is the CFO of Airbnb".
+- To find who holds a role at one company, search the role and the company: "Airbnb CFO" or "who is the CFO of Airbnb".
 - Give a city its state or country: "engineers in Portland, OR". A bare city name matches every place with that name.
+
+**People by name.** Search the full name alone, such as "Jane Doe". The list holds everyone with that name.
+
+- Leave out everything else the user told you, such as the employer or title. Search reads every word as part of the name, so "Jane Doe Stripe" returns no list. Use those details to pick the person from the rows.
+- Search doesn't match nicknames: "Tim Cook" and "Timothy Cook" return different people. If no row fits, try the other form of the name.
+- A common name can match hundreds of people, and the rows can't be filtered by employer. If the person isn't in the first rows, fetch more and match on employer, title, and location.
 
 **Companies by industry or type**, plus a place, a size, a funding stage, public or private, or a founding year: "fintechs in London", "SaaS companies with 50–500 employees", "Series B startups in Berlin", "AI startups founded since 2020".
 
 Then read the list:
 
 1. The card's `description` doesn't name the matches. To see them, pass the card's url to `tako_contents` with `max_rows` set to the rows the answer needs, such as 25. Fetch the full list, up to 1,000 rows, only when the user asks for it.
-2. Check each row before you use it. A name list holds everyone with that name, and a company name can match more than one company. Pick a person by title, employer, and location. If more than one row fits, ask the user which one they mean.
+2. Check each row before you use it. A name list holds everyone with that name, and a company name can match more than one company. If more than one row fits the person the user means, ask which one.
 3. Each row's `tako_url` opens that one person or company in Tako. Link it.
 4. A contact field such as `work_email` or `phone` can be empty because it's locked, not because it doesn't exist. Don't tell the user that a person has no email or phone.
 5. A list can't filter on revenue, investors, registry status, or a company's officers and directors. If the question needs one of those, say so. If the `tako-agent` skill is installed, offer Tako's company agent.

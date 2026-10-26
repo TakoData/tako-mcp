@@ -47,13 +47,13 @@ opt-in `tako_search_advanced` returns a prose answer instead — name `search_ad
 - **One entity + one metric per call.** Decompose a broad question into narrow searches
   fired concurrently, such as "US CPI inflation", "US core CPI", "US PCE", then synthesize
   yourself. A single broad query retrieves worse than three narrow ones.
-- **A name alone returns a list of people.** "Jensen Huang" lists everyone with that name,
-  with each person's title, employer, and location. Added words, such as "who is" or an
-  employer, drop that list but still return web results.
-- **Name who and where for a list of people.** Who is a role or a word for a company's
+- **People by attributes: name who and where.** Who is a role or a word for a company's
   people ("CFOs", "VPs of sales", "founders", "employees", "leadership team"). Where is an
   employer, a place, or both: "Airbnb CFO", "engineers at Google in London". A role alone,
   an employer alone, and "people in Austin" return no list.
+- **People by name: search the name alone.** "Jane Doe" lists everyone with that name, with
+  each person's title, employer, and location. Any other word, such as the employer the user
+  mentioned, drops the list, so use those details to pick the person from the rows.
 - **Search first.** Use `tako_available_data` for questions about what Tako covers. It
   reports on the graph only, so a miss there means fall back to the web half, not give up.
 - **When no card answers the question**, answer from the web results. To read a page in
