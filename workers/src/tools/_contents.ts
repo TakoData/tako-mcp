@@ -62,12 +62,12 @@ const linkAndCardFields = {
 };
 
 const PAGE_PROSE = {
-  note: "Whether `text` holds the passages for `query` or the whole page.",
+  note: "Whether `text` holds the passages for `query` or the whole page, or which card cells Tako withheld.",
   text: "Web pages only: the page text, or its passages when `query` is set.",
   error: "Why this url alone failed; the others are unaffected.",
 };
 const LINK_AND_CARD_PROSE = {
-  note: "Whether `text` is passages or the whole page, or a card fell back to rows.",
+  note: "Passages or the whole page, a card that fell back to rows, or withheld cells.",
   text: "Web pages only: the page text or its passages.",
   error: "Why this url failed.",
 };
@@ -134,9 +134,40 @@ export interface ContentsWireItem {
   url?: string | null | undefined;
   expires_at?: string | null | undefined;
   card_data?: Record<string, unknown> | null | undefined;
+  redacted_cells?: Record<string, number[]> | null | undefined;
+  premium?: boolean | null | undefined;
+  premium_rows?: Record<string, number> | null | undefined;
+  offset?: number | null | undefined;
 }
 
 export const CARD_FALLBACK_NOTE = "This card type has no structure of its own, so this is its data as rows.";
+
+export function withheldNote(
+  redactedCells: Record<string, number[]> | null | undefined,
+  canRequestPremium: boolean,
+): string | undefined {
+  if (redactedCells == null) return undefined;
+  const columns = Object.keys(redactedCells).filter((column) => (redactedCells[column] ?? []).length > 0);
+  if (columns.length === 0) return undefined;
+  const rowCount = new Set(columns.flatMap((column) => redactedCells[column] ?? [])).size;
+  const withheld = `Tako withheld ${columns.map((column) => `\`${column}\``).join(", ")} in ${rowCount} ${rowCount === 1 ? "row" : "rows"}.`;
+  if (!canRequestPremium) return withheld;
+  return `${withheld} To get them, call again with \`premium: true\`, which bills each of those rows.`;
+}
+
+export const PREMIUM_REVEAL_NOTE =
+  "Tako now shows these cells on this card's page to anyone who opens it. Tell the user before they share the card.";
+
+export const OFFSET_ORDER_NOTE = "The row order can change between calls, so check the name on each row you get.";
+
+function offsetNote(item: ContentsWireItem): string | undefined {
+  return typeof item.offset === "number" && item.offset > 0 ? OFFSET_ORDER_NOTE : undefined;
+}
+
+function revealNote(item: ContentsWireItem): string | undefined {
+  const revealed = item.premium === true && Object.values(item.premium_rows ?? {}).some((count) => count > 0);
+  return revealed ? PREMIUM_REVEAL_NOTE : undefined;
+}
 
 /** What an item says when the backend delivered no payload: no rows, text,
  *  download or card. One message for every shape: the cause is the same — the
@@ -163,6 +194,7 @@ export function projectContentsItem(
     note?: string | undefined;
     cardNote?: string | undefined;
     effectiveMaxChars?: number | undefined;
+    canRequestPremium?: boolean | undefined;
   },
 ): ProjectedContentsItem {
   const isCard = item.content_format != null;
@@ -192,7 +224,9 @@ export function projectContentsItem(
       };
     }
     if (item.card_data != null) card = item.card_data;
-    note = opts.cardNote;
+    const notes = [opts.cardNote, withheldNote(item.redacted_cells, opts.canRequestPremium === true), offsetNote(item), revealNote(item)];
+    const present = notes.filter((part): part is string => part !== undefined);
+    note = present.length > 0 ? present.join(" ") : undefined;
   } else if (typeof item.data === "string") {
     text = item.data;
     // Derived truncation for capped web text: the backend's `truncated` flag is
