@@ -57,7 +57,7 @@ interface Mounted {
 
 const mounted: JSDOM[] = [];
 
-function mountWidget(html: string): Mounted {
+function mountWidget(html: string, openai?: object): Mounted {
   const virtualConsole = new VirtualConsole();
   const warnings: string[] = [];
   virtualConsole.on("warn", (...args: unknown[]) => {
@@ -98,6 +98,9 @@ function mountWidget(html: string): Mounted {
       toParent.push(msg);
     };
 
+  if (openai !== undefined) {
+    (widgetFrame.contentWindow as unknown as { openai: object }).openai = openai;
+  }
   const widgetDoc = widgetFrame.contentDocument!;
   widgetDoc.open();
   widgetDoc.write(html);
@@ -554,12 +557,54 @@ describe("static widget bundle (executed)", () => {
       ) as Array<{ params: { height: number } }>;
       expect(sizeChanges.at(-1)?.params.height).toBe(0);
       // Collapsed but NOT labelled. "Nothing arrived in 10 s" covers a failed
-      // call and a merely slow delivery alike, and this path discards whatever
-      // lands afterwards — so "No chart for this result" would be an
+      // call and a merely slow delivery alike — so "No chart for this result" would be an
       // affirmative claim that is wrong exactly when the chart was late. The
       // label is reserved for the case the widget actually knows about:
       // structured content arrived and carried no chart.
       expect(widgetEmpty(m).classList.contains("hidden")).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("renders a live-card result that lands after the no-data watchdog collapsed", async () => {
+    vi.useFakeTimers();
+    try {
+      const m = mountWidget(liveHtml());
+      const stubs = stubLive(m);
+      deliver(m, { jsonrpc: "2.0", id: "tako-ui-init", result: {} }, m.wrapperWin);
+      await vi.advanceTimersByTimeAsync(11_000);
+      expect(m.widgetWin.document.documentElement.style.height).toBe("0px");
+
+      const charts = liveCharts(2);
+      deliverLive(m, charts);
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(fetchedUrls(stubs)).toEqual(nativeUrls(charts));
+      expect(liveSlides(m)).toHaveLength(2);
+      expect(m.widgetWin.document.documentElement.style.height).not.toBe("0px");
+      expect(m.widgetWin.document.body.style.height).not.toBe("0px");
+      expect(widgetEmpty(m).classList.contains("hidden")).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("drops a chart that lands after the no-data watchdog collapsed, with window.openai", () => {
+    vi.useFakeTimers();
+    try {
+      const m = mountWidget(staticWidgetHtml(), {});
+      vi.advanceTimersByTime(11_000);
+      expect(m.widgetWin.document.documentElement.style.height).toBe("0px");
+
+      deliver(
+        m,
+        toolResult({ cards: [], embed_url: EMBED_URL, image_url: IMAGE_URL, height: 600 }),
+        m.wrapperWin,
+      );
+
+      expect(widgetFrame(m).getAttribute("src")).toBeNull();
+      expect(m.widgetWin.document.documentElement.style.height).toBe("0px");
     } finally {
       vi.useRealTimers();
     }
@@ -2263,14 +2308,41 @@ describe("live cards (no window.openai)", () => {
     expect(sizeChangesOf(m).at(-1)?.params.height).toBe(0);
   });
 
-  it("collapses a generic search result that carries no chart list", () => {
+  it("collapses a search result with cards but no chart list blank, so the host shows its own content", () => {
     const m = mountWidget(liveHtml());
     const stubs = stubLive(m);
     deliver(m, toolResult(SEARCH_CONTENT), m.wrapperWin);
 
     expect(stubs.fetches).toEqual([]);
-    expect(widgetEmpty(m).classList.contains("hidden")).toBe(false);
+    expect(widgetEmpty(m).classList.contains("hidden")).toBe(true);
     expect(sizeChangesOf(m).at(-1)?.params.height).toBe(0);
+  });
+
+  it("collapses an agent result with cards but no chart list blank", () => {
+    const m = mountWidget(liveHtml());
+    deliver(
+      m,
+      toolResult({
+        status: "completed",
+        run_id: "run_noui",
+        answer: "One card.",
+        cards: [{ title: "A" }],
+        citations: [],
+        usage: null,
+      }),
+      m.wrapperWin,
+    );
+
+    expect(widgetEmpty(m).classList.contains("hidden")).toBe(true);
+    expect(sizeChangesOf(m).at(-1)?.params.height).toBe(0);
+  });
+
+  it("still labels a zero-card search result that carries no chart list", () => {
+    const m = mountWidget(liveHtml());
+    deliver(m, toolResult({ cards: [], web_results: [], usage: null }), m.wrapperWin);
+
+    expect(widgetEmpty(m).classList.contains("hidden")).toBe(false);
+    expect(widgetEmpty(m).textContent).toMatch(/no chart/i);
   });
 
   /**

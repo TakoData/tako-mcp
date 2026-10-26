@@ -1619,7 +1619,6 @@ const WIDGET_HTML = `<!doctype html>
   // (\`requestHostClose\`). The label is what's left when the host ignores the
   // request or doesn't support it.
   function collapse(labelled) {
-    placeholder.classList.add("hidden");
     // \`labelled\` is only true where the emptiness is a FACT: structured content
     // arrived and carried no chart. The watchdog path passes false, because
     // "nothing arrived within 10 s" is not the same claim — a failed call and a
@@ -1653,11 +1652,21 @@ const WIDGET_HTML = `<!doctype html>
       }
       empty.classList.remove("hidden");
     }
+    shrinkToZero();
+    rendered = true;
+    if (labelled) requestHostClose();
+  }
+
+  function shrinkToZero() {
+    placeholder.classList.add("hidden");
     document.documentElement.style.height = "0px";
     document.body.style.height = "0px";
     notifyHeight(0);
-    rendered = true;
-    if (labelled) requestHostClose();
+  }
+
+  function regrowAfterShrink() {
+    document.documentElement.style.height = "";
+    document.body.style.height = "";
   }
 
   function requestHostClose() {
@@ -1732,6 +1741,7 @@ const WIDGET_HTML = `<!doctype html>
 
   function renderLiveCards(charts, fallbackHeight) {
     if (carouselSlides.length > 0) return true;
+    regrowAfterShrink();
     carousel.classList.remove("hidden");
     charts.forEach(function (chart, i) {
       carouselSlides.push(liveCardSlide(chart, i, charts.length, fallbackHeight));
@@ -2132,7 +2142,7 @@ const WIDGET_HTML = `<!doctype html>
       if (liveCards.length > 0) {
         return renderLiveCards(liveCards, requestedHeight(structuredContent));
       }
-      collapse(looksComplete(structuredContent));
+      collapse(looksComplete(structuredContent) && !chartSentAsContent(structuredContent, meta));
       log("no live card in the result, collapsed widget");
       return true;
     }
@@ -2525,10 +2535,18 @@ const WIDGET_HTML = `<!doctype html>
     return (
       isAgentResult(structuredContent) &&
       !hasChart(structuredContent) &&
-      Array.isArray(structuredContent.cards) &&
-      structuredContent.cards.length > 0 &&
+      hasCards(structuredContent) &&
       !(meta && typeof meta === "object" && Array.isArray(meta.charts))
     );
+  }
+
+  function hasCards(o) {
+    return Array.isArray(o.cards) && o.cards.length > 0;
+  }
+
+  function chartSentAsContent(structuredContent, meta) {
+    if (pickChartList(structuredContent, meta)) return false;
+    return hasChart(structuredContent) || hasCards(structuredContent);
   }
 
   function widgetStateMirror() {
@@ -2769,8 +2787,7 @@ const WIDGET_HTML = `<!doctype html>
   // Collapsing is the same thing the no-chart guard in \`render()\` already
   // does for a SUCCESSFUL zero-card result; a failed call deserves the same
   // treatment rather than a different one. \`rendered\` makes this a no-op once
-  // any chart has painted, and the 10 s bound matches the polling window so it
-  // cannot race a slow-but-arriving delivery.
+  // any chart has painted.
   //
   // Labelled or blank, decided HERE and only here for the ChatGPT
   // channels: when an error signal was sighted during the window
@@ -2789,6 +2806,11 @@ const WIDGET_HTML = `<!doctype html>
     if (agentChartsPending) {
       collapseAndClose();
       log("agent charts never arrived, closed widget");
+      return;
+    }
+    if (!hasOpenAiRuntime()) {
+      shrinkToZero();
+      log("no data arrived, collapsed widget until a tool-result lands");
       return;
     }
     collapse(false);
