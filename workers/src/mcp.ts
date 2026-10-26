@@ -1675,10 +1675,10 @@ export async function handleMcpRequest(
     const surfaceRendersProgress = surface !== "chatgpt";
     const streamsProgress =
       surfaceRendersProgress && streamingTool !== undefined && registeredTools.has(streamingTool);
-    // Omitting `sessionIdGenerator` puts the transport in stateless mode — no
-    // `Mcp-Session-Id` header is issued or validated. This matches the Worker
-    // model (no persistent per-session state) and keeps each request
-    // self-contained.
+    // Omitting `sessionIdGenerator` puts the transport in stateless mode: the
+    // SDK neither issues nor validates `Mcp-Session-Id`. The Worker sets the
+    // header itself on `/mcp` initialize responses, and the ID carries only
+    // whether the client declared MCP Apps support. No per-session state.
     const transport = new WebStandardStreamableHTTPServerTransport({
       enableJsonResponse: !streamsProgress,
     });
