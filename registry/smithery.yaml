@@ -1,10 +1,11 @@
 name: tako-mcp
 title: Tako MCP Server
 description: |
-  Tako MCP gives your agent industry-leading live web search plus licensed
-  data that the open web does not have. That includes company financials,
-  macroeconomic indicators, website traffic, sports, US government
-  spending, and more.
+  Tako MCP gives your agent premium data from authoritative providers and
+  live web search in one call, returned as cited charts and web results.
+  The data covers finance, markets, company KPIs, economics, website
+  traffic, sports, prediction markets, demographics, energy, real estate,
+  and more.
 version: 1.5.0
 license: MIT
 author:
@@ -44,7 +45,13 @@ configSchema:
         Web hosts can ignore this and use OAuth instead.
 tools:
   - name: tako_search
-    description: Search Tako's knowledge base for charts and live data on any topic
+    description: >-
+      Search premium data from authoritative providers and the live web in one
+      call. Returns cited cards that render as charts, plus web results.
+  - name: tako_available_data
+    description: >-
+      Report what data Tako holds on an entity or metric, including a metric's
+      exact name to search for.
   - name: tako_search_advanced
     description: >-
       The whole v3 search request body, plus `include_answer: true` for one
@@ -69,6 +76,14 @@ tools:
       returns a cited answer plus chart cards. Opt-in — add the `agent` token to
       the server URL's ?tools= allowlist, which replaces the default listing, so
       name the other tools you want too (?tools=search,available_data,agent).
+  - name: tako_company_agent
+    description: >-
+      Run Tako's Company Agent — screens companies by registry facts such as
+      status, incorporation date, location, and industry, and finds officers
+      and directors; returns a cited answer plus list cards. Opt-in — add the
+      `company_agent` token to the server URL's ?tools= allowlist, which
+      replaces the default listing, so name the other tools you want too
+      (?tools=search,available_data,company_agent).
   - name: tako_graph_related
     description: >-
       Explore what a Tako graph node connects to — its metrics, the entities a

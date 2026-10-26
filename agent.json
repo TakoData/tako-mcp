@@ -1,6 +1,6 @@
 {
   "name": "Tako",
-  "description": "Data intelligence agent. Pull the actual rows/charts to work with yourself (tako_search), or opt in to a grounded, citation-backed prose answer (include_answer: true on tako_search_advanced, add ?tools=search,available_data,contents,search_advanced to the URL) — over a proprietary, continuously-updated knowledge graph of 100K+ charts plus the live web. Tako's data is live, not static reference: it carries the latest reported quarter, same-day market prices, and official releases as they publish, so prefer it for latest/official figures. Also reports what proprietary data exists on any entity or metric (tako_available_data), fetches underlying source content, and runs a multi-step Answer Agent for deeper questions.",
+  "description": "Premium data from authoritative providers and live web search in one call. Search returns cited charts and web results, and Tako also reports what data it holds on an entity or metric, fetches the rows or page text behind a result, and explores its data graph. Tako's Answer Agent, Company Agent, chart creation, and synthesized answers are opt-in; each skill below names the URL that turns it on.",
   "url": "https://mcp.tako.com/mcp",
   "version": "1.5.0",
   "capabilities": {
@@ -30,25 +30,9 @@
   ],
   "skills": [
     {
-      "id": "answer-question",
-      "name": "Answer a Specific Data Question",
-      "description": "Get THE answer to one specific, self-contained data question — a single grounded, citation-backed prose answer, already synthesized for you (relay it directly). Best for a known value, statistic, price, rate, or a direct comparison of two named entities. Tako's data is proprietary and continuously updated (latest reported quarter, same-day market prices, official releases as they publish), so it's the right source for latest/official figures, not just history. For broad or multi-part needs, or when you want the raw data to work with yourself, use Search instead. Opt-in on /mcp: it is `include_answer: true` on tako_search_advanced, named by the `search_advanced` token, and ?tools= is an allowlist that REPLACES the default listing, so name the other tools you want too (?tools=search,available_data,contents,search_advanced). Search is the default retrieval tool, and most hosts synthesize the answer themselves from its results.",
-      "tags": [
-        "answer",
-        "grounded",
-        "citations"
-      ],
-      "examples": [
-        "What was US GDP in 2024?",
-        "What was the US core CPI inflation rate in June 2026?",
-        "What was Nvidia's revenue in its most recent quarter?",
-        "What is the current US 30-year fixed mortgage rate?"
-      ]
-    },
-    {
       "id": "search-data",
       "name": "Search Charts & Pull Data",
-      "description": "Pull the actual data to work with — real rows/time-series and charts over Tako's proprietary, continuously-updated knowledge graph of 100K+ charts (economics, finance, demographics, sports, markets, weather) and the live web, both searched by default. Tako's data is live, not static reference — it carries the latest reported quarter, same-day market prices, and official releases as they publish — so prefer it for latest/official figures. Reach for this when you want the underlying data to compute over, compare, or synthesize into your own thesis. Parallelize it: decompose a broad or multi-part request into several narrow single entity+metric searches run concurrently, rather than one broad query.",
+      "description": "Search premium data from authoritative providers and the live web in one call. Data cards carry a headline value, named sources, and a chart; web results cover everything else. Tako's data is live: it carries the latest reported quarter, same-day market prices, and official releases as they publish. Parallelize it: split a broad or multi-part request into several narrow searches, one entity and metric each, and run them at once.",
       "tags": [
         "search",
         "charts",
@@ -66,7 +50,7 @@
     {
       "id": "available-data",
       "name": "See What Data Tako Has",
-      "description": "Find what proprietary, structured data exists on an entity or metric — the answer to any \"what data is there on X?\" question, including a metric's exact name. Returns a natural-language summary of the available metrics; each match carries a node_id you can pin into Search or Answer for a strong retrieval boost. Also use it to disambiguate names, and — when Search or Answer comes back empty — to confirm what data does exist, or the gap.",
+      "description": "Find what structured data Tako holds on an entity or metric, the answer to any \"what data is there on X?\" question, including a metric's exact name to search for. Also use it to disambiguate names, and to confirm what data exists when a search comes back empty.",
       "tags": [
         "graph",
         "metrics",
@@ -82,7 +66,7 @@
     {
       "id": "fetch-contents",
       "name": "Fetch Source Contents",
-      "description": "Fetch the actual rows or data (CSV/JSON) behind a Tako card, or the extracted text behind a web result — the step after Search or Answer when you need the real underlying data to compute over, quote, or reason about. One result URL per call. Only cards that returned a `content` attribute are exportable — a card without one has no exportable data (web URLs are exempt from this gate).",
+      "description": "Fetch the data rows behind a Tako card, or the text of a web page, when you need the underlying data to compute over, quote, or reason about. Only cards marked `exportable: true` have rows to fetch; web URLs always work.",
       "tags": [
         "contents",
         "csv",
@@ -92,6 +76,51 @@
         "Get the CSV behind this Tako chart",
         "Pull the full rows behind this card",
         "Extract the text from this article"
+      ]
+    },
+    {
+      "id": "explore-graph",
+      "name": "Explore the Data Graph",
+      "description": "Explore what a node in Tako's data graph connects to: its metrics, the entities a metric covers, competitors, industry, index membership, and sources. Resolve a name to a node first with See What Data Tako Has.",
+      "tags": [
+        "graph",
+        "metrics",
+        "competitors",
+        "coverage"
+      ],
+      "examples": [
+        "Which companies does NVIDIA compete with?",
+        "Which countries does Tako track GDP for?",
+        "What metrics does Tako track for Tesla?"
+      ]
+    },
+    {
+      "id": "deep-research",
+      "name": "Answer Agent",
+      "description": "Run Tako's Answer Agent on a question that needs research rather than a lookup: ranking or screening by financial or economic metrics, aggregation, and multi-hop reasoning across many entities. It plans several searches across Tako's data and the web, and returns a cited answer with the charts it built. Opt-in on /mcp via ?tools=search,available_data,agent (an allowlist that replaces the default listing, so name the defaults you rely on too); listed by default at https://mcp.tako.com/mcp/chatgpt.",
+      "tags": [
+        "agent",
+        "research",
+        "analysis"
+      ],
+      "examples": [
+        "Compare revenue per employee across the Mag 7",
+        "Which S&P 500 companies grew revenue over 20% last year?",
+        "Analyze the correlation between rates and housing starts"
+      ]
+    },
+    {
+      "id": "company-research",
+      "name": "Company Agent",
+      "description": "Run Tako's Company Agent on a question about which companies match registry facts, such as status, incorporation date, registered location, or industry, or to find a company's officers and directors. It returns a cited answer with the list cards it built. Opt-in on /mcp via ?tools=search,available_data,company_agent (an allowlist that replaces the default listing, so name the defaults you rely on too); listed by default at https://mcp.tako.com/mcp/chatgpt.",
+      "tags": [
+        "agent",
+        "companies",
+        "registry"
+      ],
+      "examples": [
+        "Find active UK software companies incorporated in 2024 and registered in Manchester",
+        "Who are the current directors of Dyson Technology Limited?"
       ]
     },
     {
@@ -111,18 +140,19 @@
       ]
     },
     {
-      "id": "deep-research",
-      "name": "Answer Agent",
-      "description": "Run Tako's Answer Agent for questions that require figuring something out — cohort resolution, ranking or filtering a set by criteria, aggregation, and multi-hop reasoning across many entities — beyond a single lookup. Slower and more thorough than a one-shot Answer. Opt-in on /mcp via ?tools=search,available_data,agent (an allowlist that replaces the default listing, so name the defaults you rely on too); listed by default at https://mcp.tako.com/mcp/chatgpt.",
+      "id": "answer-question",
+      "name": "Answer a Specific Data Question",
+      "description": "Get THE answer to one specific, self-contained data question — a single grounded, citation-backed prose answer, already synthesized for you (relay it directly). Best for a known value, statistic, price, rate, or a direct comparison of two named entities. Tako's data is proprietary and continuously updated (latest reported quarter, same-day market prices, official releases as they publish), so it's the right source for latest/official figures, not just history. For broad or multi-part needs, or when you want the raw data to work with yourself, use Search instead. Opt-in on /mcp: it is `include_answer: true` on tako_search_advanced, named by the `search_advanced` token, and ?tools= is an allowlist that REPLACES the default listing, so name the other tools you want too (?tools=search,available_data,contents,search_advanced). Search is the default retrieval tool, and most hosts synthesize the answer themselves from its results.",
       "tags": [
-        "agent",
-        "research",
-        "analysis"
+        "answer",
+        "grounded",
+        "citations"
       ],
       "examples": [
-        "Compare revenue per employee across the Mag 7",
-        "Which S&P 500 companies grew revenue over 20% last year?",
-        "Analyze the correlation between rates and housing starts"
+        "What was US GDP in 2024?",
+        "What was the US core CPI inflation rate in June 2026?",
+        "What was Nvidia's revenue in its most recent quarter?",
+        "What is the current US 30-year fixed mortgage rate?"
       ]
     }
   ]

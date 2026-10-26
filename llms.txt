@@ -1,6 +1,6 @@
 # Tako
 
-> Tako is a data intelligence platform. The Tako MCP server lets AI agents search a proprietary, continuously-updated knowledge base of 100K+ curated charts (latest reported quarter, same-day market prices, official releases as they publish) together with the live web, discover data coverage, fetch underlying rows or page text, and optionally visualize data or run a multi-step Answer Agent.
+> Tako is a data intelligence platform. The Tako MCP server gives AI agents premium data from authoritative providers and live web search in one call. Agents can also discover what data Tako holds, fetch the rows or page text behind a result, explore the data graph, and opt in to chart creation or Tako's Answer Agent and Company Agent.
 
 ## Install (agent instructions)
 
