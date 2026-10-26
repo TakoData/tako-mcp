@@ -6,7 +6,7 @@ description: >-
 
 # Tako
 
-Tako searches the live web and a knowledge graph of licensed and public data in one call. The graph covers companies, markets, economies, sports, weather, prediction markets, websites, and more, and refreshes much of it during the day. When the graph has the answer, the result leads with a card: a headline value, its source, and a chart. Every search also returns web results. All tools below live on the Tako MCP server (server name `tako`).
+Tako searches the live web and a knowledge graph of licensed and public data in one call. The graph covers companies, people, markets, economies, sports, weather, prediction markets, websites, and more, and refreshes much of it during the day. When the graph has the answer, the result leads with a card: a headline value, its source, and a chart. Every search also returns web results. All tools below live on the Tako MCP server (server name `tako`).
 
 ## Look something up
 
@@ -17,6 +17,22 @@ Tako searches the live web and a knowledge graph of licensed and public data in 
 5. If a name is ambiguous, such as "Costco" or "Coca-Cola", and the question doesn't settle which entity, ask before quoting a number.
 
 If the user asks for Tako's agent and the `tako-agent` skill is installed, follow `tako-agent` instead.
+
+## Find people and companies
+
+`tako_search` returns a list card when the query names a person or describes a set of people or companies:
+
+- A person's name alone: "Jensen Huang". Don't phrase it as a question or add the employer, because search reads every word as part of the name.
+- People by role and employer, or by role and place: "engineers at Stripe", "VPs of sales at Salesforce", "CFOs in Austin". A role alone or an employer alone returns no list.
+- Companies by industry or type, plus a place, a size, a funding stage, public or private, or a founding year: "fintechs in London", "SaaS companies with 50–500 employees", "Series B startups in Berlin", "AI startups founded since 2020".
+
+Then read the list:
+
+1. The card's `description` holds only the number of matches. To see who or what matched, pass the card's url to `tako_contents`. It returns up to 1,000 rows, even when the card shows fewer.
+2. For a person's name, the card lists everyone with that name. Pick the person by title, employer, and location. If more than one row fits, ask the user which one they mean.
+3. Each row's `tako_url` opens that one person or company in Tako. Link it.
+4. A contact field such as `work_email` or `phone` can be empty because it's locked, not because it doesn't exist. Don't tell the user that a person has no email or phone.
+5. A list can't filter on revenue, investors, registry status, or a company's officers and directors. If the question needs one of those, say so. If the `tako-agent` skill is installed, offer Tako's company agent.
 
 ## Compute over a series
 
