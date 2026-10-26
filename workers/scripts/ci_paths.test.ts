@@ -50,6 +50,7 @@ const OTHER_GUARD_INPUTS: readonly string[] = [
   "gemini-extension.json", // scripts/gemini-extension.test.ts
   "commands/answer.md",
   "docs/gemini/GEMINI.md",
+  "chatgpt-plugin/plugin.json",
   ".github/workflows/workers-ci.yml", // this file, via WORKFLOW below
 ];
 

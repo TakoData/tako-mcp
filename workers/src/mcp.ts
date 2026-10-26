@@ -222,7 +222,7 @@ export function createMcpServer(
       title: "Tako",
       websiteUrl: "https://tako.com",
       description:
-        "Proprietary, continuously-updated live data — plus interactive charts and visualizations — for finance, economics, demographics, prediction markets, and more. Covers the latest reported quarter, same-day market prices, and official releases as they publish.",
+        "Premium data from authoritative providers and live web search in one call, returned as cited charts and web results. Covers finance, markets, company KPIs, economics, website traffic, sports, prediction markets, demographics, energy, real estate, and more.",
       ...(icons !== undefined ? { icons } : {}),
     },
     {

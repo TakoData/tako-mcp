@@ -533,18 +533,18 @@ Tako is published to the official [MCP Registry](https://registry.modelcontextpr
 
 > Tako's chart pages at https://tako.com/embed/{pub_id}/ (a tool's embed_url) render tako_search, tako_visualize, tako_agent, and tako_company_agent cards interactively. No ads, sign-in, or upgrade UI.
 
-- **Screenshots:** one per starter prompt, showing the widget alone: no ChatGPT chrome, no prompt bubble, no model text. OpenAI's template is a 353×400 CSS px frame exported at 2x, so capture the card's embed page (`https://tako.com/embed/{pub_id}/`) in a 353 px wide viewport at `deviceScaleFactor: 2` and clip to 400–860 px tall. The portal accepts any 706 px wide PNG, so it won't tell you when a capture includes the conversation; review does.
+- **Screenshots:** one per starter prompt, showing the widget alone: no ChatGPT chrome, no prompt bubble, no model text. OpenAI's template is a 353×400 CSS px frame exported at 2x, so capture the card's embed page (`https://tako.com/embed/{pub_id}/`) in a 353 px wide viewport at `deviceScaleFactor: 2` and clip to 400–860 px tall. The portal accepts any 706 px wide PNG, so it won't tell you when a capture includes the conversation; review does. Save them in `chatgpt-plugin/assets/screenshots/` and list them in `plugin.json` `screenshots`, so the package carries them.
 
 - **Annotations** come from the server, not the form. A wrong hint is fixed in the tool module, deployed to production, and re-scanned with **Scan Tools** before you submit; the justification alone changes nothing.
 
 ### Plugin package
 
-`chatgpt-plugin/plugin.json` holds the ChatGPT plugin's listing: name, subtitle, descriptions, keywords, category, starter prompts, and icons. It uses OpenAI's portable Agent Plugins format, with listing fields under `extensions.com.openai.interface`. It lives outside the repository root because the repository root is also the Claude plugin that `.claude-plugin/marketplace.json` installs. A root `plugin.json` would replace that plugin's identity.
+`chatgpt-plugin/plugin.json` holds the ChatGPT plugin's listing: name, subtitle, descriptions, keywords, category, starter prompts, icons, screenshots, and release notes. Its subtitle must match `app_info.subtitle` in `chatgpt-app-submission.json`; `workers/scripts/chatgpt-plugin.test.ts` fails when they differ. It uses OpenAI's portable Agent Plugins format, with listing fields under `extensions.com.openai.interface`. It lives outside the repository root because the repository root is also the Claude plugin that `.claude-plugin/marketplace.json` installs. A root `plugin.json` would replace that plugin's identity.
 
 To change the listing:
 
 1. Edit `chatgpt-plugin/plugin.json` and raise its `version`. That version is OpenAI's package version, separate from our release version.
-2. Run `chatgpt-plugin/build.sh`. It copies the manifest, `skills/`, and `chatgpt-plugin/assets/` into `chatgpt-plugin/dist/tako-chatgpt-plugin-<version>.zip`.
+2. Run `chatgpt-plugin/build.sh`. It writes the manifest with the review test cases from `chatgpt-app-submission.json`, and copies `skills/` and `chatgpt-plugin/assets/`, into `chatgpt-plugin/dist/tako-chatgpt-plugin-<version>.zip`. Edit test cases only in `chatgpt-app-submission.json`; the build fails if `plugin.json` declares its own.
 3. In the OpenAI dashboard, open the Tako plugin and select **Upload new version**.
 
 Tool descriptions don't need a package upload. OpenAI rescans `/mcp/chatgpt` daily and updates each tool after its checks pass.
