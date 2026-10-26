@@ -4,7 +4,7 @@
   "app_info": {
     "display_name": "Tako",
     "subtitle": "Premium live data & web search",
-    "description": "Tako gives users premium data from authoritative providers and live web search in one call, returned as citation-backed charts. It also retrieves the content behind a result, checks data coverage, answers multi-step research, company, and registry-officer questions with Tako's agents, and creates shareable public chart links from user-provided structured data.",
+    "description": "Tako combines premium live data from authoritative providers with web search in one call, and returns citation-backed charts. It also retrieves the content behind a result, checks data coverage, answers multi-step research, company, and registry-officer questions with Tako's agents, and creates shareable public chart links from user-provided structured data.",
     "category": "PRODUCTIVITY"
   },
   "tools": {

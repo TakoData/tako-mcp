@@ -222,7 +222,7 @@ export function createMcpServer(
       title: "Tako",
       websiteUrl: "https://tako.com",
       description:
-        "Premium data from authoritative providers and live web search in one call, returned as cited charts and web results. Covers finance, markets, company KPIs, economics, website traffic, sports, prediction markets, demographics, energy, real estate, and more.",
+        "Premium live data from authoritative providers and web search in one call, returned as cited charts and web results. Covers finance, markets, company KPIs, economics, website traffic, sports, prediction markets, demographics, energy, real estate, and more.",
       ...(icons !== undefined ? { icons } : {}),
     },
     {
