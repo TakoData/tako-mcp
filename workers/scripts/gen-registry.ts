@@ -840,7 +840,7 @@ function buildSearchSample(tool: ToolModule): ToolSample {
     SAMPLE_FIXTURE_ENV,
     false,
     "authenticated",
-    { rowCap: null, keepWebText: false, toolName: "tako_search" },
+    { rowCap: null, keepWebText: false, toolName: "tako_search", canRequestPremium: true },
   );
   return {
     // The generic-surface narrowing — what an `/mcp` client's model reads.
@@ -887,7 +887,7 @@ function buildAdvancedSample(tool: ToolModule): ToolSample {
     SAMPLE_FIXTURE_ENV,
     false,
     "authenticated",
-    { rowCap: "all", keepWebText: true, toolName: "tako_search_advanced" },
+    { rowCap: "all", keepWebText: true, toolName: "tako_search_advanced", canRequestPremium: true },
     { answer: raw.answer, structured_output: raw.structured_output },
   );
   return {

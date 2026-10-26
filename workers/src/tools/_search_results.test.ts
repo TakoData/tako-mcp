@@ -26,6 +26,7 @@ import {
   projectCardRows,
   projectWebResult,
   slimCardContent,
+  WITHHELD_CELLS_GUIDANCE,
 } from "./_search_results.js";
 import type {
   ResultContent,
@@ -179,7 +180,7 @@ describe("slimCardContent — drop-all mode (capRows = null)", () => {
 // `tako_search`'s call shape: no inlined rows, no web page text. Shared by the
 // buildSearchOutput tests below, which exercise guidance and card order rather
 // than the `tako_search_advanced` inline path.
-const OPTS = { rowCap: null, keepWebText: false, toolName: "tako_search" } as const;
+const OPTS = { rowCap: null, keepWebText: false, toolName: "tako_search", canRequestPremium: true } as const;
 
 describe("buildSearchOutput — zero-card guidance", () => {
   const ENV: Env = { DJANGO_BASE_URL: "https://staging.trytako.com" };
@@ -211,6 +212,39 @@ describe("buildSearchOutput — zero-card guidance", () => {
   it("omits guidance when any card is present", () => {
     const out = buildSearchOutput([{ card_id: "c1" }], [], "req-2", null, ENV, false, "authenticated", OPTS);
     expect(out.guidance).toBeUndefined();
+  });
+});
+
+describe("buildSearchOutput — withheld cells", () => {
+  const ENV: Env = { DJANGO_BASE_URL: "https://staging.trytako.com" };
+  const peopleCard = (premium: boolean, premiumRows: Record<string, number> | null) =>
+    ({
+      card_id: "people",
+      content: { cost: 0.001, total_rows: 2, truncated: false, premium, premium_rows: premiumRows },
+    }) as unknown as TakoCard;
+
+  it("tells a signed-in caller how to get a card's withheld cells", () => {
+    const out = buildSearchOutput([peopleCard(false, { person_contact: 2 })], [], "r", null, ENV, false, "authenticated", OPTS);
+    expect(out.guidance).toBe(WITHHELD_CELLS_GUIDANCE);
+  });
+
+  it("says nothing on a surface whose tako_contents has no premium input", () => {
+    const out = buildSearchOutput([peopleCard(false, { person_contact: 2 })], [], "r", null, ENV, false, "authenticated", {
+      ...OPTS,
+      canRequestPremium: false,
+    });
+    expect(out.guidance).toBeUndefined();
+  });
+
+  it("says nothing to a keyless caller, who can't call tako_contents", () => {
+    const out = buildSearchOutput([peopleCard(false, { person_contact: 2 })], [], "r", null, ENV, false, "free", OPTS);
+    expect(out.guidance).toBeUndefined();
+  });
+
+  it("says nothing when no cell is withheld or the cells are already revealed", () => {
+    for (const card of [peopleCard(false, null), peopleCard(false, { person_contact: 0 }), peopleCard(true, { person_contact: 2 })]) {
+      expect(buildSearchOutput([card], [], "r", null, ENV, false, "authenticated", OPTS).guidance).toBeUndefined();
+    }
   });
 });
 
@@ -792,7 +826,7 @@ describe("projectCard — the nine-field model-facing card", () => {
         { DJANGO_BASE_URL: "https://staging.trytako.com" },
         false,
         "authenticated",
-        { rowCap: "all", keepWebText: false, toolName: "tako_search_advanced" },
+        { rowCap: "all", keepWebText: false, toolName: "tako_search_advanced", canRequestPremium: true },
       );
       expect(out.cards[0]?.rows, "the bad payload is still dropped").toBeUndefined();
     } finally {

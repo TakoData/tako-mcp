@@ -191,6 +191,14 @@
             "rows",
             "card"
           ]
+        },
+        "offset": {
+          "type": "integer",
+          "description": "Tako list cards only: rows to skip. With `max_rows: 1`, it fetches one person's row."
+        },
+        "premium": {
+          "type": "boolean",
+          "description": "Tako cards only: `true` returns withheld cells, such as a person's email and phone. Tako bills each row with one, so set it only when the user asks."
         }
       },
       "annotations": {

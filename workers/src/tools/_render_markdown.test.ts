@@ -1126,7 +1126,7 @@ describe("channel parity (tako_search and tako_search_advanced)", () => {
       ENV,
       false,
       "authenticated",
-      { rowCap: "all", keepWebText: true, toolName: "tako_search_advanced" },
+      { rowCap: "all", keepWebText: true, toolName: "tako_search_advanced", canRequestPremium: true },
       // The advanced tool's four extra fields ride here too: it is the only
       // tool that can return them, and they reach the model through the same
       // renderer. A separate fixture would let this walk keep passing while

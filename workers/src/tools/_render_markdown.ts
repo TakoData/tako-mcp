@@ -103,7 +103,7 @@ const searchCoreFields = {
   guidance: z
     .string()
     .optional()
-    .describe("How a keyless caller unlocks a placeholder card."),
+    .describe("How to unlock a placeholder card or a card's withheld cells."),
   metric_definitions: z
     .record(z.string(), z.string())
     .optional()
@@ -181,8 +181,10 @@ export const searchSlimOutputShape = z.looseObject(searchCoreFields);
 const { guidance: _keylessGuidance, ...searchOAuthFields } = searchCoreFields;
 
 /** chatgpt-surface variant: adds the widget fields `window.openai.toolOutput`
- *  reads (the widget ignores `cards`/`web_results`), and drops `guidance`,
- *  whose one source is a keyless caller and `/mcp/chatgpt` requires OAuth. */
+ *  reads (the widget ignores `cards`/`web_results`), and drops `guidance`.
+ *  Its sources are a keyless caller, which `/mcp/chatgpt` refuses because it
+ *  requires OAuth, and `withheldCellsGuidance`, which names a `premium` input
+ *  that this surface's `tako_contents` doesn't take. */
 export const searchChatgptOutputShape = z.looseObject({
   ...searchOAuthFields,
   ...autoChainShape,
@@ -199,7 +201,7 @@ export const searchAdvancedOutputShape = z.looseObject({
     // `include_contents: true` caller into a priced refetch of rows it had
     // already paid to inline.
     .describe("The data cards. Rows ride in a card's `rows` only when the request asked to inline them — otherwise fetch an exportable card's rows with tako_contents on its url."),
-  guidance: z.string().optional().describe("Why a `strict: true` pin returned no cards."),
+  guidance: z.string().optional().describe("Why a `strict: true` pin returned no cards, or how to get withheld cells."),
   ...answerFoldFields,
 });
 
