@@ -39,7 +39,7 @@ SMOKE_BASE_URL=https://mcp.staging.tako.com TAKO_SMOKE_API_TOKEN=... npm run smo
 - **Endpoints**: two path-selected MCP surfaces — `POST /mcp` (generic, anonymous tier allowed) and `POST /mcp/chatgpt` (OAuth-only, the surface submitted to OpenAI) — plus `GET /health`. The request path picks the surface; nothing reads the client User-Agent (`workers/src/surface.ts`).
 - **Auth**: `Authorization: Bearer <TAKO_API_TOKEN>` extracted at request boundary, forwarded to Django as `X-API-Key`; OAuth 2.1 flow for Claude.ai / ChatGPT
 - **Tool registry**: auto-generated from `workers/src/tools/*.ts` via `workers/scripts/gen-registry.ts`; outputs `workers/src/tools/_registry.ts`, `registry/server.json`, `registry/lhm.plugin.json`, `docs/TOOLS.md` and `workers/src/generated/skills.ts` in lockstep (CI checks all five for drift)
-- **Skills**: `/mcp` serves the `skills/` directory through the MCP Skills extension (SEP-2640): `skills/list`, `skills/get` and `skill://<name>/SKILL.md` resources. A connection gets only the skills whose every named tool it registers, so a default `/mcp` gets `tako-search`, and a connection with no skills declares neither the extension nor `resources`. `/mcp/chatgpt` serves no skills; ChatGPT gets them from the plugin zip (`chatgpt-plugin/build.sh`).
+- **Skills**: `/mcp` serves the `skills/` directory through the MCP Skills extension (SEP-2640): `skills/list`, `skills/get` and `skill://<name>/SKILL.md` resources. A connection gets only the skills whose every named tool it registers, so a default `/mcp` gets `tako-search`. A connection declares the extension only when it serves a skill, and declares `resources` when it serves a skill or a widget tool. `/mcp/chatgpt` serves no skills; ChatGPT gets them from the plugin zip (`chatgpt-plugin/build.sh`).
 - **CI**: `.github/workflows/workers-ci.yml` (typecheck + tests on PRs), `workers-deploy.yml` (staging on push to `main`; production on published GitHub Release, gated by the `production` environment; manual `workflow_dispatch` for either env), `workers-smoke.yml` (auto-smoke after successful staging deploys)
 
 ### Key Files
@@ -48,6 +48,7 @@ SMOKE_BASE_URL=https://mcp.staging.tako.com TAKO_SMOKE_API_TOKEN=... npm run smo
 |------|---------|
 | `workers/src/index.ts` | Worker entrypoint — resolves the MCP surface from the request path, routes `/health` |
 | `workers/src/surface.ts` | `MCP_PATHS` + `surfaceForPath` — the only thing that decides which surface a request gets |
+| `workers/src/mcp_session.ts` | Reads MCP Apps support from `initialize`, and mints and classifies the `ui-` and `noui-` `Mcp-Session-Id` that decides widget or PNG on `/mcp` |
 | `workers/src/tools/_surface.ts` | Per-surface tool membership (`isToolOnSurface`) and annotation overrides |
 | `workers/src/mcp.ts` | MCP server wrapper, tool dispatch, `djangoErrorToToolResult` |
 | `workers/src/django.ts` | Typed HTTP client with `DjangoError` hierarchy |
