@@ -50,6 +50,10 @@ opt-in `tako_search_advanced` returns a prose answer instead — name `search_ad
 - **Identify a person by name alone.** Query "Jensen Huang", not "who is Jensen Huang" or
   "Jensen Huang Nvidia". The card lists everyone with that name, so pick the person from
   the rows by title, employer, and location.
+- **Name who and where for a list of people.** Who is a role or a word for a company's
+  people ("CFOs", "VPs of sales", "founders", "employees", "leadership team"). Where is an
+  employer, a place, or both: "Airbnb CFO", "engineers at Google in London". A role alone,
+  an employer alone, and "people in Austin" return no list.
 - **Search first.** Use `tako_available_data` for questions about what Tako covers. It
   reports on the graph only, so a miss there means fall back to the web half, not give up.
 - **When no card answers the question**, answer from the web results. To read a page in

@@ -391,16 +391,26 @@ If the user asks for Tako's agent and the `tako-agent` skill is installed, follo
 
 ## Find people and companies
 
-`tako_search` returns a list card when the query names a person or describes a set of people or companies:
+`tako_search` returns a list card for a person's name, for a set of people, and for a set of companies. Each row is one person or company.
 
-- A person's name alone: "Jensen Huang". Don't phrase it as a question or add the employer, because search reads every word as part of the name.
-- People by role and employer, or by role and place: "engineers at Stripe", "VPs of sales at Salesforce", "CFOs in Austin". A role alone or an employer alone returns no list.
-- Companies by industry or type, plus a place, a size, a funding stage, public or private, or a founding year: "fintechs in London", "SaaS companies with 50–500 employees", "Series B startups in Berlin", "AI startups founded since 2020".
+**A person by name.** Search the full name alone: "Patrick Collison".
+
+- Don't phrase it as a question or add a title or employer. Search reads every word as part of the name, so "Jensen Huang Nvidia" returns no person.
+- Search doesn't match nicknames: "Tim Cook" and "Timothy Cook" return different people. If no row fits, try the other form of the name.
+
+**People by role.** Name who and where.
+
+- Who: a role or title ("engineers", "CFO", "VPs of sales", "head of marketing", "founders", "interns"), or a word for a company's people ("employees", "staff", "leadership team"). "Executives", "leadership", and "management" return C-suite and VP-level people.
+- Where: an employer, a place, or both: "engineers at Stripe", "CFOs in Austin", "engineers at Google in London". A place needs a role, so "people in Austin" returns no list. A role alone ("CFOs") and an employer alone ("Stripe") also return no list.
+- To find who holds a role at one company, search the role and the company: "Airbnb CFO". A question works here: "who is the CFO of Airbnb".
+- Give a city its state or country: "engineers in Portland, OR". A bare city name matches every place with that name.
+
+**Companies by industry or type**, plus a place, a size, a funding stage, public or private, or a founding year: "fintechs in London", "SaaS companies with 50–500 employees", "Series B startups in Berlin", "AI startups founded since 2020".
 
 Then read the list:
 
 1. The card's `description` doesn't name the matches. To see them, pass the card's url to `tako_contents` with `max_rows` set to the rows the answer needs, such as 25. Fetch the full list, up to 1,000 rows, only when the user asks for it.
-2. For a person's name, the card lists everyone with that name. Pick the person by title, employer, and location. If more than one row fits, ask the user which one they mean.
+2. Check each row before you use it. A name list holds everyone with that name, and a company name can match more than one company. Pick a person by title, employer, and location. If more than one row fits, ask the user which one they mean.
 3. Each row's `tako_url` opens that one person or company in Tako. Link it.
 4. A contact field such as `work_email` or `phone` can be empty because it's locked, not because it doesn't exist. Don't tell the user that a person has no email or phone.
 5. A list can't filter on revenue, investors, registry status, or a company's officers and directors. If the question needs one of those, say so. If the `tako-agent` skill is installed, offer Tako's company agent.
