@@ -24,6 +24,7 @@ import {
 } from "./django.js";
 import type { AuthMode, CallerStamp } from "./caller.js";
 import type { Env } from "./env.js";
+import { APP_UI_MIME_TYPE } from "./mcp_session.js";
 import type { Surface } from "./surface.js";
 import {
   checkFreeTierRateLimit,
@@ -78,15 +79,6 @@ export function authModeFor(tier: Tier, oauthResolved: boolean): AuthMode {
   if (tier === "free") return "anonymous";
   return oauthResolved ? "oauth" : "api_key";
 }
-
-/**
- * MCP Apps UI resource MIME type. Hosts (claude.ai, ChatGPT Apps SDK, VS
- * Code Insiders, Goose) gate sandbox-iframe rendering on this exact value
- * — plain `text/html` resources are treated as opaque and not rendered as
- * widgets. Source: MCP Apps standard ("text/html;profile=mcp-app") and
- * the OpenAI Apps SDK "Build your MCP server" guide.
- */
-const APP_UI_MIME_TYPE = "text/html;profile=mcp-app";
 
 /**
  * The CfWorker schema validator is stateless (it compiles a schema on each
