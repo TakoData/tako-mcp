@@ -364,7 +364,6 @@ export async function agentChartsMeta(
   const top = charts[0];
   if (top === undefined) return { charts: [] };
   const topMeta = await buildChartExtraMeta(top.image_url, {
-    bakeImage: false,
     env: ctx.env,
     origin: ctx.origin,
     pubId: top.pub_id,

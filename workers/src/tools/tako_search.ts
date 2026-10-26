@@ -9,10 +9,11 @@
  *
  * Cards keep search's order. `buildSearchOutput` lifts the first
  * card's `card_id` into top-level widget fields (`pub_id`, `embed_url`,
- * `image_url`, …), which is the single chart that renders on generic
- * `/mcp`. On `/mcp/chatgpt`, `_meta.charts` carries a chart for every
- * card, and the widget renders two or more as a carousel. `buildChartUrls` only needs a
- * `card_id`, which v3 TakoCards carry directly.
+ * `image_url`, …). A `/mcp` client that doesn't declare MCP Apps support
+ * gets that top card as a PNG content block. Wherever the widget is live,
+ * `_meta.charts` carries a chart for every card, and the widget renders two
+ * or more as a carousel. `buildChartUrls` only needs a `card_id`, which v3
+ * TakoCards carry directly.
  */
 import { z } from "zod";
 
@@ -205,7 +206,6 @@ const tako_search = {
       return { charts: liveCardCharts(charts, ctx.env, ctx.origin) };
     }
     const topMeta = await buildChartExtraMeta(o.image_url, {
-      bakeImage: false,
       env: ctx.env,
       origin: ctx.origin,
       pubId: o.pub_id,

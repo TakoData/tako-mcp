@@ -577,9 +577,8 @@ function registerTool(
     // Resource registration. CSP-allowed iframe domains live on
     // `_meta.ui.csp.frameDomains` (open MCP Apps spec); its sibling
     // `_meta.ui.csp.resourceDomains` allow-lists the origins the
-    // remote-image fallback (`<img src=image_url>`) may fetch/embed
-    // from — the widget's image branch is what actually renders on
-    // Claude, where the iframe branch never gets a chance to load. The
+    // remote-image fallback (`<img src=image_url>`) and a live card's
+    // scripts may fetch/embed from. The
     // bundle's `_meta.ui` is set in TWO places by design (matches the official
     // `@modelcontextprotocol/ext-apps` helper):
     //
@@ -640,12 +639,11 @@ function registerTool(
     // `_meta.ui.resourceUri` could point at a specific instance of that
     // template (baking the chart's image + dimensions into the widget
     // HTML at fetch time, sidestepping a host's "snapshot offsetHeight
-    // once on mount" behavior). claude.ai does NOT use this today — see
-    // the "Conclusion" comment below: it ignores per-call resourceUri
-    // overrides and stays on the static URI + baked
-    // `_meta.image_data_url` from `extraMeta`. The template stays
-    // registered for a future host that does honor per-call URIs. See
-    // `AppUiResource.dynamic` for the rationale.
+    // once on mount" behavior). Only the chatgpt surface declares it.
+    // claude.ai does NOT use it — see the "Conclusion" comment below: it
+    // ignores per-call resourceUri overrides and stays on the static URI.
+    // The template stays registered for a future host that does honor
+    // per-call URIs. See `AppUiResource.dynamic` for the rationale.
     if (
       ui.dynamic !== undefined &&
       !options.registeredTemplateNames.has(ui.dynamic.templateName)
@@ -989,9 +987,7 @@ function registerTool(
       // `ui/notifications/tool-result` (per the MCP Apps spec) but it
       // is NOT part of the LLM's context window. Use this to ship
       // payloads the widget needs but the LLM shouldn't tokenize, e.g.
-      // an inline base64 PNG too large to fit in `structuredContent`
-      // without tripping claude.ai's "tool result too large for
-      // context" guard.
+      // the `charts` list the `/mcp` widget mounts as live cards.
       //
       // Gated on `widgetLive` — the inverse of `extraContentBlocks` above.
       // Where no widget is live, nothing would consume `_meta`, so running

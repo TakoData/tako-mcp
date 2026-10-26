@@ -865,10 +865,11 @@ export async function handleEmbedProxy(
       // attached and read the auth code out of a same-origin response — without
       // ever touching the HttpOnly cookie.
       //
-      // Nothing needs it to be HTML. The only consumer is `upgradeToNativeCard`
+      // Nothing needs it to be HTML. The only consumer is `mountLiveCard`
       // in `_chart_widget.ts`, which does `fetch(...).then(r => r.text())` and
-      // writes the string into its OWN sandboxed document; it never dispatches
-      // on the content type (its sole shape check is `indexOf("<html")`).
+      // wraps the string in its own `text/html` blob for a `blob:` frame; it
+      // never dispatches on the content type (its sole shape check is
+      // `indexOf("<html")`).
       "content-type": "text/plain; charset=utf-8",
       // Belt to that brace: even if something did render this as a document,
       // `sandbox` with no tokens denies scripts, forms, popups and same-origin,

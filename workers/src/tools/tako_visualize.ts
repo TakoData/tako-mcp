@@ -7,8 +7,9 @@
  * The created card auto-renders inline as a chart: the backend returns a
  * `card_id` (+ embed/image URLs), which the tool lifts into the same widget
  * fields `tako_search` uses, sharing `_chart_widget.ts`. Those widget fields
- * are advertised on `/mcp/chatgpt` alone, where a widget reads them; on `/mcp`
- * the widget is suppressed and the chart ships as a PNG content block instead.
+ * are advertised on `/mcp/chatgpt` alone, where the widget reads them. On
+ * `/mcp`, a client that declares MCP Apps support gets the widget, which reads
+ * the chart from `_meta.charts`, and any other client gets a PNG content block.
  *
  * This is the one tool on the surface that WRITES, and what it writes is
  * world-readable: the supplied data is stored by Tako and the resulting `url`
@@ -417,8 +418,8 @@ const tako_visualize = {
   description: DESCRIPTION,
   inputSchema,
   outputSchema,
-  // The chart widget fields exist only where a widget reads them; on `/mcp`
-  // the widget is suppressed and the chart ships as a PNG content block.
+  // The chart widget fields exist only on `/mcp/chatgpt`, where the widget
+  // reads them. The `/mcp` widget reads `_meta.charts` instead.
   outputSchemaBySurface: { chatgpt: visualizeChatgptOutputShape },
   annotations: {
     title: "Tako: Visualize",
@@ -527,7 +528,6 @@ const tako_visualize = {
       return { charts: liveCardCharts(charts, ctx.env, ctx.origin) };
     }
     return buildChartExtraMeta(o.image_url, {
-      bakeImage: false,
       env: ctx.env,
       origin: ctx.origin,
       pubId: o.pub_id,

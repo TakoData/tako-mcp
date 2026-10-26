@@ -11,8 +11,8 @@
  *    appears in `resourceDomains` / `connectDomains` and `native_card_url`
  *    rides along in `_meta`.
  *
- * The widget-side half — that the upgrade is sequenced after the PNG and that
- * every failure mode leaves the chart alone — lives in
+ * The widget-side half — that a live card mounts in a `blob:` frame and every
+ * failure mode shows the failure copy — lives in
  * `test/widget/widget-dom.test.ts`, where the bundle actually executes.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -74,14 +74,14 @@ describe("declared resourceDomains", () => {
 describe("buildChartExtraMeta with the experiment off", () => {
   it("returns undefined when there is no image and no probe", async () => {
     await expect(
-      buildChartExtraMeta(undefined, { bakeImage: true, env: BASE }),
+      buildChartExtraMeta(undefined, { env: BASE }),
     ).resolves.toBeUndefined();
   });
 
   it("returns undefined when env is omitted entirely", async () => {
     // The `env`-less call shape stays supported: no env, no probe, no throw.
     await expect(
-      buildChartExtraMeta(undefined, { bakeImage: true }),
+      buildChartExtraMeta(undefined, {}),
     ).resolves.toBeUndefined();
   });
 });
@@ -92,7 +92,6 @@ describe("buildChartExtraMeta with the experiment armed", () => {
     // does not depend on the PNG, so it must not be collateral damage — and
     // equally must not invent image fields that aren't there.
     const meta = await buildChartExtraMeta(undefined, {
-      bakeImage: true,
       env: ARMED,
       origin: "https://mcp.tako.com",
       pubId: "abc123",
