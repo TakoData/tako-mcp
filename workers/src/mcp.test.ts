@@ -2798,6 +2798,7 @@ describe("chart widget or PNG per connection on /mcp", () => {
     toolName: string,
     args: Record<string, unknown>,
     sessionId: string | null,
+    callEnv: Env = env,
   ): Promise<ToolResult> {
     const res = await worker.fetch(
       new Request("https://mcp.tako.com/mcp?tools=search,agent", {
@@ -2815,7 +2816,7 @@ describe("chart widget or PNG per connection on /mcp", () => {
           params: { name: toolName, arguments: args },
         }),
       }),
-      env,
+      callEnv,
     );
     const text = await res.text();
     const json = res.headers.get("content-type")?.includes("text/event-stream")
@@ -2834,6 +2835,24 @@ describe("chart widget or PNG per connection on /mcp", () => {
 
     expect(result.content.filter((b) => b.type === "image")).toHaveLength(0);
     expect(result._meta).toBeDefined();
+  });
+
+  it("sends live-card charts with no baked image to a session that declared UI support", async () => {
+    stubDjangoAndPng();
+    const liveEnv = {
+      DJANGO_BASE_URL: "http://localhost:8000",
+      PUBLIC_CDN_URL: "https://cdn.trytako.com",
+    } as unknown as Env;
+
+    const result = await callOnMcp("tako_search", { query: "US GDP" }, "ui-x", liveEnv);
+
+    expect(result.content.filter((b) => b.type === "image")).toHaveLength(0);
+    const charts = result._meta?.charts as Record<string, unknown>[];
+    expect(charts.length).toBeGreaterThan(0);
+    for (const chart of charts) {
+      expect(typeof chart.native_card_url).toBe("string");
+      expect(chart).not.toHaveProperty("image_data_url");
+    }
   });
 
   it.each([

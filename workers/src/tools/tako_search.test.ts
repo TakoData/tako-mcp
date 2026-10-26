@@ -722,3 +722,33 @@ describe("tako_search extraMeta charts", () => {
     expect((meta as { charts?: unknown } | undefined)?.charts).toBeUndefined();
   });
 });
+
+describe("tako_search extraMeta on generic", () => {
+  const liveEnv: Env = {
+    DJANGO_BASE_URL: "https://staging.trytako.com",
+    PUBLIC_CDN_URL: "https://cdn.trytako.com",
+  };
+  const chartFor = (pubId: string) => ({
+    pub_id: pubId,
+    embed_url: `https://staging.trytako.com/embed/${pubId}/`,
+    image_url: `https://staging.trytako.com/api/v1/image/${pubId}/`,
+  });
+
+  it.each([1, 3])("returns exactly the live-card chart list for %i charts, with no fetch", async (count) => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const charts = ["card_a", "card_b", "card_c"].slice(0, count).map(chartFor);
+    const meta = await tako_search.extraMeta!(
+      { ...charts[0], charts } as never,
+      { ...CTX, env: liveEnv, origin: "https://mcp.tako.com", surface: "generic" } as never,
+    );
+    expect(Object.keys(meta ?? {})).toEqual(["charts"]);
+    const entries = (meta as { charts: Record<string, unknown>[] }).charts;
+    expect(entries).toHaveLength(count);
+    for (const entry of entries) {
+      expect(entry.native_card_url).toEqual(expect.stringContaining(String(entry.pub_id)));
+      expect(entry).not.toHaveProperty("image_data_url");
+      expect(entry).not.toHaveProperty("image_natural_width");
+    }
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+});

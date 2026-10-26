@@ -35,7 +35,7 @@ import {
   waitForRun,
 } from "./_agent_wait.js";
 import { buildChartExtraMeta, PNG_HEAD_FETCH_TIMEOUT_MS } from "./_chart_widget.js";
-import { nonEmpty, withTopChartDims } from "./_search_results.js";
+import { liveCardCharts, nonEmpty, withTopChartDims } from "./_search_results.js";
 import type { FixedInput, ToolContext } from "./types.js";
 
 /** The inputs both agent tools share: start a run with `query`, or resume one with `run_id`. */
@@ -347,9 +347,10 @@ export async function runAgentCall(
 
 /**
  * The `_meta` both agent tools ship where the chart widget is live: every
- * renderable card as `charts`, with PNG dimensions on the first one when the
- * ranged read succeeds. Returns `{ charts: [] }` for a finished run with no
- * renderable card, and `undefined` for a `running` result.
+ * renderable card as `charts`. On chatgpt the first one carries PNG dimensions
+ * when the ranged read succeeds; elsewhere each carries its `native_card_url`.
+ * Returns `{ charts: [] }` for a finished run with no renderable card, and
+ * `undefined` for a `running` result.
  */
 export async function agentChartsMeta(
   output: AgentRunOutput,
@@ -357,10 +358,13 @@ export async function agentChartsMeta(
 ): Promise<Record<string, unknown> | undefined> {
   if (output.status === "running") return undefined;
   const charts = output.charts ?? [];
+  if (ctx.surface !== "chatgpt") {
+    return { charts: liveCardCharts(charts, ctx.env, ctx.origin) };
+  }
   const top = charts[0];
   if (top === undefined) return { charts: [] };
   const topMeta = await buildChartExtraMeta(top.image_url, {
-    bakeImage: ctx.surface !== "chatgpt",
+    bakeImage: false,
     env: ctx.env,
     origin: ctx.origin,
     pubId: top.pub_id,

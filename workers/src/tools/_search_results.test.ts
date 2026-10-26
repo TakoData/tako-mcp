@@ -22,6 +22,7 @@ import {
   buildReferenceMaps,
   buildSearchOutput,
   cardCharts,
+  liveCardCharts,
   projectCard,
   projectCardRows,
   projectWebResult,
@@ -35,6 +36,7 @@ import type {
 } from "./_search_results.js";
 
 import type { Env } from "../env.js";
+import { nativeCardUrl } from "./_chart_widget.js";
 
 // json_compact dataset with a declared temporal column at index 0.
 const dataset = (rows: unknown[][]): ResultContent =>
@@ -1219,5 +1221,32 @@ describe("cardCharts", () => {
   it("a zero-card result carries no charts", () => {
     const out = buildSearchOutput([], [], "req-none", null, ENV, false, "authenticated", OPTS);
     expect(out.charts).toBeUndefined();
+  });
+});
+
+describe("liveCardCharts", () => {
+  const charts = [
+    { pub_id: "card_a", embed_url: "e/a", image_url: "i/a" },
+    { pub_id: "card_b", embed_url: "e/b", image_url: "i/b" },
+  ];
+
+  it("sets native_card_url from nativeCardUrl for each chart, in order", () => {
+    const env = {
+      DJANGO_BASE_URL: "https://trytako.com",
+      PUBLIC_CDN_URL: "https://cdn.trytako.com",
+    } as Env;
+    const live = liveCardCharts(charts, env, "https://mcp.tako.com");
+    expect(live.map((c) => c.pub_id)).toEqual(["card_a", "card_b"]);
+    expect(live.map((c) => c.native_card_url)).toEqual(
+      charts.map((c) => nativeCardUrl(env, "https://mcp.tako.com", c.pub_id)),
+    );
+    expect(live[0]?.native_card_url).toBeDefined();
+  });
+
+  it("leaves native_card_url out without PUBLIC_CDN_URL", () => {
+    const env = { DJANGO_BASE_URL: "https://trytako.com" } as Env;
+    const live = liveCardCharts(charts, env, "https://mcp.tako.com");
+    expect(live).toHaveLength(2);
+    expect(live[0]).not.toHaveProperty("native_card_url");
   });
 });

@@ -547,3 +547,27 @@ describe("tako_visualize fixedInputs pin the render constants", () => {
     ).toBe(DEFAULT_HEIGHT);
   });
 });
+
+describe("tako_visualize extraMeta on generic", () => {
+  it("returns a one-element live-card chart list and fetches nothing", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const meta = await takoVisualize.extraMeta!(
+      {
+        image_url: "https://x.test/api/v1/image/card_abc123/",
+        pub_id: "card_abc123",
+      } as never,
+      {
+        ...CTX,
+        env: { ...ENV, PUBLIC_CDN_URL: "https://cdn.trytako.com" },
+        origin: "https://mcp.tako.com",
+        surface: "generic",
+      } as never,
+    );
+    expect(Object.keys(meta ?? {})).toEqual(["charts"]);
+    const entries = (meta as { charts: Record<string, unknown>[] }).charts;
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.pub_id).toBe("card_abc123");
+    expect(entries[0]?.native_card_url).toEqual(expect.stringContaining("card_abc123"));
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+});
