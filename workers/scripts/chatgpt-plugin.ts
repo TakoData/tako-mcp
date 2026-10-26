@@ -55,9 +55,20 @@ export type PluginManifest = {
   [key: string]: unknown;
 };
 
+export type McpServerEntry = {
+  type: string;
+  url: string;
+  [key: string]: unknown;
+};
+
+export type McpConfig = {
+  mcpServers: Record<string, McpServerEntry>;
+};
+
 const REPO_ROOT = resolve(fileURLToPath(import.meta.url), "..", "..", "..");
 export const PLUGIN_DIR = resolve(REPO_ROOT, "chatgpt-plugin");
 export const PLUGIN_MANIFEST_PATH = resolve(PLUGIN_DIR, "plugin.json");
+export const MCP_CONFIG_PATH = resolve(PLUGIN_DIR, "mcp.json");
 export const SUBMISSION_PATH = resolve(REPO_ROOT, "chatgpt-app-submission.json");
 
 function positiveReviewCase(testCase: SubmissionTestCase): PositiveReviewCase {

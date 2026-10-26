@@ -572,8 +572,10 @@ Tako is published to the official [MCP Registry](https://registry.modelcontextpr
 To change the listing:
 
 1. Edit `chatgpt-plugin/plugin.json` and raise its `version`. That version is OpenAI's package version, separate from our release version.
-2. Run `chatgpt-plugin/build.sh`. It writes the manifest with the review test cases from `chatgpt-app-submission.json`, and copies `skills/` and `chatgpt-plugin/assets/`, into `chatgpt-plugin/dist/tako-chatgpt-plugin-<version>.zip`. Edit test cases only in `chatgpt-app-submission.json`; the build fails if `plugin.json` declares its own.
+2. Run `chatgpt-plugin/build.sh`. It writes the manifest with the review test cases from `chatgpt-app-submission.json`, and copies `chatgpt-plugin/mcp.json`, `skills/`, and `chatgpt-plugin/assets/`, into `chatgpt-plugin/dist/tako-chatgpt-plugin-<version>.zip`. Edit test cases only in `chatgpt-app-submission.json`; the build fails if `plugin.json` declares its own.
 3. In the OpenAI dashboard, open the Tako plugin and select **Upload new version**.
+
+`chatgpt-plugin/mcp.json` declares the one MCP server, `https://mcp.tako.com/mcp/chatgpt`. The portal refuses a package without it, because the plugin already has that server connected and an upload can't remove it. It also refuses plugin-level test cases unless the package declares exactly one server. Keep the URL unchanged: the upload flow can't change a connected server's URL, so a new URL goes through OpenAI support.
 
 Tool descriptions don't need a package upload. OpenAI rescans `/mcp/chatgpt` daily and updates each tool after its checks pass.
 

@@ -3,16 +3,21 @@ import { resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { MCP_PATHS } from "../src/surface.js";
 import {
+  MCP_CONFIG_PATH,
   PLUGIN_DIR,
   PLUGIN_MANIFEST_PATH,
   SUBMISSION_PATH,
   packagedManifest,
   reviewTestCases,
+  type McpConfig,
   type PluginManifest,
   type Submission,
   type SubmissionTestCase,
 } from "./chatgpt-plugin.js";
+
+const PRODUCTION_ORIGIN = "https://mcp.tako.com";
 
 const MAX_SCREENSHOT_BYTES = 5 * 1024 * 1024;
 const SCREENSHOT_WIDTH_PX = 706;
@@ -70,6 +75,16 @@ function committedManifest(): PluginManifest {
 
 function committedSubmission(): Submission {
   return JSON.parse(readFileSync(SUBMISSION_PATH, "utf8")) as Submission;
+}
+
+function committedMcpConfig(): McpConfig {
+  return JSON.parse(readFileSync(MCP_CONFIG_PATH, "utf8")) as McpConfig;
+}
+
+function chatgptSurfaceUrl(): string {
+  const path = [...MCP_PATHS].find(([, surface]) => surface === "chatgpt")?.[0];
+  if (path === undefined) throw new Error("MCP_PATHS has no chatgpt surface");
+  return `${PRODUCTION_ORIGIN}${path}`;
 }
 
 describe("reviewTestCases", () => {
@@ -144,6 +159,15 @@ describe("committed ChatGPT plugin listing", () => {
     expect(listing.longDescription.length).toBeLessThanOrEqual(4000);
     expect(listing.defaultPrompt.length).toBeLessThanOrEqual(3);
     for (const prompt of listing.defaultPrompt) expect(prompt.length).toBeLessThanOrEqual(128);
+  });
+
+  it("declares exactly one MCP server, so the portal accepts plugin-level test cases", () => {
+    expect(Object.keys(committedMcpConfig().mcpServers)).toHaveLength(1);
+  });
+
+  it("declares the connected /mcp/chatgpt server with no headers", () => {
+    const [server] = Object.values(committedMcpConfig().mcpServers);
+    expect(server).toEqual({ type: "streamable-http", url: chatgptSurfaceUrl() });
   });
 
   it("points every screenshot at a packaged 2x PNG under 5 MiB", () => {
