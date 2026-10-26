@@ -1993,7 +1993,7 @@ Search Tako's data graph and the live web in one call: many results at once, as 
 
 It finds results; `tako_contents` fetches what's behind them. Each card carries a headline value, node ids, and a url — pass the url to `tako_contents` for rows (`exportable: true` cards) or a web result's full page text. When `exportable` is false the rows are locked — read the headline value from the card's `description`.
 
-Best for: breadth — fan out several narrow queries in parallel. Each query answers one question — one metric for one entity, a comparison set ("Apple revenue", "Nvidia vs AMD gross margin"), one news or web lookup ("EU AI Act timeline"), or one list of people or companies ("CFOs in Austin", "fintechs in London"); several metrics or topics in one query retrieve poorly. Search a person by name alone: "Jensen Huang", not "who is Jensen Huang".
+Best for: breadth — fan out several narrow queries in parallel. Each query answers one question — one metric for one entity, a comparison set ("Apple revenue", "Nvidia vs AMD gross margin"), one news or web lookup ("EU AI Act timeline"), or one list of people or companies ("CFOs in Austin", "fintechs in London"); several metrics or topics in one query retrieve poorly. Identify a person by name alone: "Jensen Huang", not "who is Jensen Huang".
 
 Parameters:
 

@@ -28,11 +28,12 @@ If the user asks for Tako's agent and the `tako-agent` skill is installed, follo
 
 Then read the list:
 
-1. The card's `description` holds only the number of matches. To see who or what matched, pass the card's url to `tako_contents`. It returns up to 1,000 rows, even when the card shows fewer.
+1. The card's `description` holds only the number of matches. To see who or what matched, pass the card's url to `tako_contents` with `max_rows` set to the rows the answer needs, such as 25. Fetch the full list, up to 1,000 rows, only when the user asks for it.
 2. For a person's name, the card lists everyone with that name. Pick the person by title, employer, and location. If more than one row fits, ask the user which one they mean.
 3. Each row's `tako_url` opens that one person or company in Tako. Link it.
 4. A contact field such as `work_email` or `phone` can be empty because it's locked, not because it doesn't exist. Don't tell the user that a person has no email or phone.
 5. A list can't filter on revenue, investors, registry status, or a company's officers and directors. If the question needs one of those, say so. If the `tako-agent` skill is installed, offer Tako's company agent.
+6. If no list card comes back, tell the user that Tako found no list. If the `tako-agent` skill is installed, offer Tako's company agent.
 
 ## Compute over a series
 

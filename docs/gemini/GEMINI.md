@@ -26,7 +26,7 @@ because the same call already searched the web for it.
 | To see what exists, or a chart | `tako_search` | Data cards with headline values and an inline chart, plus web results with excerpts |
 | The values themselves | `tako_contents` on an `exportable: true` card's url | The card's rows, up to 2,000 |
 | To know whether *curated* data exists | `tako_available_data` | Coverage names and a `node_id` for `tako_graph_related` traversal. Graph only |
-| A person by name, or a list of people or companies by role, industry, or place | `tako_search`, then `tako_contents` on the list card's url | Up to 1,000 rows, each with a `tako_url` for that one person or company |
+| A person by name, people by role and employer or place, or companies by industry plus a place, size, or funding stage | `tako_search`, then `tako_contents` on the list card's url | Up to 1,000 rows, each with a `tako_url` for that one person or company |
 | Full rows, or a web page's text | `tako_contents` | A card's data rows, or any url's extracted text (set `query` to a question to get only the passages that answer it). Needs a signed-in connection |
 | Tako's agent to build a list of companies or people | `tako_company_agent` | A cited answer, plus list cards |
 | Tako's agent for anything else, such as a chart, a written finding, or a ranking of companies by a metric | `tako_agent` | A cited answer, plus chart cards |
@@ -47,7 +47,7 @@ opt-in `tako_search_advanced` returns a prose answer instead — name `search_ad
 - **One entity + one metric per call.** Decompose a broad question into narrow searches
   fired concurrently, such as "US CPI inflation", "US core CPI", "US PCE", then synthesize
   yourself. A single broad query retrieves worse than three narrow ones.
-- **Search a person by name alone.** Query "Jensen Huang", not "who is Jensen Huang" or
+- **Identify a person by name alone.** Query "Jensen Huang", not "who is Jensen Huang" or
   "Jensen Huang Nvidia". The card lists everyone with that name, so pick the person from
   the rows by title, employer, and location.
 - **Search first.** Use `tako_available_data` for questions about what Tako covers. It
