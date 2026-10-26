@@ -72,14 +72,14 @@ describe("declared resourceDomains", () => {
 });
 
 describe("buildChartExtraMeta with the experiment off", () => {
-  it("returns undefined when there is no image and no probe", async () => {
+  it("returns undefined when there is no image and no native card", async () => {
     await expect(
       buildChartExtraMeta(undefined, { env: BASE }),
     ).resolves.toBeUndefined();
   });
 
   it("returns undefined when env is omitted entirely", async () => {
-    // The `env`-less call shape stays supported: no env, no probe, no throw.
+    // The `env`-less call shape stays supported: no env, no native card, no throw.
     await expect(
       buildChartExtraMeta(undefined, {}),
     ).resolves.toBeUndefined();

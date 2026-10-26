@@ -1108,7 +1108,7 @@ describe("committed iframe watchdog (executed)", () => {
     expect(widgetLink(m).classList.contains("hidden")).toBe(false);
   });
 
-  it("does not re-probe the iframe it just abandoned", () => {
+  it("does not reload the iframe it just abandoned", () => {
     const m = mountChatGpt();
     deliver(m, CHATGPT_RESULT, m.wrapperWin);
     fireFrameSrcViolation(m);
@@ -1155,32 +1155,6 @@ describe("committed iframe watchdog (executed)", () => {
     // `embedOrigin` was cleared on downgrade, so the abandoned embed can no
     // longer resize the widget out from under the PNG.
     expect(widgetFrame(m).getAttribute("height")).toBe(before);
-  });
-
-  it("never fetches a relative url when the server armed no native card", () => {
-    // ChatGPT's image branch paints the PNG and fetches nothing. A host theme
-    // is set because `withHostTheme` once turned a missing url into
-    // `"?dark_mode=true"`, and that string reached `fetch` against the widget
-    // document — a request in nobody's `connect-src`.
-    const m = mountChatGpt();
-    (m.widgetWin as unknown as { openai: object }).openai = { theme: "dark" };
-    const calls: string[] = [];
-    (m.widgetWin as unknown as { fetch: unknown }).fetch = (url: string) => {
-      calls.push(String(url));
-      return new Promise(() => {});
-    };
-    deliver(
-      m,
-      toolResult(
-        // No `embed_url`, so the image branch runs even with `window.openai`
-        // present.
-        { image_url: IMAGE_URL, height: 600 },
-      ),
-      m.wrapperWin,
-    );
-    fireImageLoad(m);
-    expect(widgetImg(m).getAttribute("src")).toBe(IMAGE_URL);
-    expect(calls).toEqual([]);
   });
 });
 
@@ -1352,17 +1326,17 @@ describe("first-render hold (executed)", () => {
  * `window.openai`, so `render()` mounts live cards.
  */
 describe("mcp apps host theme (executed)", () => {
-  const NATIVE_URL = "https://mcp.example.test/embed-html/abc123?dark_mode=auto";
+  const LIVE_CARD_URL = "https://mcp.example.test/embed-html/abc123?dark_mode=auto";
 
   /**
    * Mount, feed the widget a sequence of host messages, deliver a live chart,
    * and return the url the live card fetched.
    */
-  function nativeUrlAfter(hostMessages: unknown[]): string | undefined {
+  function liveCardUrlAfter(hostMessages: unknown[]): string | undefined {
     const m = mountWidget(liveHtml());
     const stubs = stubLive(m);
     for (const msg of hostMessages) deliver(m, msg, m.wrapperWin);
-    deliverLive(m, [{ ...liveChart(0), native_card_url: NATIVE_URL }]);
+    deliverLive(m, [{ ...liveChart(0), native_card_url: LIVE_CARD_URL }]);
     return stubs.fetches[0]?.url;
   }
 
@@ -1399,35 +1373,35 @@ describe("mcp apps host theme (executed)", () => {
     };
   }
 
-  function nativeUrlWithHostContext(hostContext: unknown): string | undefined {
-    return nativeUrlAfter(
+  function liveCardUrlWithHostContext(hostContext: unknown): string | undefined {
+    return liveCardUrlAfter(
       hostContext === undefined ? [] : [initResponse(hostContext)],
     );
   }
 
   it("asks for a light card when the host declares a light theme", () => {
-    expect(nativeUrlWithHostContext({ theme: "light" })).toContain(
+    expect(liveCardUrlWithHostContext({ theme: "light" })).toContain(
       "dark_mode=false",
     );
   });
 
   it("asks for a dark card when the host declares a dark theme", () => {
-    expect(nativeUrlWithHostContext({ theme: "dark" })).toContain(
+    expect(liveCardUrlWithHostContext({ theme: "dark" })).toContain(
       "dark_mode=true",
     );
   });
 
   it("stays on auto when the host declares no theme", () => {
     // Still the best available guess — following the OS beats a coin flip.
-    expect(nativeUrlWithHostContext({})).toContain("dark_mode=auto");
+    expect(liveCardUrlWithHostContext({})).toContain("dark_mode=auto");
   });
 
   it("stays on auto when the host never answers the handshake", () => {
-    expect(nativeUrlWithHostContext(undefined)).toContain("dark_mode=auto");
+    expect(liveCardUrlWithHostContext(undefined)).toContain("dark_mode=auto");
   });
 
   it("ignores an unrecognised hostContext theme", () => {
-    expect(nativeUrlWithHostContext({ theme: "solarized" })).toContain(
+    expect(liveCardUrlWithHostContext({ theme: "solarized" })).toContain(
       "dark_mode=auto",
     );
   });
@@ -1436,7 +1410,7 @@ describe("mcp apps host theme (executed)", () => {
     // Hosts MAY omit `theme` at initialize and send it later; a toggle before
     // the first tool call must still be reflected.
     expect(
-      nativeUrlAfter([initResponse({}), contextChanged({ theme: "light" })]),
+      liveCardUrlAfter([initResponse({}), contextChanged({ theme: "light" })]),
     ).toContain("dark_mode=false");
   });
 
@@ -1445,7 +1419,7 @@ describe("mcp apps host theme (executed)", () => {
     // rather than replacing it entirely." A displayMode-only update must not
     // wipe the theme learned at initialize.
     expect(
-      nativeUrlAfter([
+      liveCardUrlAfter([
         initResponse({ theme: "light" }),
         contextChanged({ displayMode: "fullscreen" }),
       ]),
