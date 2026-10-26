@@ -41,7 +41,7 @@ const DESCRIPTION = [
   "",
   // `Best for:` verbatim: AGENTS.md's tool-description rule, and the form the
   // other three default tools already use in docs/TOOLS.md.
-  'Best for: breadth — fan out several narrow queries in parallel. Each query answers one question — one metric for one entity, a comparison set ("Apple revenue", "Nvidia vs AMD gross margin"), one news or web lookup ("EU AI Act timeline"), or one list of people or companies ("CFOs in Austin", "fintechs in London"); several metrics or topics in one query retrieve poorly. Identify a person by name alone: "Jensen Huang", not "who is Jensen Huang".',
+  'Best for: breadth — fan out several narrow queries in parallel. Each query answers one question — one metric for one entity, a comparison set ("Apple revenue", "Nvidia vs AMD gross margin"), one news or web lookup ("EU AI Act timeline"), or one list of people or companies ("CFOs in Austin", "fintechs in London"); several metrics or topics in one query retrieve poorly. A name alone ("Jensen Huang") returns a list of the people with that name.',
 ].join("\n");
 
 const inputSchema = z.object({

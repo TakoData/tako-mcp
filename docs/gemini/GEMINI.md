@@ -47,9 +47,9 @@ opt-in `tako_search_advanced` returns a prose answer instead — name `search_ad
 - **One entity + one metric per call.** Decompose a broad question into narrow searches
   fired concurrently, such as "US CPI inflation", "US core CPI", "US PCE", then synthesize
   yourself. A single broad query retrieves worse than three narrow ones.
-- **Identify a person by name alone.** Query "Jensen Huang", not "who is Jensen Huang" or
-  "Jensen Huang Nvidia". The card lists everyone with that name, so pick the person from
-  the rows by title, employer, and location.
+- **A name alone returns a list of people.** "Jensen Huang" lists everyone with that name,
+  with each person's title, employer, and location. Added words, such as "who is" or an
+  employer, drop that list but still return web results.
 - **Name who and where for a list of people.** Who is a role or a word for a company's
   people ("CFOs", "VPs of sales", "founders", "employees", "leadership team"). Where is an
   employer, a place, or both: "Airbnb CFO", "engineers at Google in London". A role alone,

@@ -393,9 +393,9 @@ If the user asks for Tako's agent and the `tako-agent` skill is installed, follo
 
 `tako_search` returns a list card for a person's name, for a set of people, and for a set of companies. Each row is one person or company.
 
-**A person by name.** Search the full name alone: "Patrick Collison".
+**A person by name.** The full name alone returns a list of the people with that name, such as "Patrick Collison". Use it to find someone the web knows little about, or to tell namesakes apart.
 
-- Don't phrase it as a question or add a title or employer. Search reads every word as part of the name, so "Jensen Huang Nvidia" returns no person.
+- Search reads every word as part of the name, so a question or an added title or employer drops the list: "Jensen Huang Nvidia" returns no list. Those queries still return web results and other cards, which can answer a question about a well-known person.
 - Search doesn't match nicknames: "Tim Cook" and "Timothy Cook" return different people. If no row fits, try the other form of the name.
 
 **People by role.** Name who and where.
