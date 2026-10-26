@@ -149,10 +149,15 @@ descriptions:
 
 Every miss called no Tako tool. Two Answer Agent asks rank companies by a
 metric, such as "rank the top 10 airlines by revenue growth in 2024", and
-every run sent them to `tako_agent`. One Company Agent ask resolves company
-names, which the shipped description no longer names, and every run sent it
-to `tako_company_agent`. All runs used `gpt-6-luna` on Codex 0.164.0, and the
-`tako-search` skill from before TAKO-5270.
+every run in this table sent them to `tako_agent`. One Company Agent ask
+resolves company names, which the shipped description no longer names, and
+every run sent it to `tako_company_agent`. A repeat of the shipped arms, with
+the skill's clause for a ranking of companies by a metric, started the right
+agent on 40 of 40 asks with skills. Without skills, it sent the airline
+ranking to `tako_company_agent` in both runs. At two runs per ask, the number
+of wrong-agent starts varies by a few in 40 between identical arms, so these
+runs can't separate one wording from another. All runs used `gpt-6-luna` on
+Codex 0.164.0, and the `tako-search` skill from before TAKO-5270.
 
 An earlier run on `gpt-6-astra` (Codex 0.155.1) tested the tool description.
 Rewriting the `tako_search` description to list its domains and sources left

@@ -75,17 +75,19 @@ tools:
   - name: tako_agent
     description: >-
       Run Tako's Answer Agent — multi-step research with Tako's data and the
-      web; returns a cited answer plus chart cards. Opt-in — add the `agent` token to
-      the server URL's ?tools= allowlist, which replaces the default listing, so
-      name the other tools you want too (?tools=search,available_data,agent).
+      web; returns a cited answer plus chart cards. Opt-in — add the `agent`
+      token to the server URL's ?tools= allowlist, which replaces the default
+      listing, so name the other tools you want too
+      (?tools=search,available_data,agent).
   - name: tako_company_agent
     description: >-
       Run Tako's Company Agent to build a list of companies or people, such as
-      companies by location, industry, status, or size, or the officers,
-      directors, owners, or employees of those companies. It returns a cited answer plus list
-      cards. Opt-in: add the `company_agent` token to the server URL's ?tools=
-      allowlist. The allowlist replaces the default listing, so name the other
-      tools you want too (?tools=search,available_data,company_agent).
+      companies by location, industry, status, founding date, funding stage,
+      or size, or the officers, directors, owners, or employees of those
+      companies. It returns a cited answer plus list cards. Opt-in: add the
+      `company_agent` token to the server URL's ?tools= allowlist. The
+      allowlist replaces the default listing, so name the other tools you want
+      too (?tools=search,available_data,company_agent).
   - name: tako_graph_related
     description: >-
       Explore what a Tako graph node connects to — its metrics, the entities a
