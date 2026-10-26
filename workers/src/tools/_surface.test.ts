@@ -7,6 +7,7 @@ import {
   CHATGPT_TOOL_NAMES,
   FREE_TIER_TOOL_NAMES,
   GENERIC_DEFAULT_TOOL_NAMES,
+  contentsAcceptsPremium,
   inputSchemaForSurface,
   isToolOnSurface,
   resolveToolSet,
@@ -166,5 +167,14 @@ describe("inputSchemaForSurface", () => {
     const tool = { inputSchema: generic };
     expect(inputSchemaForSurface(tool, "chatgpt")).toBe(generic);
     expect(inputSchemaForSurface(tool, "generic")).toBe(generic);
+  });
+});
+
+describe("contentsAcceptsPremium", () => {
+  it("agrees with whether each surface's tako_contents schema registers premium", () => {
+    const contents = TOOL_REGISTRY.find((t) => t.name === "tako_contents")!;
+    for (const surface of ["generic", "chatgpt"] as const) {
+      expect(contentsAcceptsPremium(surface), surface).toBe("premium" in inputSchemaForSurface(contents, surface).shape);
+    }
   });
 });

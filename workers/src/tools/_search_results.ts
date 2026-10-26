@@ -394,14 +394,15 @@ function capCsv(csv: string, cap: number): { data: string; truncated: boolean } 
  * summary, which search already returns without rows, and the second echoes
  * the request's offset.
  *
- * Known caveat, live only once a card actually carries a premium column (today
- * none does, and `premium` is false on every search and answer card): both
+ * Known caveat, live now that people cards carry premium columns: both
  * `premium_rows` and `redacted_cells` are stated against the rows the BACKEND
  * delivered, and the numeric-cap branch below re-slices those rows. The count
- * then overstates and the positions index the pre-cap rows. Re-mapping needs a
- * dropped-row offset out of all three cap helpers (`capCsv`, and `capRecentRows`
- * for records and dataset), which none of them reports today. Do that when a
- * premium column ships, not before.
+ * then overstates and the positions index the pre-cap rows. Neither reaches
+ * the model as data today: a projected card carries only `rows`, and
+ * `withheldCellsGuidance` reads `premium_rows` only for a count above zero.
+ * Re-mapping needs a dropped-row offset out of all three cap helpers
+ * (`capCsv`, and `capRecentRows` for records and dataset), which none of them
+ * reports today. Do that before a projected card exposes either field.
  */
 export const CONTENT_PAYLOAD_KEYS = ["data", "records", "dataset", "card_data"] as const;
 export const CONTENT_META_KEYS = [
@@ -1344,6 +1345,20 @@ export function withheldDataGuidance(cards: ReadonlyArray<TakoCard>): string | u
   return `${sources.join(" and ")} data on a placeholder card needs a signed-in connection. ${GENERIC_SIGN_IN_HINT}`;
 }
 
+export const WITHHELD_CELLS_GUIDANCE =
+  "A card withholds cells, such as each person's email and phone. When the user asks for them, `tako_contents` with `premium: true` returns them and bills each row that holds one.";
+
+export function withheldCellsGuidance(cards: ReadonlyArray<TakoCard>): string | undefined {
+  const withholds = cards.some((card) => {
+    const content = card.content as Record<string, unknown> | null | undefined;
+    if (content == null || content.premium === true) return false;
+    const premiumRows = content.premium_rows;
+    if (premiumRows == null || typeof premiumRows !== "object") return false;
+    return Object.values(premiumRows).some((count) => typeof count === "number" && count > 0);
+  });
+  return withholds ? WITHHELD_CELLS_GUIDANCE : undefined;
+}
+
 /** Wire fields that ride into the output when the request asked for them. */
 export type SearchOutputExtras = {
   related?: z.infer<typeof RelatedSuggestion>[];
@@ -1378,6 +1393,7 @@ export function buildSearchOutput(
     keepWebText: boolean;
     /** The tool this output belongs to, named in the projection log. */
     toolName: SearchToolName;
+    canRequestPremium: boolean;
   },
   extras: SearchOutputExtras = {},
 ): SearchOutput {
@@ -1387,6 +1403,7 @@ export function buildSearchOutput(
   );
   const web = webResults.map((w) => projectWebResult(w, opts.keepWebText));
   const withheld = withheldDataGuidance(rawCards);
+  const withheldCells = tier !== "free" && opts.canRequestPremium ? withheldCellsGuidance(rawCards) : undefined;
   const base: SearchOutput = {
     cards,
     web_results: web,
@@ -1403,6 +1420,7 @@ export function buildSearchOutput(
     ...(cards.length === 0 && strictPin ? { guidance: STRICT_PIN_GUIDANCE } : {}),
     // A placeholder is a card, so this never competes with the strict-pin verdict.
     ...(tier === "free" && withheld !== undefined ? { guidance: withheld } : {}),
+    ...(withheldCells !== undefined ? { guidance: withheldCells } : {}),
     // Reference maps LAST so tail-truncating hosts lose prose before data.
     ...(maps.metric_definitions !== undefined
       ? { metric_definitions: maps.metric_definitions }
