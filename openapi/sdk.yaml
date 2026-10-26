@@ -2687,9 +2687,10 @@ components:
             agent run cards. On a search or answer card that returns no rows, it's
             set when the card can hold premium values, and gives the rows a /contents
             export of the card returns. A list of companies or people that match a
-            name shows the top of a search its /contents export runs again, so on
-            a search or answer card, returned rows or not, total_rows is the most
-            rows that export returns, and truncated is true. Null for web text.
+            name or a set of filters, such as fintechs in London, shows the top of
+            a search its /contents export runs again, so on a search or answer card,
+            returned rows or not, total_rows is the most rows that export returns,
+            and truncated is true. Null for web text.
         total_matching:
           anyOf:
           - type: integer
@@ -4204,9 +4205,10 @@ components:
             agent run cards. On a search or answer card that returns no rows, it's
             set when the card can hold premium values, and gives the rows a /contents
             export of the card returns. A list of companies or people that match a
-            name shows the top of a search its /contents export runs again, so on
-            a search or answer card, returned rows or not, total_rows is the most
-            rows that export returns, and truncated is true. Null for web text.
+            name or a set of filters, such as fintechs in London, shows the top of
+            a search its /contents export runs again, so on a search or answer card,
+            returned rows or not, total_rows is the most rows that export returns,
+            and truncated is true. Null for web text.
         total_matching:
           anyOf:
           - type: integer
