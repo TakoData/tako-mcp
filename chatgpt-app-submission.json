@@ -3,8 +3,8 @@
   "schema_version": 1,
   "app_info": {
     "display_name": "Tako",
-    "subtitle": "Search live data and charts",
-    "description": "Tako helps users find current data and metrics from proprietary datasets and the live web as citation-backed charts, retrieve the underlying result content, check available data coverage, answer multi-step research, company, and registry-officer questions with Tako's agents, and create shareable public chart links from user-provided structured data.",
+    "subtitle": "Premium live data & web search",
+    "description": "Tako combines premium live data from authoritative providers with web search in one call, and returns citation-backed charts. It also retrieves the content behind a result, checks data coverage, answers multi-step research, company, and registry-officer questions with Tako's agents, and creates shareable public chart links from user-provided structured data.",
     "category": "PRODUCTIVITY"
   },
   "tools": {
@@ -150,7 +150,7 @@
     },
     {
       "description": "Answer a multi-step research question with the Answer Agent.",
-      "user_prompt": "Using Tako, rank the five largest US semiconductor companies by revenue growth over the last three fiscal years, and explain what drove the leader.",
+      "user_prompt": "Use the Tako agent to rank the five largest US semiconductor companies by revenue growth over the last three fiscal years, and explain what drove the leader.",
       "file_attachment_urls": null,
       "tools_triggered": "tako_agent",
       "expected_output": "tako_agent returns a written answer with numbered citations and the chart cards it built. The reply ranks the companies and explains the leader's growth, and links each card's Tako page. The chart cards render inline above the reply. If the first call returns status running, the model calls tako_agent again with the same run_id until the run finishes.",
@@ -158,7 +158,7 @@
     },
     {
       "description": "Screen companies by registry facts with the Company Agent.",
-      "user_prompt": "Using Tako, find active UK software companies incorporated in 2024 and registered in Manchester.",
+      "user_prompt": "Use Tako's company agent to find active UK software companies incorporated in 2024 and registered in Manchester.",
       "file_attachment_urls": null,
       "tools_triggered": "tako_company_agent",
       "expected_output": "tako_company_agent returns a written answer with citations and a list card of matching companies. The reply summarizes the matches and links the card's Tako page, where the full list lives. The list card renders inline above the reply.",

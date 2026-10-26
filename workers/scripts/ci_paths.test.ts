@@ -37,7 +37,7 @@ const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const WORKFLOW = resolve(REPO_ROOT, ".github", "workflows", "workers-ci.yml");
 
 /**
- * Reads by the two guards that are NOT the registry generator. Hand-listed
+ * Reads by the guards that are NOT the registry generator. Hand-listed
  * because neither exports a read-set, but still CHECKED: drop one of these
  * from the workflow and this test fails.
  */
@@ -50,6 +50,7 @@ const OTHER_GUARD_INPUTS: readonly string[] = [
   "gemini-extension.json", // scripts/gemini-extension.test.ts
   "commands/answer.md",
   "docs/gemini/GEMINI.md",
+  "chatgpt-plugin/plugin.json",
   ".github/workflows/workers-ci.yml", // this file, via WORKFLOW below
 ];
 

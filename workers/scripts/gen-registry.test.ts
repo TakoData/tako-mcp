@@ -299,6 +299,30 @@ describe("assertChatgptSubmissionParity", () => {
     ).toThrow(/extra tool "tako_ghost"/);
   });
 
+  it("fails on a review test case whose tools_triggered is not on the chatgpt surface", () => {
+    const declared = JSON.stringify({
+      tools: {
+        [ON_SURFACE]: {
+          annotations: {
+            readOnlyHint: true,
+            destructiveHint: false,
+            idempotentHint: true,
+            openWorldHint: true,
+          },
+        },
+      },
+      test_cases: [
+        { description: "Look up a figure.", tools_triggered: ON_SURFACE },
+        { description: "Rank companies.", tools_triggered: "tako_agnet" },
+      ],
+    });
+    expect(() =>
+      assertChatgptSubmissionParity([tool(ON_SURFACE)], declared),
+    ).toThrow(
+      /test case "Rank companies\." tools_triggered "tako_agnet" is not on the chatgpt surface/,
+    );
+  });
+
   it("fails on a hint mismatch with a per-tool, per-hint message", () => {
     const t = tool(ON_SURFACE, { chatgpt: { openWorldHint: false } });
     const declared = submission({
