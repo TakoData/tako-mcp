@@ -1,10 +1,11 @@
 name: tako-mcp
 title: Tako MCP Server
 description: |
-  Tako MCP gives your agent industry-leading live web search plus licensed
-  data that the open web does not have. That includes company financials,
-  macroeconomic indicators, website traffic, sports, US government
-  spending, and more.
+  Tako MCP gives your agent premium live data from authoritative providers
+  and web search in one call, returned as cited charts and web results.
+  The data covers finance, markets, company KPIs, economics, website
+  traffic, sports, prediction markets, demographics, energy, real estate,
+  and more.
 version: 1.5.0
 license: MIT
 author:
@@ -44,7 +45,13 @@ configSchema:
         Web hosts can ignore this and use OAuth instead.
 tools:
   - name: tako_search
-    description: Search Tako's knowledge base for charts and live data on any topic
+    description: >-
+      Search premium data from authoritative providers and the live web in one
+      call. Returns cited cards that render as charts, plus web results.
+  - name: tako_available_data
+    description: >-
+      Report what data Tako holds on an entity or metric, including a metric's
+      exact name to search for.
   - name: tako_search_advanced
     description: >-
       The whole v3 search request body, plus `include_answer: true` for one
@@ -54,7 +61,9 @@ tools:
       (?tools=search,available_data,contents,search_advanced). Most hosts should
       prefer tako_search and synthesize the answer themselves.
   - name: tako_contents
-    description: Fetch the content behind a result URL (a card's CSV or a page's text)
+    description: >-
+      Fetch the full content behind a url: a web page's text, or an exportable
+      Tako card's data rows. Batch several urls in one call.
   - name: tako_visualize
     description: >-
       Create a card from your own structured data. The card is public and
@@ -69,6 +78,14 @@ tools:
       returns a cited answer plus chart cards. Opt-in — add the `agent` token to
       the server URL's ?tools= allowlist, which replaces the default listing, so
       name the other tools you want too (?tools=search,available_data,agent).
+  - name: tako_company_agent
+    description: >-
+      Run Tako's Company Agent to screen companies by registry facts, such as
+      status, incorporation date, location, and industry, or to find a
+      company's officers and directors. It returns a cited answer plus list
+      cards. Opt-in: add the `company_agent` token to the server URL's ?tools=
+      allowlist. The allowlist replaces the default listing, so name the other
+      tools you want too (?tools=search,available_data,company_agent).
   - name: tako_graph_related
     description: >-
       Explore what a Tako graph node connects to — its metrics, the entities a
@@ -79,18 +96,12 @@ examples:
     description: Find existing visualizations on any topic
     input: |
       {"query": "US GDP growth rate"}
-  - title: Answer a Data Question
+  - title: See What Data Tako Has
     description: >-
-      Get a synthesized answer with supporting chart cards. Call
-      tako_search_advanced with `include_answer: true`, which needs the
-      `search_advanced` token on the server URL's ?tools= allowlist — and
-      because that allowlist replaces the default listing, name the other tools
-      you want too (?tools=search,available_data,contents,search_advanced).
-      Without it, tako_search returns the same data for your model to
-      synthesize.
-    input: >
-      {"query": "How have US mortgage rates moved over the past year?",
-      "include_answer": true}
+      Find what data Tako holds on an entity or metric, including a metric's
+      exact name to search for
+    input: |
+      {"q": "Tesla"}
 links:
   homepage: https://tako.com
   documentation: https://github.com/TakoData/tako-mcp#readme

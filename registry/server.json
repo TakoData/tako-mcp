@@ -4,7 +4,7 @@
   "name": "tako-mcp",
   "version": "1.5.0",
   "title": "Tako MCP Server",
-  "description": "Tako MCP gives your agent industry-leading live web search plus licensed data that the open web does not have. That includes company financials, macroeconomic indicators, website traffic, sports, US government spending, and more.",
+  "description": "Tako MCP gives your agent premium live data from authoritative providers and web search in one call, returned as cited charts and web results. The data covers finance, markets, company KPIs, economics, website traffic, sports, prediction markets, demographics, energy, real estate, and more.",
   "repository": {
     "url": "https://github.com/TakoData/tako-mcp",
     "source": "github"

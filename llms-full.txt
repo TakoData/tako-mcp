@@ -1,6 +1,6 @@
 # Tako
 
-> Tako is a data intelligence platform. The Tako MCP server lets AI agents search a proprietary, continuously-updated knowledge base of 100K+ curated charts — carrying the latest reported quarter, same-day market prices, and official releases as they publish, not static historical reference — get grounded answers, explore Tako's data graph, fetch underlying source content, and run a multi-step Answer Agent. It is a hosted remote MCP server on Cloudflare Workers.
+> Tako is a data intelligence platform. The Tako MCP server gives AI agents premium live data from authoritative providers and web search in one call. Agents can also discover what data Tako holds, fetch the rows or page text behind a result, explore the data graph, and opt in to chart creation or Tako's Answer Agent and Company Agent. It is a hosted remote MCP server on Cloudflare Workers.
 
 ## Documentation
 
