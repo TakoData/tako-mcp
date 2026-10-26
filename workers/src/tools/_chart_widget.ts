@@ -605,7 +605,7 @@ const NATIVE_HEIGHT_REPORTER = buildHeightReporter(
 );
 
 const LIVE_CARD_HEIGHT_REPORTER = buildHeightReporter(
-  "try{window.parent.postMessage({type:'tako-embed-height',height:h},'*');}catch(e){}",
+  "try{window.parent.postMessage({type:'tako-live-card-height',height:h},'*');}catch(e){}",
 );
 
 function inlineScriptString(value: string): string {
@@ -2061,6 +2061,7 @@ const WIDGET_HTML = `<!doctype html>
     charts.forEach(function (chart, i) {
       carouselSlides.push(liveCardSlide(chart, i, charts.length, fallbackHeight));
     });
+    document.addEventListener("securitypolicyviolation", onLiveCardViolation);
     showLiveCard(0);
     carouselTrack.addEventListener("scroll", followLiveCardScroll);
     return openCarousel("live-cards", stepLiveCard);
@@ -2098,6 +2099,7 @@ const WIDGET_HTML = `<!doctype html>
       onLoad: null,
       live: true,
       mounted: false,
+      objectUrl: null,
     };
   }
 
@@ -2151,11 +2153,16 @@ const WIDGET_HTML = `<!doctype html>
         iframe.setAttribute("frameborder", "0");
         iframe.setAttribute("allow", "fullscreen; clipboard-write");
         iframe.setAttribute("title", slide.title);
-        iframe.src = URL.createObjectURL(new Blob([patched], { type: "text/html" }));
+        var objectUrl = URL.createObjectURL(new Blob([patched], { type: "text/html" }));
+        iframe.src = objectUrl;
         settled = true;
         clearTimeout(timer);
         slide.iframe = iframe;
+        slide.objectUrl = objectUrl;
         slide.el.appendChild(iframe);
+        slide.timer = setTimeout(function () {
+          dropLiveCardFrame(slide, "no height report");
+        }, IFRAME_SETTLE_MS);
         applyHostSurface();
         log("live card mounted", { bytes: patched.length, src: url });
       })
@@ -2165,6 +2172,21 @@ const WIDGET_HTML = `<!doctype html>
         clearTimeout(timer);
         failLiveCard(slide, String(err && err.message ? err.message : err));
       });
+  }
+
+  function dropLiveCardFrame(slide, reason) {
+    if (slide.settled || !slide.iframe) return;
+    slide.el.removeChild(slide.iframe);
+    slide.iframe = null;
+    try { URL.revokeObjectURL(slide.objectUrl); } catch (e) {}
+    slide.objectUrl = null;
+    failLiveCard(slide, reason);
+  }
+
+  function onLiveCardViolation(event) {
+    if (!isFrameSrcViolation(event)) return;
+    var reason = "csp:" + (event.effectiveDirective || event.violatedDirective);
+    carouselSlides.forEach(function (s) { dropLiveCardFrame(s, reason); });
   }
 
   function failLiveCard(slide, reason) {
@@ -2341,10 +2363,19 @@ const WIDGET_HTML = `<!doctype html>
 
   function onCarouselEmbedHeight(event, height) {
     var slide = carouselSlideFor(event.source);
-    if (!slide || (!slide.live && event.origin !== slide.origin)) return;
+    if (!slide || slide.live || event.origin !== slide.origin) return;
+    resizeSlide(slide, acceptedEmbedHeight(height));
+  }
+
+  function onLiveCardHeight(event, height) {
+    var slide = carouselSlideFor(event.source);
+    if (!slide || !slide.live) return;
     var n = acceptedEmbedHeight(height);
+    resizeSlide(slide, n === null ? null : Math.min(n, ${MAX_INLINE_WIDGET_HEIGHT_PX}));
+  }
+
+  function resizeSlide(slide, n) {
     if (n === null) return;
-    if (slide.live) n = Math.min(n, ${MAX_INLINE_WIDGET_HEIGHT_PX});
     settleSlide(slide);
     revealSlide(slide, n);
     log("carousel slide resized via embed handshake", { height: n });
@@ -3442,6 +3473,10 @@ const WIDGET_HTML = `<!doctype html>
         // Label now instead of leaving the box to the silent watchdog.
         collapseFailed();
       }
+      return;
+    }
+    if (msg.type === "tako-live-card-height") {
+      onLiveCardHeight(event, msg.height);
       return;
     }
     if (msg.type === "tako-embed-height" && carouselSlideFor(event.source)) {

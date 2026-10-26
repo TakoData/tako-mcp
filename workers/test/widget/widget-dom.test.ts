@@ -2737,13 +2737,18 @@ describe("live cards (no window.openai)", () => {
     for (let i = 0; i < 5; i++) await Promise.resolve();
   }
 
-  function postSlideHeight(m: Mounted, source: Window, height: number): void {
+  function postSlideHeight(
+    m: Mounted,
+    source: Window,
+    height: number,
+    type = "tako-live-card-height",
+  ): void {
     const WidgetMessageEvent = (
       m.widgetWin as unknown as { MessageEvent: typeof MessageEvent }
     ).MessageEvent;
     m.widgetWin.dispatchEvent(
       new WidgetMessageEvent("message", {
-        data: { type: "tako-embed-height", height },
+        data: { type, height },
         origin: "null",
         source: source as unknown as MessageEventSource,
       }),
@@ -2781,7 +2786,7 @@ describe("live cards (no window.openai)", () => {
     expect(widgetFrame(m).getAttribute("src")).toBeNull();
   });
 
-  it("writes the card, the host scheme, and a tako-embed-height reporter into the blob", async () => {
+  it("writes the card, the host scheme, and a tako-live-card-height reporter into the blob", async () => {
     const m = mountWidget(liveHtml());
     const stubs = stubLive(m);
     deliver(
@@ -2804,9 +2809,10 @@ describe("live cards (no window.openai)", () => {
     expect(body).toContain(`CARD ${stubs.fetches[0]?.url}`);
     expect(body).toContain('id="tako-host-scheme"');
     expect(body).toContain("color-scheme:dark");
-    expect(body).toContain("tako-embed-height");
+    expect(body).toContain("tako-live-card-height");
+    expect(body).not.toContain("tako-embed-height");
     expect(body).not.toContain("ui/notifications/size-changed");
-    expect(body.indexOf("tako-embed-height")).toBeLessThan(body.indexOf("</body>"));
+    expect(body.indexOf("tako-live-card-height")).toBeLessThan(body.indexOf("</body>"));
   });
 
   it("caps the height the blob's reporter posts at the inline ceiling", async () => {
@@ -2824,7 +2830,7 @@ describe("live cards (no window.openai)", () => {
     await new Promise((r) => setTimeout(r, 10));
 
     const heights = posted
-      .filter((d) => (d as { type?: string }).type === "tako-embed-height")
+      .filter((d) => (d as { type?: string }).type === "tako-live-card-height")
       .map((d) => (d as { height: number }).height);
     expect(heights.length).toBeGreaterThan(0);
     heights.forEach((h) => expect(h).toBeLessThanOrEqual(500));
@@ -2972,6 +2978,97 @@ describe("live cards (no window.openai)", () => {
     notified.forEach((h, i) => {
       if (i > 0) expect(h).toBeGreaterThanOrEqual(notified[i - 1] as number);
     });
+  });
+
+  it("ignores a tako-embed-height from a live frame, which only the card itself sends", async () => {
+    const m = mountWidget(liveHtml());
+    stubLive(m);
+    deliverLive(m, liveCharts(2));
+    await settle();
+    const first = mountedFrame(m, 0);
+    const before = sizeChangesOf(m).length;
+
+    postSlideHeight(m, first.contentWindow as Window, 420, "tako-embed-height");
+    expect(first.classList.contains("veiled")).toBe(true);
+    expect(first.getAttribute("height")).toBeNull();
+    expect(sizeChangesOf(m)).toHaveLength(before);
+
+    postSlideHeight(m, first.contentWindow as Window, 300);
+    postSlideHeight(m, first.contentWindow as Window, 420, "tako-embed-height");
+    expect(first.getAttribute("height")).toBe("300");
+  });
+
+  function stubTrackOverflow(m: Mounted): void {
+    const track = m.widgetWin.document.querySelector("#tako-carousel .tako-track") as HTMLElement;
+    Object.defineProperty(track, "scrollWidth", { configurable: true, get: () => 2000 });
+    Object.defineProperty(track, "clientWidth", { configurable: true, get: () => 700 });
+  }
+
+  it("fails a mounted frame that never reports a height once the settle window passes", async () => {
+    vi.useFakeTimers();
+    try {
+      const m = mountWidget(liveHtml());
+      const revoked: string[] = [];
+      const stubs = stubLive(m);
+      (m.widgetWin as unknown as { URL: { revokeObjectURL: unknown } }).URL.revokeObjectURL = (
+        url: string,
+      ) => revoked.push(url);
+      const charts = liveCharts(3);
+      deliverLive(m, charts);
+      stubTrackOverflow(m);
+      await vi.advanceTimersByTimeAsync(0);
+      const firstSrc = mountedFrame(m, 0).getAttribute("src");
+      expect(navButton(m, "tako-next").classList.contains("hidden")).toBe(true);
+
+      await vi.advanceTimersByTimeAsync(7900);
+      expect(slideFrame(m, 0)).not.toBeNull();
+      await vi.advanceTimersByTimeAsync(200);
+
+      expectFailureCopy(m, 0, charts[0] as LiveChart);
+      expectFailureCopy(m, 1, charts[1] as LiveChart);
+      expect(revoked).toContain(firstSrc);
+      expect(navButton(m, "tako-next").classList.contains("hidden")).toBe(false);
+      navButton(m, "tako-next").click();
+      expect(fetchedUrls(stubs)).toEqual(nativeUrls(charts));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps a frame that reports a height before the settle window passes", async () => {
+    vi.useFakeTimers();
+    try {
+      const m = mountWidget(liveHtml());
+      stubLive(m);
+      const charts = liveCharts(2);
+      deliverLive(m, charts);
+      await vi.advanceTimersByTimeAsync(0);
+      const first = mountedFrame(m, 0);
+      postSlideHeight(m, first.contentWindow as Window, 340);
+
+      await vi.advanceTimersByTimeAsync(9000);
+      expect(mountedFrame(m, 0)).toBe(first);
+      expect(first.getAttribute("height")).toBe("340");
+      expect(liveSlides(m)[0]?.textContent).not.toContain("Couldn't load this chart.");
+      expectFailureCopy(m, 1, charts[1] as LiveChart);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("fails the unreported live frames on a frame-src violation", async () => {
+    const m = mountWidget(liveHtml());
+    stubLive(m);
+    const charts = liveCharts(2);
+    deliverLive(m, charts);
+    await settle();
+    const first = mountedFrame(m, 0);
+    postSlideHeight(m, first.contentWindow as Window, 340);
+
+    fireFrameSrcViolation(m);
+
+    expect(mountedFrame(m, 0)).toBe(first);
+    expectFailureCopy(m, 1, charts[1] as LiveChart);
   });
 
   it("renders a finished agent result's charts as live cards", async () => {
