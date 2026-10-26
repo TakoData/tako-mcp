@@ -248,8 +248,8 @@ describe("tako_agent over MCP", () => {
     const server = createMcpServer(
       { ...ctx, surface },
       surface === "chatgpt"
-        ? { surface }
-        : { surface, requestedToolNames: new Set(["tako_agent"]) },
+        ? { surface, clientRendersUi: true }
+        : { surface, clientRendersUi: false, requestedToolNames: new Set(["tako_agent"]) },
     );
     const client = new Client(
       { name: "agent-test", version: "0.0.0" },

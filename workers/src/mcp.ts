@@ -27,6 +27,12 @@ import type { Env } from "./env.js";
 import { APP_UI_MIME_TYPE } from "./mcp_session.js";
 import type { Surface } from "./surface.js";
 import {
+  initializeDeclaresUi,
+  mintSessionId,
+  sessionIdKind,
+  sessionRendersUi,
+} from "./mcp_session.js";
+import {
   checkFreeTierRateLimit,
   type FreeTierConfig,
   freeTierBatchResponse,
@@ -132,6 +138,13 @@ export function createMcpServer(
      * the surface mandatory is how that property survives the rewrite.
      */
     surface: Surface;
+    /**
+     * Whether the connected client declared MCP Apps UI support. Required,
+     * with no default: a silent default would send a widget to a client that
+     * can't render it, or a PNG to one that can. The chatgpt surface passes
+     * `true`; `/mcp` derives it from the `initialize` body or the session ID.
+     */
+    clientRendersUi: boolean;
     /**
      * The `?tools=` allowlist for this request, as parsed by
      * `parseToolsParam` (spec D1): the tool names to register INSTEAD of
@@ -270,6 +283,7 @@ export function createMcpServer(
     }
     registerTool(server, tool, ctx, {
       surface,
+      clientRendersUi: options.clientRendersUi,
       tier,
       registeredTools,
       // Commerce copy (billing remedies, account pointers) is allowed on
@@ -391,6 +405,7 @@ function registerTool(
   ctx: ToolContext,
   options: {
     surface: Surface;
+    clientRendersUi: boolean;
     /**
      * Connection tier the server instance was built for. `"free"` blocks
      * non-free tools at call time with an auth challenge instead of
@@ -528,24 +543,12 @@ function registerTool(
   // can read `ui.dynamic` and resolve the per-call widget URI for the
   // dynamic-resource path.
   //
-  // One gate controls whether the chart ships as a widget or a PNG:
-  // `widgetSuppressed`. The chatgpt surface keeps the MCP Apps widget
-  // (the Apps SDK renders it as a fully interactive iframe); the generic
-  // surface suppresses it and ships the inline PNG `image` content block
-  // instead (spec D14/D15) — the portable fallback the long tail of MCP
-  // hosts (Cursor, Windsurf, Gemini CLI, LibreChat, claude.ai, …) can
-  // render. claude.ai's widget path is a fast-follow gated on two open
-  // host bugs: anthropics/claude-ai-mcp#753 (an extra content block
-  // starves the widget of tool-result events) and #40 (declared CSP
-  // `frameDomains` ignored). The `embed_url` in the structured content
-  // stays the click-through to the interactive chart everywhere.
-  //
-  // (The image-block/widget mutual exclusion is separately guaranteed by
-  // the `ui === undefined` condition at the call-time
-  // `extraContentBlocks` gate.)
-  const widgetSuppressed = options.surface !== "chatgpt";
+  // The widget is declared on every surface, so `tools/list` and
+  // `resources/list` never vary by client. Whether a given call ships the
+  // widget or the inline PNG is decided per call by `widgetLive` in the
+  // handler below.
   const ui =
-    tool.appUiResource !== undefined && !widgetSuppressed
+    tool.appUiResource !== undefined
       ? tool.appUiResource(ctx.env, options.origin)
       : undefined;
 
@@ -733,6 +736,9 @@ function registerTool(
     tool.name,
     config as Parameters<McpServer["registerTool"]>[1],
     (async (input: unknown, extra: ToolHandlerExtra) => {
+      const widgetLive =
+        ui !== undefined &&
+        (options.surface === "chatgpt" || options.clientRendersUi);
       // Build a per-call context that layers `sendProgress` over the
       // shared `{ token, env }`. The SDK's `extra._meta.progressToken`
       // is set when the client provided a progressToken on the request;
@@ -958,23 +964,15 @@ function registerTool(
       // + structuredContent that's already there rather than failing the
       // call.
       //
-      // Fires only when this registration carries no widget
-      // (`ui === undefined` — widget-less tools everywhere, and now
-      // chart tools on UNKNOWN clients only, where the widget is
-      // suppressed) AND the inline PNG fallback hasn't been
-      // independently suppressed for this tool. This is how the long
-      // tail of MCP hosts (Cursor, Windsurf, Gemini CLI, LibreChat, …)
-      // gets the chart inline: the PNG image content block renders as
-      // a generic `image` block, with `embed_url` in the structured
-      // content as the interactive click-through. The chatgpt surface
-      // never takes this path — it gets the MCP Apps widget instead
-      // (see `widgetSuppressed` above).
+      // Fires when no widget is live for this call: widget-less tools, and
+      // chart tools called by a client that didn't declare MCP Apps support.
+      // The PNG image content block renders as a generic `image` block, with
+      // `embed_url` in the structured content as the interactive click-through.
       //
-      // Pairing image content blocks with widget metadata in the
-      // same result silently disabled ChatGPT's widget data flow, so
-      // the `ui === undefined` condition keeps content-block image
-      // fallbacks and widget metadata mutually exclusive.
-      if (tool.extraContentBlocks !== undefined && ui === undefined) {
+      // Pairing image content blocks with widget metadata in the same result
+      // silently disabled ChatGPT's widget data flow, so `widgetLive` keeps
+      // content-block image fallbacks and widget metadata mutually exclusive.
+      if (tool.extraContentBlocks !== undefined && !widgetLive) {
         try {
           const extra = await tool.extraContentBlocks(output, callCtx);
           content.push(...extra);
@@ -995,26 +993,11 @@ function registerTool(
       // without tripping claude.ai's "tool result too large for
       // context" guard.
       //
-      // Gated on `ui !== undefined` — the inverse of `extraContentBlocks`
-      // above. Where no widget is live, nothing would consume `_meta`, so
-      // running this hook would inflate the JSON-RPC response with a
-      // ~330 KB unused data URL.
-      //
-      // `ui` is set only when `!widgetSuppressed`, and `widgetSuppressed` is
-      // `surface !== "chatgpt"` — so TODAY this hook fires on the chatgpt
-      // surface alone, and `ctx.surface` inside every `extraMeta` is always
-      // `"chatgpt"`. That is why the tools' `bakeImage: ctx.surface !==
-      // "chatgpt"` always resolves false: ChatGPT's widget loads `embed_url`
-      // in an iframe and needs the aspect ratio, not the bytes. Those
-      // expressions are kept, not simplified, because the claude.ai widget
-      // fast-follow (anthropics/claude-ai-mcp#753, #40) puts a widget on the
-      // generic surface, and a widget there reads `_meta.image_data_url`
-      // directly — the bundle's runtime `window.openai` feature detection
-      // picks the image branch where it cannot embed a third-party iframe.
-      // When that lands, this hook starts firing with `surface === "generic"`
-      // and `bakeImage` becomes true with no edit to the tools.
+      // Gated on `widgetLive` — the inverse of `extraContentBlocks` above.
+      // Where no widget is live, nothing would consume `_meta`, so running
+      // this hook would inflate the JSON-RPC response with an unused payload.
       let resultMeta: Record<string, unknown> | undefined;
-      if (tool.extraMeta !== undefined && ui !== undefined) {
+      if (tool.extraMeta !== undefined && widgetLive) {
         try {
           resultMeta = await tool.extraMeta(output, callCtx);
         } catch (err) {
@@ -1033,7 +1016,7 @@ function registerTool(
       // static iframe widget (its CSP allows the cross-origin iframe
       // path for full interactivity, so it doesn't need the
       // image-baked dynamic variant).
-      if (ui?.dynamic !== undefined) {
+      if (widgetLive && ui.dynamic !== undefined) {
         try {
           // Pass both `input` and `output` to the resolver. Currently
           // `tako_search` is the only tool with a dynamic URI resolver;
@@ -1666,14 +1649,26 @@ export async function handleMcpRequest(
         }`,
       );
     }
+    const peekedBody = await peekJsonBody(request);
+    const declaredUi =
+      surface === "generic" ? initializeDeclaresUi(peekedBody) : undefined;
+    const sessionHeader = request.headers.get("mcp-session-id");
+    const clientRendersUi =
+      surface === "chatgpt" ||
+      (declaredUi ?? sessionRendersUi(sessionHeader));
+    if (surface === "generic") {
+      console.log(
+        `[mcp] session surface=generic declared_ui=${declaredUi ?? "n/a"} session=${sessionIdKind(sessionHeader)}`,
+      );
+    }
     const server = createMcpServer(ctx, {
       iconsBaseUrl: requestOrigin,
       requestOrigin,
       surface,
+      clientRendersUi,
       requestedToolNames,
       tier,
     });
-    const peekedBody = await peekJsonBody(request);
     const registeredTools = resolveToolSet(surface, requestedToolNames);
     logToolInputRejections(peekedBody, registeredTools, surface);
     const streamingTool = streamingToolCallName(peekedBody);
@@ -1719,6 +1714,11 @@ export async function handleMcpRequest(
         return streamed;
       }
       await logSdkValidationRejections(requestForLogging, response);
+      if (declaredUi !== undefined) {
+        const sessioned = new Response(response.body, response);
+        sessioned.headers.set("mcp-session-id", mintSessionId(declaredUi));
+        return sessioned;
+      }
       // ChatGPT compatibility adapter: rewrite the buffered `tools/list`
       // response to carry the top-level `securitySchemes` field the Apps
       // SDK reads (the MCP SDK cannot serialize unknown descriptor

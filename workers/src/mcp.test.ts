@@ -426,23 +426,13 @@ describe("extractErrorDetail", () => {
 });
 
 /**
- * Per-client chart rendering gates in `registerTool`.
+ * Per-connection chart rendering gate in `registerTool`.
  *
- * Two independent gates decide how a chart-bearing tool result renders:
- *
- *   - `widgetSuppressed` — skip the MCP Apps widget (`appUiResource`).
- *     ChatGPT and Claude clients both keep this OFF now: claude.ai
- *     renders MCP Apps widgets inline in the chat body via the image
- *     branch (claude.ai's own outer CSP ignores our `frameDomains`
- *     declaration, so the bundle's runtime `window.openai` check falls
- *     back from iframe to image there), so both get widget `_meta`.
- *     Unknown clients keep it ON — the long tail of MCP hosts rarely
- *     implements MCP Apps.
- *   - `inlinePngFallbackSuppressed` — skip the `extraContentBlocks`
- *     PNG image content block. Attaching the widget (`ui !== undefined`)
- *     already suppresses this hook, and only the chatgpt surface attaches
- *     one — so the GENERIC surface is what renders `image` content blocks
- *     in-chat, for every client on it.
+ * `widgetLive` decides how a chart-bearing tool result renders. The widget
+ * is live on the chatgpt surface, and on `/mcp` when the client declared MCP
+ * Apps support. Otherwise the `extraContentBlocks` PNG image block ships and
+ * no widget `_meta` does. These tests build the server with
+ * `clientRendersUi: false` on the generic surface, the PNG path.
  *
  * Exercised end-to-end over an in-memory MCP transport: real server,
  * real tool registration, real `tools/call` — only the upstream
@@ -502,7 +492,10 @@ describe("chart render gates per surface", () => {
     structuredContent?: Record<string, unknown>;
     _meta?: Record<string, unknown>;
   }> {
-    const server = createMcpServer(makeCtx(surface), { surface });
+    const server = createMcpServer(makeCtx(surface), {
+      surface,
+      clientRendersUi: surface === "chatgpt",
+    });
     // The test runtime stubs `ajv` (see vitest.config.ts) — the SDK
     // Client must get the same Workers-safe validator the server uses.
     const mcpClient = new Client(
@@ -547,10 +540,8 @@ describe("chart render gates per surface", () => {
   it("generic surface: chart ships as an inline image content block (no widget metadata)", async () => {
     // The generic surface serves the long tail of MCP hosts (Cursor,
     // Windsurf, Gemini CLI, LibreChat, claude.ai, Claude Code, …).
-    // Almost none of them implement the MCP Apps widget spec, but
-    // virtually all render `image` content blocks — so the generic
-    // surface ships the portable PNG (spec D14/D15; the claude.ai widget
-    // is a fast-follow gated on anthropics/claude-ai-mcp#753 and #40).
+    // A client that didn't declare MCP Apps support gets the portable PNG
+    // that virtually every host renders as an `image` content block.
     // Call 1: v3 search. Call 2: chart PNG for the image content block.
     mockFetchSequence([searchResponse(), pngResponse()]);
 
@@ -703,8 +694,8 @@ describe("chart render gates per surface", () => {
    *
    * The `generic` row is the load-bearing one for "nothing else
    * regressed": that surface never reaches the resolver at all
-   * (`widgetSuppressed` leaves `ui` undefined in `registerTool`), so the
-   * branch cannot touch the long tail of MCP hosts even in principle.
+   * (`widgetLive` is false for it, so the resolver never runs), so the
+   * branch cannot touch clients that didn't declare MCP Apps support.
    */
   it("references a widget per surface and per result, and never on generic", async () => {
     const uiOf = (result: { _meta?: Record<string, unknown> }) =>
@@ -766,7 +757,7 @@ describe("server instructions", () => {
       sendProgress: noopSendProgress,
       surface: "generic",
     };
-    const server = createMcpServer(ctx, { surface: "generic" });
+    const server = createMcpServer(ctx, { surface: "generic", clientRendersUi: false });
     const mcpClient = new Client(
       { name: "instructions-test", version: "0.0.0" },
       { jsonSchemaValidator: new CfWorkerJsonSchemaValidator() },
@@ -810,7 +801,7 @@ describe("server instructions", () => {
       surface: "generic",
       tier: "free",
     };
-    const server = createMcpServer(ctx, { surface: "generic", tier: "free" });
+    const server = createMcpServer(ctx, { surface: "generic", clientRendersUi: false, tier: "free" });
     const mcpClient = new Client(
       { name: "instructions-test", version: "0.0.0" },
       { jsonSchemaValidator: new CfWorkerJsonSchemaValidator() },
@@ -843,7 +834,7 @@ describe("server instructions", () => {
       surface: "generic",
     };
     const requestedToolNames = new Set(["tako_agent"]);
-    const server = createMcpServer(ctx, { surface: "generic", requestedToolNames });
+    const server = createMcpServer(ctx, { surface: "generic", clientRendersUi: false, requestedToolNames });
     const mcpClient = new Client(
       { name: "instructions-allowlist-test", version: "0.0.0" },
       { jsonSchemaValidator: new CfWorkerJsonSchemaValidator() },
@@ -889,6 +880,7 @@ describe("free-tier tool surface", () => {
     const server = createMcpServer(ctx, {
       ...options,
       surface: options?.surface ?? "generic",
+      clientRendersUi: options?.surface === "chatgpt",
     });
     const mcpClient = new Client(
       { name: "tier-test", version: "0.0.0" },
@@ -974,6 +966,7 @@ describe("auth challenges (ChatGPT link-account flow)", () => {
     const server = createMcpServer(ctx, {
       ...options,
       surface: options?.surface ?? "generic",
+      clientRendersUi: options?.surface === "chatgpt",
     });
     const mcpClient = new Client(
       { name: "auth-test", version: "0.0.0" },
@@ -1826,6 +1819,7 @@ describe("stringified array arguments survive SDK input validation", () => {
     // The allowlist REPLACES the defaults, so name every tool called here.
     const server = createMcpServer(ctx, {
       surface: "generic",
+      clientRendersUi: false,
       requestedToolNames: new Set([
         "tako_search",
         "tako_contents",
@@ -1935,6 +1929,7 @@ describe("object-level schema checks reach the wire", () => {
     };
     const server = createMcpServer(ctx, {
       surface: "generic",
+      clientRendersUi: false,
       requestedToolNames: new Set(["tako_search_advanced"]),
     });
     const mcpClient = new Client(
@@ -1985,7 +1980,7 @@ describe("published outputSchema per surface", () => {
   async function searchOutputProperties(surface: Surface): Promise<string[]> {
     const server = createMcpServer(
       { token: "sk-test", env: { DJANGO_BASE_URL: "https://staging.trytako.com" }, sendProgress: noopSendProgress, surface },
-      { surface },
+      { surface, clientRendersUi: surface === "chatgpt" },
     );
     const mcpClient = new Client(
       { name: "surface-schema-test", version: "0.0.0" },
@@ -2030,7 +2025,7 @@ describe("published inputSchema per surface", () => {
   async function contentsInputProperties(surface: Surface): Promise<string[]> {
     const server = createMcpServer(
       { token: "sk-test", env: { DJANGO_BASE_URL: "https://staging.trytako.com" }, sendProgress: noopSendProgress, surface },
-      { surface },
+      { surface, clientRendersUi: surface === "chatgpt" },
     );
     const mcpClient = new Client(
       { name: "surface-input-schema-test", version: "0.0.0" },
@@ -2092,7 +2087,7 @@ describe("caller stamp reaches Django on a tool call", () => {
         clientUserAgent: "claude-code/1.2.3",
       },
     };
-    const server = createMcpServer(ctx, { surface: "generic", tier: "authenticated" });
+    const server = createMcpServer(ctx, { surface: "generic", clientRendersUi: false, tier: "authenticated" });
     const mcpClient = new Client(
       { name: "caller-test", version: "0.0.0" },
       { jsonSchemaValidator: new CfWorkerJsonSchemaValidator() },
@@ -2761,5 +2756,135 @@ describe("streamingToolCallName", () => {
 
   it("is undefined for a batch", () => {
     expect(streamingToolCallName([call("tako_agent")])).toBeUndefined();
+  });
+});
+
+describe("chart widget or PNG per connection on /mcp", () => {
+  const env = { DJANGO_BASE_URL: "http://localhost:8000" } as unknown as Env;
+  const RESULT_PNG_BASE64 =
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  function stubDjangoAndPng(): void {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(async (input, init) => {
+        const method = input instanceof Request ? input.method : (init?.method ?? "GET");
+        if (method === "POST") {
+          return jsonResponse(200, {
+            cards: [
+              { card_id: "c1", title: "US GDP", embed_url: "https://trytako.com/embed/c1/" },
+            ],
+            web_results: [],
+            request_id: "req-1",
+          });
+        }
+        const bytes = Uint8Array.from(atob(RESULT_PNG_BASE64), (c) => c.charCodeAt(0));
+        return new Response(bytes, { status: 200, headers: { "content-type": "image/png" } });
+      }),
+    );
+  }
+
+  type ToolResult = {
+    content: Array<{ type: string }>;
+    _meta?: Record<string, unknown>;
+  };
+
+  async function callOnMcp(
+    toolName: string,
+    args: Record<string, unknown>,
+    sessionId: string | null,
+  ): Promise<ToolResult> {
+    const res = await worker.fetch(
+      new Request("https://mcp.tako.com/mcp?tools=search,agent", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+          authorization: "Bearer raw-tako-token-no-dots",
+          ...(sessionId !== null ? { "mcp-session-id": sessionId } : {}),
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { name: toolName, arguments: args },
+        }),
+      }),
+      env,
+    );
+    const text = await res.text();
+    const json = res.headers.get("content-type")?.includes("text/event-stream")
+      ? text
+          .split("\n")
+          .find((line) => line.startsWith("data: "))!
+          .slice("data: ".length)
+      : text;
+    return (JSON.parse(json) as { result: ToolResult }).result;
+  }
+
+  it("sends the widget and no image block to a session that declared UI support", async () => {
+    stubDjangoAndPng();
+
+    const result = await callOnMcp("tako_search", { query: "US GDP" }, "ui-x");
+
+    expect(result.content.filter((b) => b.type === "image")).toHaveLength(0);
+    expect(result._meta).toBeDefined();
+  });
+
+  it.each([
+    ["noui-x"],
+    [null],
+    ["legacy-123"],
+  ])("sends exactly one PNG block and no widget payload for session %s", async (sessionId) => {
+    stubDjangoAndPng();
+
+    const result = await callOnMcp("tako_search", { query: "US GDP" }, sessionId);
+
+    expect(result.content.filter((b) => b.type === "image")).toHaveLength(1);
+    expect(result._meta?.charts).toBeUndefined();
+    expect(result._meta?.image_data_url).toBeUndefined();
+  });
+
+  describe("tako_agent finished run", () => {
+    function stubFinishedRun(): void {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn<typeof fetch>(async (input) => {
+          const url = input instanceof Request ? input.url : String(input);
+          if (url.includes("/agent/")) {
+            return jsonResponse(200, {
+              run_id: "answer_run_x",
+              status: "completed",
+              result: { answer: "done", cards: [{ card_id: "c1" }], citations: [] },
+            });
+          }
+          const bytes = Uint8Array.from(atob(RESULT_PNG_BASE64), (c) => c.charCodeAt(0));
+          return new Response(bytes, { status: 200, headers: { "content-type": "image/png" } });
+        }),
+      );
+    }
+
+    it("sends no image block and no _meta to a session that declared no UI support", async () => {
+      stubFinishedRun();
+
+      const result = await callOnMcp("tako_agent", { run_id: "answer_run_x" }, "noui-x");
+
+      expect(result.content.filter((b) => b.type === "image")).toHaveLength(0);
+      expect(result._meta).toBeUndefined();
+    });
+
+    it("sends _meta.charts to a session that declared UI support", async () => {
+      stubFinishedRun();
+
+      const result = await callOnMcp("tako_agent", { run_id: "answer_run_x" }, "ui-x");
+
+      expect(result.content.filter((b) => b.type === "image")).toHaveLength(0);
+      expect((result._meta?.charts as unknown[] | undefined)?.length).toBeGreaterThan(0);
+    });
   });
 });
