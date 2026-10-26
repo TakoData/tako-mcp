@@ -15,6 +15,14 @@ import {
 } from "./chatgpt-plugin.js";
 
 const MAX_SCREENSHOT_BYTES = 5 * 1024 * 1024;
+const SCREENSHOT_WIDTH_PX = 706;
+const MIN_SCREENSHOT_HEIGHT_PX = 800;
+const MAX_SCREENSHOT_HEIGHT_PX = 1720;
+
+function pngSize(file: string): { width: number; height: number } {
+  const header = readFileSync(file).subarray(16, 24);
+  return { width: header.readUInt32BE(0), height: header.readUInt32BE(4) };
+}
 
 function submissionCase(overrides: Partial<SubmissionTestCase> = {}): SubmissionTestCase {
   return {
@@ -138,12 +146,16 @@ describe("committed ChatGPT plugin listing", () => {
     for (const prompt of listing.defaultPrompt) expect(prompt.length).toBeLessThanOrEqual(128);
   });
 
-  it("points every screenshot at a packaged PNG under 5 MiB", () => {
+  it("points every screenshot at a packaged 2x PNG under 5 MiB", () => {
     for (const screenshot of listing.screenshots ?? []) {
       expect(screenshot).toMatch(/^\.\/assets\/.+\.png$/);
       const file = resolve(PLUGIN_DIR, screenshot);
       expect(existsSync(file), screenshot).toBe(true);
       expect(statSync(file).size).toBeLessThanOrEqual(MAX_SCREENSHOT_BYTES);
+      const { width, height } = pngSize(file);
+      expect(width, screenshot).toBe(SCREENSHOT_WIDTH_PX);
+      expect(height, screenshot).toBeGreaterThanOrEqual(MIN_SCREENSHOT_HEIGHT_PX);
+      expect(height, screenshot).toBeLessThanOrEqual(MAX_SCREENSHOT_HEIGHT_PX);
     }
   });
 });

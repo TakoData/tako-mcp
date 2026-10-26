@@ -390,6 +390,7 @@ export function assertChatgptSubmissionParity(
 ): void {
   const submission = JSON.parse(submissionJson) as {
     tools?: Record<string, { annotations?: Record<string, unknown> }>;
+    test_cases?: { description: string; tools_triggered: string | null }[];
   };
   if (submission.tools === undefined || typeof submission.tools !== "object") {
     throw new Error(
@@ -416,6 +417,14 @@ export function assertChatgptSubmissionParity(
   for (const name of declaredNames) {
     if (!expected.has(name)) {
       problems.push(`extra tool "${name}" (not on the chatgpt surface)`);
+    }
+  }
+  for (const testCase of submission.test_cases ?? []) {
+    const triggered = testCase.tools_triggered;
+    if (triggered !== null && !expected.has(triggered)) {
+      problems.push(
+        `test case "${testCase.description}" tools_triggered "${triggered}" is not on the chatgpt surface; name a tool the surface serves`,
+      );
     }
   }
 
