@@ -41,9 +41,9 @@
         "composerIcon": "./assets/composer-icon.png",
         "composerIconDark": "./assets/composer-icon-dark.png",
         "defaultPrompt": [
-          "Compare Nvidia and AMD quarterly revenue. Use Tako.",
-          "Give me the current Premier League standings. Use Tako.",
-          "Show me monthly visits for chatgpt.com. Use Tako."
+          "Compare Nvidia and AMD quarterly revenue.",
+          "Give me the current Premier League standings.",
+          "Show me monthly visits for chatgpt.com."
         ],
         "developerName": "Tako",
         "displayName": "Tako",
