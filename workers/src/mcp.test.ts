@@ -2760,7 +2760,10 @@ describe("streamingToolCallName", () => {
 });
 
 describe("chart widget or PNG per connection on /mcp", () => {
-  const env = { DJANGO_BASE_URL: "http://localhost:8000" } as unknown as Env;
+  const env = {
+    DJANGO_BASE_URL: "http://localhost:8000",
+    PUBLIC_CDN_URL: "https://cdn.trytako.com",
+  } as unknown as Env;
   const RESULT_PNG_BASE64 =
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
 
@@ -2839,12 +2842,8 @@ describe("chart widget or PNG per connection on /mcp", () => {
 
   it("sends live-card charts with no baked image to a session that declared UI support", async () => {
     stubDjangoAndPng();
-    const liveEnv = {
-      DJANGO_BASE_URL: "http://localhost:8000",
-      PUBLIC_CDN_URL: "https://cdn.trytako.com",
-    } as unknown as Env;
 
-    const result = await callOnMcp("tako_search", { query: "US GDP" }, "ui-x", liveEnv);
+    const result = await callOnMcp("tako_search", { query: "US GDP" }, "ui-x");
 
     expect(result.content.filter((b) => b.type === "image")).toHaveLength(0);
     const charts = result._meta?.charts as Record<string, unknown>[];
@@ -2853,6 +2852,16 @@ describe("chart widget or PNG per connection on /mcp", () => {
       expect(typeof chart.native_card_url).toBe("string");
       expect(chart).not.toHaveProperty("image_data_url");
     }
+  });
+
+  it("sends the PNG to a session that declared UI support when live cards can't be served", async () => {
+    stubDjangoAndPng();
+    const noCdnEnv = { DJANGO_BASE_URL: "http://localhost:8000" } as unknown as Env;
+
+    const result = await callOnMcp("tako_search", { query: "US GDP" }, "ui-x", noCdnEnv);
+
+    expect(result.content.filter((b) => b.type === "image")).toHaveLength(1);
+    expect(result._meta?.charts).toBeUndefined();
   });
 
   it.each([

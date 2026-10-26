@@ -66,6 +66,7 @@ import {
   toolAnnotationsForSurface,
 } from "./tools/_surface.js";
 import { pickDeclared } from "./tools/_pick_declared.js";
+import { liveCardsAvailable } from "./tools/_chart_widget.js";
 import type { AnyToolModule, ToolContext } from "./tools/types.js";
 
 /**
@@ -736,7 +737,8 @@ function registerTool(
     (async (input: unknown, extra: ToolHandlerExtra) => {
       const widgetLive =
         ui !== undefined &&
-        (options.surface === "chatgpt" || options.clientRendersUi);
+        options.clientRendersUi &&
+        (options.surface === "chatgpt" || liveCardsAvailable(ctx.env, options.origin));
       // Build a per-call context that layers `sendProgress` over the
       // shared `{ token, env }`. The SDK's `extra._meta.progressToken`
       // is set when the client provided a progressToken on the request;

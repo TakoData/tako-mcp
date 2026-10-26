@@ -204,11 +204,19 @@ export function nativeCardUrl(
   origin: string | undefined,
   pubId: string | undefined,
 ): string | undefined {
-  if (resolvePublicCdnBase(env) === undefined) return undefined;
   if (pubId === undefined || pubId === "") return undefined;
-  const base = resolveWidgetOrigin(env, origin);
+  const base = nativeCardBase(env, origin);
   if (base === undefined) return undefined;
   return `${base}${EMBED_PROXY_PREFIX}${encodeURIComponent(pubId)}`;
+}
+
+export function liveCardsAvailable(env: Env, origin: string | undefined): boolean {
+  return nativeCardBase(env, origin) !== undefined;
+}
+
+function nativeCardBase(env: Env, origin: string | undefined): string | undefined {
+  if (resolvePublicCdnBase(env) === undefined) return undefined;
+  return resolveWidgetOrigin(env, origin);
 }
 
 /**
