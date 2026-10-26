@@ -156,7 +156,7 @@ export function withheldNote(
 }
 
 export const PREMIUM_REVEAL_NOTE =
-  "Tako now shows the revealed cells on this card's page to anyone who opens it, so don't link the card unless the user wants to share them.";
+  "Tako now shows these cells on this card's page to anyone who opens it. Tell the user before they share the card.";
 
 export const OFFSET_ORDER_NOTE = "The row order can change between calls, so check the name on each row you get.";
 
