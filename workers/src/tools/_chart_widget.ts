@@ -471,9 +471,9 @@ function buildFallbackWidgetHtml(embedUrl: string, message: string): string {
  * `</script>`. Skipping that step truncates the entire widget bundle at this
  * line, which is how it was found: every executing widget test failed at once.
  *
- * `__FALLBACK_HEIGHT__` is substituted when the reporter is injected. It covers
- * the window where Card.js has mounted but not laid out, so `offsetHeight` reads
- * 0 and the host would otherwise collapse the card to nothing.
+ * A pass that measures 0 reports nothing. Card.js hasn't laid out yet, and the
+ * widget keeps the slide veiled until a real height arrives. A card that never
+ * lays out never reports, so the widget's watchdog fails it.
  *
  * It honors {@link MAX_INLINE_WIDGET_HEIGHT_PX} the same way the PNG path does,
  * and it has to: that ceiling is a host constraint, not a preference — Claude
@@ -526,7 +526,7 @@ const LIVE_CARD_HEIGHT_REPORTER = [
   // reports the card's natural height rather than a previously scaled one.
   "d.style.transform='';d.style.transformOrigin='';d.style.width='';",
   "var h=d.offsetHeight||0;",
-  "if(h<=0)h=__FALLBACK_HEIGHT__;",
+  "if(h<=0)return;",
   // Over the host's inline ceiling: scale the whole document down to fit
   // instead of letting the host crop the axis and source line off the bottom.
   // Widening to `100/s`% first means the content still fills the frame after
@@ -1389,13 +1389,9 @@ const WIDGET_HTML = `<!doctype html>
 
   var LIVE_CARD_REPORTER = ${inlineScriptString(LIVE_CARD_HEIGHT_REPORTER)};
 
-  function withFallbackHeight(reporter, fallbackHeight) {
-    return reporter.replace("__FALLBACK_HEIGHT__", String(fallbackHeight || 0));
-  }
-
   function hostSchemeSnapshot() {
     return {
-      backdrop: chartBackdrop(),
+      backdrop: hasOpenAiRuntime() ? null : chartBackdrop(),
       scheme: hostTheme(),
     };
   }
@@ -1747,12 +1743,12 @@ const WIDGET_HTML = `<!doctype html>
     return openCarousel("carousel", scrollCarousel);
   }
 
-  function renderLiveCards(charts, fallbackHeight) {
+  function renderLiveCards(charts) {
     if (carouselSlides.length > 0) return true;
     regrowAfterShrink();
     carousel.classList.remove("hidden");
     charts.forEach(function (chart, i) {
-      carouselSlides.push(liveCardSlide(chart, i, charts.length, fallbackHeight));
+      carouselSlides.push(liveCardSlide(chart, i, charts.length));
     });
     document.addEventListener("securitypolicyviolation", onLiveCardViolation);
     showLiveCard(0);
@@ -1773,7 +1769,7 @@ const WIDGET_HTML = `<!doctype html>
     return true;
   }
 
-  function liveCardSlide(chart, index, total, fallbackHeight) {
+  function liveCardSlide(chart, index, total) {
     var el = document.createElement("div");
     el.className = "tako-slide";
     carouselTrack.appendChild(el);
@@ -1784,7 +1780,6 @@ const WIDGET_HTML = `<!doctype html>
       iframe: null,
       img: null,
       origin: null,
-      fallbackHeight: fallbackHeight,
       height: 0,
       revealed: false,
       settled: false,
@@ -1838,8 +1833,7 @@ const WIDGET_HTML = `<!doctype html>
         if (typeof html !== "string" || html.indexOf("<html") === -1) {
           throw new Error("not an html document");
         }
-        var reporter = withFallbackHeight(LIVE_CARD_REPORTER, slide.fallbackHeight);
-        var patched = injectIntoCard(html, hostSchemeStyle(hostScheme) + reporter);
+        var patched = injectIntoCard(html, hostSchemeStyle(hostScheme) + LIVE_CARD_REPORTER);
         var iframe = document.createElement("iframe");
         iframe.className = "veiled";
         iframe.setAttribute("scrolling", "no");
@@ -2148,7 +2142,7 @@ const WIDGET_HTML = `<!doctype html>
     if (!hasOpenAiRuntime() || isLiveCardPayload(structuredContent, meta)) {
       var liveCards = carouselCharts(pickChartList(structuredContent, meta));
       if (liveCards.length > 0) {
-        return renderLiveCards(liveCards, requestedHeight(structuredContent));
+        return renderLiveCards(liveCards);
       }
       collapse(looksComplete(structuredContent) && !chartSentAsContent(structuredContent, meta));
       log("no live card in the result, collapsed widget");

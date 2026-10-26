@@ -1340,7 +1340,6 @@ describe("mcp apps host theme (executed)", () => {
     return stubs.fetches[0]?.url;
   }
 
-  /** Stub the live card's fetch, then deliver one live chart. */
   function deliverChart(m: Mounted): void {
     stubLive(m);
     deliverLive(m, liveCharts(1));
@@ -1350,8 +1349,8 @@ describe("mcp apps host theme (executed)", () => {
    * Mount, feed the widget a sequence of host messages, deliver a live chart,
    * and return the document the widget wrote into the live card's blob.
    */
-  async function liveCardDocumentAfter(hostMessages: unknown[]): Promise<string> {
-    const m = mountWidget(liveHtml());
+  async function liveCardDocumentAfter(hostMessages: unknown[], openai?: object): Promise<string> {
+    const m = mountWidget(liveHtml(), openai);
     const stubs = stubLive(m, () =>
       okResponse("<!doctype html><html><body><div>card</div></body></html>"),
     );
@@ -1557,6 +1556,13 @@ describe("mcp apps host theme (executed)", () => {
     ]);
     expect(written).toContain("background:rgb(25, 24, 23)");
     expect(written).toContain("color-scheme:dark");
+  });
+
+  it("leaves the live card canvas unpainted on a host that exposes window.openai", async () => {
+    const written = await liveCardDocumentAfter([], { theme: "dark" });
+    expect(written).toContain("card");
+    expect(written).toContain("color-scheme:dark");
+    expect(written).not.toContain("background:");
   });
 
   it("does not inject a hostile surface colour into the live card document", async () => {
@@ -1936,7 +1942,15 @@ describe("live cards (no window.openai)", () => {
     const body = (await blob?.text()) ?? "";
 
     const posted: unknown[] = [];
-    const card = new JSDOM(body, { runScripts: "dangerously" });
+    const card = new JSDOM(body, {
+      runScripts: "dangerously",
+      beforeParse(window) {
+        Object.defineProperty(window.HTMLElement.prototype, "offsetHeight", {
+          configurable: true,
+          get: () => 800,
+        });
+      },
+    });
     mounted.push(card);
     card.window.addEventListener("message", (event) => posted.push(event.data));
     await new Promise((r) => setTimeout(r, 10));
@@ -2319,16 +2333,11 @@ describe("live cards (no window.openai)", () => {
     expect(widgetEmpty(m).textContent).toMatch(/no chart/i);
   });
 
-  /**
-   * The height reporter, executed inside the live card's own document. The
-   * widget writes the reporter into the blob, so these tests read the blob back
-   * and run it in a fresh JSDOM whose `postMessage` records each report.
-   */
   describe("height reporter in the live card document", () => {
-    async function liveCardBody(height: number): Promise<string> {
+    async function liveCardBody(): Promise<string> {
       const m = mountWidget(liveHtml());
       const stubs = stubLive(m, () => okResponse(cardHtml("REAL CARD")));
-      deliverLive(m, liveCharts(1), { ...SEARCH_CONTENT, height });
+      deliverLive(m, liveCharts(1));
       await settle();
       return (await stubs.blobs.get(mountedFrame(m, 0).getAttribute("src") ?? "")?.text()) ?? "";
     }
@@ -2364,6 +2373,22 @@ describe("live cards (no window.openai)", () => {
       };
     }
 
+    function stubOffsetHeight(win: Window & typeof globalThis, height: number): void {
+      Object.defineProperty(
+        (win as unknown as { HTMLElement: { prototype: object } }).HTMLElement.prototype,
+        "offsetHeight",
+        { configurable: true, get: () => height },
+      );
+    }
+
+    it("reports nothing while the card measures 0, so the slide stays veiled", async () => {
+      const card = runLiveCard(await liveCardBody());
+      await new Promise((r) => setTimeout(r, 10));
+
+      expect(card.win.document.body.innerHTML).toContain("REAL CARD");
+      expect(card.heights()).toEqual([]);
+    });
+
     it("holds the live card to the host's inline height ceiling", async () => {
       // `MAX_INLINE_WIDGET_HEIGHT_PX` is a host CONSTRAINT, not a preference:
       // Claude renders inline up to ~500 px and gives the card no scrollbar, so
@@ -2371,11 +2396,7 @@ describe("live cards (no window.openai)", () => {
       // axis labels and the source line. The live card carries strictly MORE than
       // the PNG (range selectors, chart/table toggle, source line), so it is the
       // likelier to exceed it.
-      //
-      // jsdom performs no layout, so `offsetHeight` is 0 and the reporter falls
-      // through to `__FALLBACK_HEIGHT__` — here the requested 600, over the cap.
-      // Exactly the case that matters.
-      const card = runLiveCard(await liveCardBody(600));
+      const card = runLiveCard(await liveCardBody(), (win) => stubOffsetHeight(win, 600));
       await new Promise((r) => setTimeout(r, 10));
 
       expect(card.win.document.body.innerHTML).toContain("REAL CARD");
@@ -2392,7 +2413,7 @@ describe("live cards (no window.openai)", () => {
     it("leaves a card under the ceiling unscaled", async () => {
       // The clamp must not touch the common case, or every short card gets a
       // pointless transform and a blurrier render.
-      const card = runLiveCard(await liveCardBody(300));
+      const card = runLiveCard(await liveCardBody(), (win) => stubOffsetHeight(win, 300));
       await new Promise((r) => setTimeout(r, 10));
 
       expect(card.heights().at(-1)).toBe(300);
@@ -2467,7 +2488,7 @@ describe("live cards (no window.openai)", () => {
     }
 
     it("re-reports its height when the card relayouts, not just on a timer", async () => {
-      const body = await liveCardBody(600);
+      const body = await liveCardBody();
       let natural = 400;
       let layout: ReturnType<typeof stubLayout> | undefined;
       const card = runLiveCard(body, (win) => {
@@ -2541,10 +2562,11 @@ describe("live cards (no window.openai)", () => {
       // ladder, so an escaping throw would not cost any of them. What it would cost
       // is an uncaught error inside a card document that hosts report to the user
       // as a broken app. So that — not the ladder — is what this asserts.
-      const body = await liveCardBody(600);
+      const body = await liveCardBody();
       const uncaught: string[] = [];
       let constructed = 0;
       const card = runLiveCard(body, (win) => {
+        stubOffsetHeight(win, 400);
         win.addEventListener("error", (e) => {
           uncaught.push(String((e as ErrorEvent).message ?? e.type));
         });
@@ -2570,7 +2592,7 @@ describe("live cards (no window.openai)", () => {
       // The other half of the guard: `typeof ResizeObserver !== 'undefined'`. jsdom
       // gives this for free by never defining it, which is exactly why the test
       // above has to supply a throwing one to be worth anything.
-      const card = runLiveCard(await liveCardBody(600));
+      const card = runLiveCard(await liveCardBody(), (win) => stubOffsetHeight(win, 400));
       expect(
         (card.win as unknown as { ResizeObserver?: unknown }).ResizeObserver,
       ).toBeUndefined();
