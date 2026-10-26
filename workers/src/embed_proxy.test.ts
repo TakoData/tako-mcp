@@ -1143,6 +1143,88 @@ describe("dataProxyShim", () => {
       "https://d12w4pyrrczi5e.cloudfront.net/archive/a/geo/countries.json",
     );
   });
+
+  describe("in a frame with an opaque location", () => {
+    const BLOB_HREF = "blob:https://claude.ai/1b2c3d4e-0000-4000-8000-000000000000";
+
+    function runShim(href: string) {
+      const calls: unknown[][] = [];
+      const win: Record<string, unknown> = {
+        location: { href },
+        URL,
+        fetch: (...args: unknown[]) => {
+          calls.push(args);
+          return Promise.resolve("ok");
+        },
+      };
+      const body = dataProxyShim(TARGET)
+        .replace(/^<script>/, "")
+        .replace(/<\/script>$/, "");
+      // eslint-disable-next-line no-new-func
+      new Function("window", "URL", body)(win, URL);
+      return {
+        calls,
+        win,
+        UrlCtor: win.URL as typeof URL,
+        patched: win.fetch as (input: unknown, init?: unknown) => unknown,
+      };
+    }
+
+    it("lets the card build its data url against the location", () => {
+      const { UrlCtor, win } = runShim(BLOB_HREF);
+      const href = (win.location as { href: string }).href;
+      expect(new UrlCtor("/knowledge/get_data/", href).pathname).toBe(
+        "/knowledge/get_data/",
+      );
+    });
+
+    it("accepts the Location object as the base", () => {
+      const { UrlCtor, win } = runShim(BLOB_HREF);
+      expect(
+        new UrlCtor("/knowledge/get_data/", win.location as unknown as string)
+          .pathname,
+      ).toBe("/knowledge/get_data/");
+    });
+
+    it("sends the card's data fetch to the proxy", () => {
+      const { calls, patched } = runShim(BLOB_HREF);
+      const init = { method: "POST", body: "{}" };
+      patched("/knowledge/get_data/?a=1", init);
+      expect(calls).toHaveLength(1);
+      expect(calls[0]?.[0]).toBe(TARGET + "?a=1");
+      expect(calls[0]?.[1]).toBe(init);
+    });
+
+    it("leaves other paths and Request inputs alone", () => {
+      const { calls, patched } = runShim(BLOB_HREF);
+      patched("/other/path");
+      expect(calls[0]).toEqual(["/other/path"]);
+      const request = new Request("https://claude.ai/knowledge/get_data/");
+      patched(request);
+      expect(calls[1]?.[0]).toBe(request);
+    });
+
+    it("still throws for a base that isn't the location", () => {
+      const { UrlCtor } = runShim(BLOB_HREF);
+      expect(() => new UrlCtor("/x", "blob:https://other/abc")).toThrow();
+    });
+
+    it("keeps absolute urls, statics and instanceof working", () => {
+      const { UrlCtor } = runShim(BLOB_HREF);
+      expect(new UrlCtor("https://a.example/p").href).toBe("https://a.example/p");
+      const statics = (ctor: unknown) =>
+        (ctor as Record<string, unknown>).createObjectURL;
+      expect(statics(UrlCtor)).toBe(statics(URL));
+      expect(new UrlCtor("https://a.example/p") instanceof UrlCtor).toBe(true);
+      expect(new URL("https://a.example/p") instanceof UrlCtor).toBe(true);
+      expect(new UrlCtor("https://a.example/p") instanceof URL).toBe(true);
+    });
+
+    it("leaves window.URL alone where the location resolves", () => {
+      const { win } = runShim("https://claude-sandbox.example/widget/abc");
+      expect(win.URL).toBe(URL);
+    });
+  });
 });
 
 describe("injectDataProxyShim", () => {
