@@ -14,6 +14,10 @@ trig-web-policy	skill	sonnet	What are the main obligations in the EU AI Act for 
 trig-neg-creative	skill	sonnet	Write a limerick about spreadsheets
 trig-neg-concept	skill	sonnet	Explain in general terms how a consumer price index is constructed
 trig-neg-calendar	skill	sonnet	Schedule a meeting with my team tomorrow at 10
+trig-calc-cagr	skill	sonnet	What's the compound annual growth rate of US real GDP over the last ten years?
+trig-calc-correlation	skill	sonnet	How correlated have Bitcoin and the Nasdaq 100 been over the past year?
+trig-neg-calc-supplied	skill	sonnet	My monthly sales were 120, 135, 128, 150, 162, and 171. What's the average month-over-month growth rate?
+trig-neg-calc-formula	skill	sonnet	If an investment grows from $10,000 to $18,000 over 6 years, what's its CAGR?
 out-F1-margin	skill	sonnet	What is Apple's gross margin? Cite your source.
 out-F1-margin	noskill	sonnet	What is Apple's gross margin? Cite your source.
 out-F2-toyota	skill	sonnet	What is Toyota's annual revenue?
