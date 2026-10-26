@@ -43,7 +43,7 @@
         "defaultPrompt": [
           "Compare Nvidia and AMD quarterly revenue. Use Tako.",
           "Give me the current Premier League standings. Use Tako.",
-          "Show me nike.com's SEO traffic from Google. Use Tako."
+          "Show me chatgpt.com's SEO traffic from Google. Use Tako."
         ],
         "developerName": "Tako",
         "displayName": "Tako",
@@ -54,7 +54,7 @@
         "screenshots": [
           "./assets/screenshots/nvidia-amd-quarterly-revenue.png",
           "./assets/screenshots/premier-league-standings.png",
-          "./assets/screenshots/nike-seo-summary.png"
+          "./assets/screenshots/chatgpt-seo-summary.png"
         ],
         "shortDescription": "Premium live data & web search",
         "supportURL": "https://tako.com/support/",
