@@ -54,6 +54,17 @@ paths:
             used a spend budget: do not retry automatically. A budget response carries
             the header x-should-retry: false, and Retry-After with the seconds until
             the budget resets, except for a total budget.'
+          headers:
+            RateLimit-Limit:
+              $ref: '#/components/headers/RateLimit-Limit'
+            RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimit-Remaining'
+            RateLimit-Reset:
+              $ref: '#/components/headers/RateLimit-Reset'
+            RateLimit-Policy:
+              $ref: '#/components/headers/RateLimit-Policy'
+            Retry-After:
+              $ref: '#/components/headers/Retry-After'
           content:
             application/json:
               schema:
@@ -121,6 +132,17 @@ paths:
             used a spend budget: do not retry automatically. A budget response carries
             the header x-should-retry: false, and Retry-After with the seconds until
             the budget resets, except for a total budget.'
+          headers:
+            RateLimit-Limit:
+              $ref: '#/components/headers/RateLimit-Limit'
+            RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimit-Remaining'
+            RateLimit-Reset:
+              $ref: '#/components/headers/RateLimit-Reset'
+            RateLimit-Policy:
+              $ref: '#/components/headers/RateLimit-Policy'
+            Retry-After:
+              $ref: '#/components/headers/Retry-After'
           content:
             application/json:
               schema:
@@ -505,10 +527,12 @@ paths:
             or ''json_compact'' for that card. PLACEHOLDER_CARD: the card is a placeholder
             whose data is withheld from this caller, and every content format refuses
             it. VARIABLE_COST_NOT_REQUESTED: the card''s data comes from a variable-cost
-            source that is not served to this caller. Both apply to an MPP request
-            and to a contract account whose terms are not signed yet. Any other caller
-            gets the card''s data. For an MPP request, call the API with an API key.
-            For a contract account, contact your account manager to sign terms.'
+            source that is not served to this caller. Both apply to an MPP request,
+            to a contract account whose terms are not signed yet, and to an account
+            that isn''t served variable-cost data. Any other caller gets the card''s
+            data. For an MPP request, call the API with an API key. For a contract
+            account, contact your account manager to sign terms. For any other account,
+            contact Tako support.'
           content:
             application/json:
               schema:
@@ -520,6 +544,17 @@ paths:
             used a spend budget: do not retry automatically. A budget response carries
             the header x-should-retry: false, and Retry-After with the seconds until
             the budget resets, except for a total budget.'
+          headers:
+            RateLimit-Limit:
+              $ref: '#/components/headers/RateLimit-Limit'
+            RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimit-Remaining'
+            RateLimit-Reset:
+              $ref: '#/components/headers/RateLimit-Reset'
+            RateLimit-Policy:
+              $ref: '#/components/headers/RateLimit-Policy'
+            Retry-After:
+              $ref: '#/components/headers/Retry-After'
           content:
             application/json:
               schema:
@@ -603,6 +638,17 @@ paths:
             used a spend budget: do not retry automatically. A budget response carries
             the header x-should-retry: false, and Retry-After with the seconds until
             the budget resets, except for a total budget.'
+          headers:
+            RateLimit-Limit:
+              $ref: '#/components/headers/RateLimit-Limit'
+            RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimit-Remaining'
+            RateLimit-Reset:
+              $ref: '#/components/headers/RateLimit-Reset'
+            RateLimit-Policy:
+              $ref: '#/components/headers/RateLimit-Policy'
+            Retry-After:
+              $ref: '#/components/headers/Retry-After'
           content:
             application/json:
               schema:
@@ -723,6 +769,17 @@ paths:
             spend budget: do not retry automatically. A budget response carries the
             header x-should-retry: false, and Retry-After with the seconds until the
             budget resets, except for a total budget.'
+          headers:
+            RateLimit-Limit:
+              $ref: '#/components/headers/RateLimit-Limit'
+            RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimit-Remaining'
+            RateLimit-Reset:
+              $ref: '#/components/headers/RateLimit-Reset'
+            RateLimit-Policy:
+              $ref: '#/components/headers/RateLimit-Policy'
+            Retry-After:
+              $ref: '#/components/headers/Retry-After'
           content:
             application/json:
               schema:
@@ -912,6 +969,17 @@ paths:
             spend budget: do not retry automatically. A budget response carries the
             header x-should-retry: false, and Retry-After with the seconds until the
             budget resets, except for a total budget.'
+          headers:
+            RateLimit-Limit:
+              $ref: '#/components/headers/RateLimit-Limit'
+            RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimit-Remaining'
+            RateLimit-Reset:
+              $ref: '#/components/headers/RateLimit-Reset'
+            RateLimit-Policy:
+              $ref: '#/components/headers/RateLimit-Policy'
+            Retry-After:
+              $ref: '#/components/headers/Retry-After'
           content:
             application/json:
               schema:
@@ -1104,6 +1172,17 @@ paths:
             spend budget: do not retry automatically. A budget response carries the
             header x-should-retry: false, and Retry-After with the seconds until the
             budget resets, except for a total budget.'
+          headers:
+            RateLimit-Limit:
+              $ref: '#/components/headers/RateLimit-Limit'
+            RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimit-Remaining'
+            RateLimit-Reset:
+              $ref: '#/components/headers/RateLimit-Reset'
+            RateLimit-Policy:
+              $ref: '#/components/headers/RateLimit-Policy'
+            Retry-After:
+              $ref: '#/components/headers/Retry-After'
           content:
             application/json:
               schema:
@@ -1929,8 +2008,9 @@ components:
             and SEO data. Such data adds a charge above the request's own price, which
             the response's `usage` object reports as `variable_cost`. Defaults to
             true. Set it to false and each such card is a placeholder with its title,
-            a description and no data points. To get a placeholder's data, request
-            the card's URL from POST /api/v1/contents.
+            a description and no data points. An account that isn't served variable-cost
+            data always gets placeholders, whatever it sends. To get a placeholder's
+            data, request the card's URL from POST /api/v1/contents.
         output_schema:
           anyOf:
           - additionalProperties: true
@@ -4905,8 +4985,9 @@ components:
             and SEO data. Such data adds a charge above the request's own price, which
             the response's `usage` object reports as `variable_cost`. Defaults to
             true. Set it to false and each such card is a placeholder with its title,
-            a description and no data points. To get a placeholder's data, request
-            the card's URL from POST /api/v1/contents.
+            a description and no data points. An account that isn't served variable-cost
+            data always gets placeholders, whatever it sends. To get a placeholder's
+            data, request the card's URL from POST /api/v1/contents.
       additionalProperties: false
       type: object
       required:
@@ -5841,6 +5922,28 @@ components:
         caps
 
         on top of the base count and include_contents.'
+  headers:
+    RateLimit-Limit:
+      description: Requests allowed in the current rate-limit window.
+      schema:
+        type: integer
+    RateLimit-Remaining:
+      description: Requests left in the current rate-limit window.
+      schema:
+        type: integer
+    RateLimit-Reset:
+      description: Seconds until the current window frees capacity.
+      schema:
+        type: integer
+    RateLimit-Policy:
+      description: The rate-limit policy, e.g. 60;w=60 (60 requests per 60-second
+        window).
+      schema:
+        type: string
+    Retry-After:
+      description: Seconds to wait before retrying.
+      schema:
+        type: integer
   securitySchemes:
     apiKey:
       type: apiKey
