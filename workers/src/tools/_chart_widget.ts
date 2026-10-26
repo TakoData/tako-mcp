@@ -1690,6 +1690,17 @@ const WIDGET_HTML = `<!doctype html>
     return null;
   }
 
+  function isLiveCardPayload(structuredContent, meta) {
+    if (hasChart(structuredContent)) return false;
+    var charts = pickChartList(structuredContent, meta);
+    return (
+      !!charts &&
+      charts.some(function (chart) {
+        return !!chart && typeof chart === "object" && typeof chart.native_card_url === "string";
+      })
+    );
+  }
+
   function carouselCharts(charts) {
     if (!charts) return [];
     return charts.filter(function (chart) {
@@ -2116,7 +2127,7 @@ const WIDGET_HTML = `<!doctype html>
       log("running agent result, closed widget");
       return true;
     }
-    if (!hasOpenAiRuntime()) {
+    if (!hasOpenAiRuntime() || isLiveCardPayload(structuredContent, meta)) {
       var liveCards = carouselCharts(pickChartList(structuredContent, meta));
       if (liveCards.length > 0) {
         return renderLiveCards(liveCards, requestedHeight(structuredContent));

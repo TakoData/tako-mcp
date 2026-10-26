@@ -2534,3 +2534,74 @@ describe("live cards (no window.openai)", () => {
     });
   });
 });
+
+describe("live cards chosen by payload (window.openai defined)", () => {
+  function defineOpenAi(m: Mounted): void {
+    (m.widgetWin as unknown as { openai: object }).openai = {};
+  }
+
+  function embedFrames(m: Mounted): HTMLIFrameElement[] {
+    return Array.from(m.widgetWin.document.querySelectorAll("iframe")).filter((frame) =>
+      (frame.getAttribute("src") ?? "").includes("/embed/"),
+    );
+  }
+
+  it("mounts live cards for a /mcp payload that carries native_card_url", async () => {
+    const m = mountWidget(liveHtml());
+    defineOpenAi(m);
+    const stubs = stubLive(m);
+    const charts = liveCharts(2);
+    deliverLive(m, charts);
+    await settle();
+
+    expect(fetchedUrls(stubs)).toEqual(nativeUrls(charts));
+    expect(liveSlides(m)).toHaveLength(2);
+    expect(mountedFrame(m, 0).getAttribute("src")?.startsWith("blob:")).toBe(true);
+    expect(mountedFrame(m, 1).getAttribute("src")?.startsWith("blob:")).toBe(true);
+    expect(embedFrames(m)).toHaveLength(0);
+    expect(widgetEmpty(m).classList.contains("hidden")).toBe(true);
+  });
+
+  it("keeps the ChatGPT path for a payload with embed_url and no native_card_url", () => {
+    const m = mountWidget(staticWidgetHtml());
+    defineOpenAi(m);
+    const stubs = stubLive(m);
+    const { native_card_url: _omitted, ...chartWithoutNative } = liveChart(0);
+    deliver(
+      m,
+      toolResult(
+        { embed_url: liveChart(0).embed_url, image_url: liveChart(0).image_url },
+        { charts: [chartWithoutNative] },
+      ),
+      m.wrapperWin,
+    );
+
+    expect(stubs.fetches).toEqual([]);
+    expect(widgetFrame(m).getAttribute("src")?.startsWith(liveChart(0).embed_url)).toBe(true);
+  });
+
+  it("keeps the ChatGPT agent path when meta charts carry no native_card_url", () => {
+    const m = mountWidget(staticWidgetHtml());
+    defineOpenAi(m);
+    const stubs = stubLive(m);
+    const { native_card_url: _omitted, ...chartWithoutNative } = liveChart(0);
+    deliver(
+      m,
+      toolResult(
+        {
+          status: "completed",
+          run_id: "run_chatgpt",
+          answer: "One card.",
+          cards: [{ title: "A" }],
+          citations: [],
+          usage: null,
+        },
+        { charts: [chartWithoutNative] },
+      ),
+      m.wrapperWin,
+    );
+
+    expect(stubs.fetches).toEqual([]);
+    expect(widgetFrame(m).getAttribute("src")?.startsWith(liveChart(0).embed_url)).toBe(true);
+  });
+});
