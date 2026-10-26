@@ -25,6 +25,7 @@ Opt-in (name them in `?tools=`):
 - `tako_company_agent` — `?tools=available_data,contents,graph_related,search,company_agent` (skills: `tako-search`)
 - `tako_search_advanced` — `?tools=available_data,contents,graph_related,search,search_advanced` (skills: `tako-search`)
 - `tako_visualize` — `?tools=available_data,contents,graph_related,search,visualize` (skills: `tako-search`)
+- The Claude Code plugin and Gemini CLI extension — `?tools=agent,available_data,company_agent,contents,graph_related,search,visualize` (skills: `tako-agent`, `tako-search`)
 
 Server instructions:
 
@@ -69,7 +70,7 @@ Skills served through the MCP Skills extension: none
 
 Description:
 
-Run Tako's Answer Agent. It plans, queries the data graph and the web over several steps, and returns a written `answer` with numbered citations plus the chart `cards` it built. Start a run only when the user asks for one: they name Tako's agent, ask for deep or multi-step research with Tako, or ask Tako to build a list of companies or people.
+Run Tako's Answer Agent. It plans, queries the data graph and the web over several steps, and returns a written `answer` with numbered citations plus the chart `cards` it built. Start a run only when the user asks for one: they name Tako's agent or ask for deep or multi-step research with Tako.
 
 Best for: a ranking, trend, total, or calculation across several metrics or entities. Without that ask, use `tako_search`, even for a ranking or a calculation.
 
@@ -880,9 +881,9 @@ tako_search: Carnival, Inc. Revenues
 
 Description:
 
-Run Tako's Company Agent on a question about which companies or people match registry facts. It searches the company registry and the web over several steps, and returns a written `answer` with numbered citations plus any list `cards` it built. Start a run only when the user asks for one: they name Tako's agent, ask for deep or multi-step research with Tako, or ask Tako to build a list of companies or people.
+Run Tako's Company Agent. It searches the company registry and the web over several steps, and returns a written `answer` with numbered citations plus any list `cards` it built. Start a run only when the user asks for one: they name Tako's agent or ask for deep or multi-step research with Tako.
 
-Best for: screening companies by status, incorporation date, registered location, or industry; resolving named companies; finding a company's officers and directors. At `medium` and `high` effort it can also filter by financial metrics such as revenue or headcount.
+Best for: finding which companies or people match registry facts, such as a screen by status, incorporation date, registered location, or industry; resolving named companies; finding a company's officers and directors. At `medium` and `high` effort it can also filter by financial metrics such as revenue or headcount. Without that ask, use `tako_search`, even for a list of companies or people.
 
 A call returns within 45 s. If `status` is `running`, call again with `run_id`; don't start a new run. In your reply, link each card's `url`; the full list or chart lives on that page.
 

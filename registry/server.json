@@ -39,7 +39,7 @@
   "tools": [
     {
       "name": "tako_agent",
-      "description": "Run Tako's Answer Agent. It plans, queries the data graph and the web over several steps, and returns a written `answer` with numbered citations plus the chart `cards` it built. Start a run only when the user asks for one: they name Tako's agent, ask for deep or multi-step research with Tako, or ask Tako to build a list of companies or people.\n\nBest for: a ranking, trend, total, or calculation across several metrics or entities. Without that ask, use `tako_search`, even for a ranking or a calculation.\n\nA call returns within 45 s. If `status` is `running`, call again with `run_id`; don't start a new run. In your reply, link each card's `url`; the full list or chart lives on that page.",
+      "description": "Run Tako's Answer Agent. It plans, queries the data graph and the web over several steps, and returns a written `answer` with numbered citations plus the chart `cards` it built. Start a run only when the user asks for one: they name Tako's agent or ask for deep or multi-step research with Tako.\n\nBest for: a ranking, trend, total, or calculation across several metrics or entities. Without that ask, use `tako_search`, even for a ranking or a calculation.\n\nA call returns within 45 s. If `status` is `running`, call again with `run_id`; don't start a new run. In your reply, link each card's `url`; the full list or chart lives on that page.",
       "parameters": {
         "query": {
           "type": "string",
@@ -119,7 +119,7 @@
     },
     {
       "name": "tako_company_agent",
-      "description": "Run Tako's Company Agent on a question about which companies or people match registry facts. It searches the company registry and the web over several steps, and returns a written `answer` with numbered citations plus any list `cards` it built. Start a run only when the user asks for one: they name Tako's agent, ask for deep or multi-step research with Tako, or ask Tako to build a list of companies or people.\n\nBest for: screening companies by status, incorporation date, registered location, or industry; resolving named companies; finding a company's officers and directors. At `medium` and `high` effort it can also filter by financial metrics such as revenue or headcount.\n\nA call returns within 45 s. If `status` is `running`, call again with `run_id`; don't start a new run. In your reply, link each card's `url`; the full list or chart lives on that page.",
+      "description": "Run Tako's Company Agent. It searches the company registry and the web over several steps, and returns a written `answer` with numbered citations plus any list `cards` it built. Start a run only when the user asks for one: they name Tako's agent or ask for deep or multi-step research with Tako.\n\nBest for: finding which companies or people match registry facts, such as a screen by status, incorporation date, registered location, or industry; resolving named companies; finding a company's officers and directors. At `medium` and `high` effort it can also filter by financial metrics such as revenue or headcount. Without that ask, use `tako_search`, even for a list of companies or people.\n\nA call returns within 45 s. If `status` is `running`, call again with `run_id`; don't start a new run. In your reply, link each card's `url`; the full list or chart lives on that page.",
       "parameters": {
         "query": {
           "type": "string",

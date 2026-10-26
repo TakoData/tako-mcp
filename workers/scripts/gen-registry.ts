@@ -83,6 +83,7 @@ import { skillsForSurface } from "../src/skills.js";
 import type { Surface } from "../src/surface.js";
 import type { ToolAnnotations, ToolModule } from "../src/tools/types.js";
 import { readSkills, renderSkillsModule, skillMarkdownPaths } from "./gen-skills.js";
+import { PLUGIN_TOOL_NAMES } from "./plugin-tool-url.js";
 
 // ---------------------------------------------------------------------------
 // Curated tool surface
@@ -1069,6 +1070,8 @@ export interface ToolsDocInput {
   instructionsFor: (registered: ReadonlySet<string>) => string;
   /** The names of the skills a surface serves a connection for the tools it registers. */
   skillsFor: (surface: Surface, registered: ReadonlySet<string>) => readonly string[];
+  /** The tools the Claude Code plugin and Gemini CLI extension pin in their `?tools=` URL. */
+  pluginToolNames: ReadonlySet<string>;
   freeTierToolNames: ReadonlySet<string>;
   /** Generated sample results (see `buildToolSamples`); tools without an
    *  entry render schemas only. */
@@ -1137,6 +1140,11 @@ function skillNamesMarkdown(names: readonly string[]): string {
   return names.length === 0 ? "none" : names.map((name) => `\`${name}\``).join(", ");
 }
 
+function allowlistMarkdown(requested: readonly string[], input: ToolsDocInput): string {
+  const servedSkills = input.skillsFor("generic", resolveToolSet("generic", new Set(requested)));
+  return `\`?tools=${requested.map(toolsToken).join(",")}\` (skills: ${skillNamesMarkdown(servedSkills)})`;
+}
+
 export function buildToolsDoc(input: ToolsDocInput): string {
   const byName = new Map(input.registryTools.map((t) => [t.name, t]));
   const modules = [...input.modules].sort((a, b) => a.name.localeCompare(b.name));
@@ -1171,10 +1179,10 @@ export function buildToolsDoc(input: ToolsDocInput): string {
       // the thing a reader copies.
       for (const m of optIn) {
         const requested = [...modules.filter((x) => listed.has(x.name)).map((x) => x.name), m.name];
-        const value = requested.map(toolsToken).join(",");
-        const servedSkills = input.skillsFor("generic", resolveToolSet("generic", new Set(requested)));
-        out.push(`- \`${m.name}\` — \`?tools=${value}\` (skills: ${skillNamesMarkdown(servedSkills)})`);
+        out.push(`- \`${m.name}\` — ${allowlistMarkdown(requested, input)}`);
       }
+      const pluginRequested = modules.filter((x) => input.pluginToolNames.has(x.name)).map((x) => x.name);
+      out.push(`- The Claude Code plugin and Gemini CLI extension — ${allowlistMarkdown(pluginRequested, input)}`);
     }
     // One string for every tier: the host loads it once at `initialize`,
     // so a per-tier variant would outlive a mid-conversation sign-in (see
@@ -1977,6 +1985,7 @@ async function main(): Promise<void> {
     registryTools,
     instructionsFor: serverInstructionsFor,
     skillsFor: (surface, registered) => skillsForSurface(surface, registered, skills).map((skill) => skill.name),
+    pluginToolNames: new Set(PLUGIN_TOOL_NAMES),
     freeTierToolNames: FREE_TIER_TOOL_NAMES,
     samples: buildToolSamples(modules.map((m) => m.tool)),
   });

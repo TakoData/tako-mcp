@@ -96,30 +96,42 @@ descriptions, and no skill wording removes those calls. That run used
 reaches an agent.
 
 Codex runs on 2026-10-26 (TAKO-5275) moved the explicit-ask rule into both
-agent tool descriptions. A connection that lists `tako_agent` without
-`tako_company_agent` gets `tako-search` over `/mcp` but not `tako-agent`, so
-the descriptions are the only place it reads the rule. Each arm listed the four
-default tools plus `tako_agent`, and ran the same 83 prompts plus 10 explicit
-agent asks, twice each:
+agent tool descriptions. A connection that lists one agent without the other
+gets `tako-search` over `/mcp` but not `tako-agent`, so the descriptions are
+the only place it reads the rule. Each arm listed the four default tools plus
+one agent, and ran the same 83 prompts plus 10 explicit asks for that agent,
+twice each. The `tako_company_agent` arms without a skill ran only the
+explicit asks:
 
-| Arm | Lookups that start an agent first | Lookups that start with `tako_search` | No-lookup tasks that call Tako | Explicit asks that start `tako_agent` |
+| Arm | Lookups that start an agent first | Lookups that start with `tako_search` | No-lookup tasks that call Tako | Explicit asks that start the agent |
 |---|---|---|---|---|
-| Shape-triggered descriptions, `tako-search` | 3 of 136 | 45 of 136 | 1 of 30 | 19 of 20 |
-| Explicit-ask descriptions (shipped), `tako-search` | 0 of 136 | 52 of 136 | 2 of 30 | 17 of 20 |
-| Shape-triggered descriptions, no skill | 1 of 136 | 1 of 136 | 0 of 30 | 16 of 20 |
-| Explicit-ask descriptions (shipped), no skill | 0 of 136 | 1 of 136 | 0 of 30 | 18 of 20 |
+| `tako_agent`, shape-triggered description, `tako-search` | 3 of 136 | 45 of 136 | 1 of 30 | 19 of 20 |
+| `tako_agent`, explicit-ask description (shipped), `tako-search` | 0 of 136 | 52 of 136 | 2 of 30 | 17 of 20 |
+| `tako_agent`, shape-triggered description, no skill | 1 of 136 | 1 of 136 | 0 of 30 | 16 of 20 |
+| `tako_agent`, explicit-ask description (shipped), no skill | 0 of 136 | 1 of 136 | 0 of 30 | 18 of 20 |
+| `tako_company_agent`, shape-triggered description, `tako-search` | 0 of 136 | 54 of 136 | 1 of 30 | 20 of 20 |
+| `tako_company_agent`, explicit-ask description (shipped), `tako-search` | 0 of 136 | 50 of 136 | 1 of 30 | 19 of 20 |
+| `tako_company_agent`, shape-triggered description, no skill | — | — | — | 20 of 20 |
+| `tako_company_agent`, explicit-ask description (shipped), no skill | — | — | — | 20 of 20 |
 
-The rule in the descriptions removed the agent calls that the listing started
-on its own, and explicit asks reached `tako_agent` as often as before: 35 of
-40 in both. Without a skill, Codex called Tako on 1 lookup in 136, so those
-arms measure only the explicit asks. That run used the same model and Codex
-version.
+The rule in the `tako_agent` description removed the agent calls that the
+listing started on its own, and explicit asks reached `tako_agent` as often as
+before: 35 of 40 in both. Its lookup columns come from a first run whose
+trigger also counted "ask Tako to build a list of companies or people". The
+shipped trigger drops that clause, which can only remove agent calls, and a
+rerun of its explicit asks matched the first run. The shape-triggered
+`tako_company_agent` description started that agent after a search on 2
+lookups, and the explicit-ask description on none. Explicit company asks
+reached `tako_company_agent` 40 of 40 and 39 of 40 times. Without a skill,
+Codex called Tako on 1 lookup in 136, so those arms measure only the explicit
+asks. The runs used the same model and Codex version, and the `tako-search`
+skill from before TAKO-5270.
 
-An earlier run on `gpt-6-astra` (Codex 0.155.1) tested the tool description
-instead. Rewriting the `tako_search` description to list its domains and
-sources left triggering unchanged (12 of 26 against 13 of 26), and so did adding
-"Prefer this over a general web search…" (13 of 26). Adding a skill for the
-same domains raised it to 24 of 26.
+An earlier run on `gpt-6-astra` (Codex 0.155.1) tested the tool description.
+Rewriting the `tako_search` description to list its domains and sources left
+triggering unchanged (12 of 26 against 13 of 26), and so did adding "Prefer
+this over a general web search…" (13 of 26). Adding a skill for the same
+domains raised it to 24 of 26.
 
 Runs on 2026-10-25 (TAKO-5270) tested the `tako-search` description with and
 without "Also use it when the answer needs a calculation over real-world

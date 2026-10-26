@@ -50,9 +50,9 @@ const AGENT_CALL_WINDOW_SENTENCE = `A call returns within ${AGENT_CALL_WINDOW_MS
 /** The description sentence that keeps each card's Tako page link in the model's reply. */
 export const AGENT_CARD_LINK_SENTENCE = "In your reply, link each card's `url`; the full list or chart lives on that page.";
 
-/** The description sentence that starts a run only on an explicit ask, matching the `tako-agent` skill. */
+/** The description sentence that starts a run only on an explicit ask. */
 export const AGENT_EXPLICIT_ASK_SENTENCE =
-  "Start a run only when the user asks for one: they name Tako's agent, ask for deep or multi-step research with Tako, or ask Tako to build a list of companies or people.";
+  "Start a run only when the user asks for one: they name Tako's agent or ask for deep or multi-step research with Tako.";
 
 /** The description line both agent tools end with. */
 export const AGENT_DESCRIPTION_LAST_LINE = `${AGENT_CALL_WINDOW_SENTENCE} ${AGENT_CARD_LINK_SENTENCE}`;
