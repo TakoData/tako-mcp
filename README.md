@@ -350,7 +350,7 @@ Two tools, one step apart — `tako_search` finds, `tako_contents` fetches:
 
 ## Agent Skills
 
-Two ready-to-use skills for Claude Code. `tako-search` teaches Claude when to look something up with Tako and how to report what it finds. `tako-agent` teaches Claude to start one of Tako's research agents when you ask for one, which agent to call, and how to wait for its answer. Copy the block inside each dropdown and paste it into Claude Code — it sets up the connection and the skill for you. Both blocks set up the same connection, so you can install either one or both.
+Two ready-to-use skills for Claude Code. `tako-search` teaches Claude when to use Tako to look something up or calculate over real-world data, and how to report what it finds. `tako-agent` teaches Claude to start one of Tako's research agents when you ask for one, which agent to call, and how to wait for its answer. Copy the block inside each dropdown and paste it into Claude Code — it sets up the connection and the skill for you. Both blocks set up the same connection, so you can install either one or both.
 
 The `tako-search` skill replaces the `tako-financial-research`, `tako-macroeconomics`, and `tako-web-traffic` skills. If you called one of them by name, such as `/tako:tako-financial-research`, call `/tako:tako-search` instead.
 
@@ -372,7 +372,7 @@ Step 2: Add this Claude skill
 ---
 name: tako-search
 description: >-
-  Use when you need to look something up: current events, facts, figures, or pages on any topic. Tako searches the live web and a knowledge graph of licensed data in one call, and returns web results, plus a structured, cited card when the graph has one.
+  Use when you need to look something up: current events, facts, figures, or pages on any topic. Also use it when the answer needs a calculation over real-world data. Tako searches the live web and a knowledge graph of licensed data in one call, and returns web results, plus a structured, cited card when the graph has one.
 ---
 
 # Tako
