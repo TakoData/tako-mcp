@@ -24,9 +24,9 @@ import {
 } from "./django.js";
 import type { AuthMode, CallerStamp } from "./caller.js";
 import type { Env } from "./env.js";
-import { APP_UI_MIME_TYPE } from "./mcp_session.js";
 import type { Surface } from "./surface.js";
 import {
+  APP_UI_MIME_TYPE,
   initializeDeclaresUi,
   mintSessionId,
   sessionIdKind,
@@ -1003,9 +1003,8 @@ function registerTool(
       // Dynamic-resource path: when the tool's `appUiResource` declares
       // a `dynamic` variant, resolve a per-call URI from the tool input
       // and override `_meta.ui.resourceUri` (and the legacy flat
-      // `_meta["ui/resourceUri"]`) in the tool result. claude.ai reads
-      // these from the result's `_meta`, so per-call routing works
-      // even though tool registration metadata is static.
+      // `_meta["ui/resourceUri"]`) in the tool result. Only the chatgpt
+      // surface declares a `dynamic` variant.
       //
       // Deliberately NOT overriding `_meta["openai/outputTemplate"]`
       // here — that key is read by ChatGPT, which keeps using the
@@ -1450,9 +1449,11 @@ export function freeTierHiddenToolResponse(
  *
  * We spin up a fresh `McpServer` + transport per request. Cloudflare Workers
  * have no persistent in-process state across requests, so stateless mode is
- * the right fit: no `Mcp-Session-Id`, no cross-request bookkeeping. Each
- * request carries all the state it needs (client sends `initialize` and
- * subsequent calls independently; re-negotiation is cheap).
+ * the right fit: no cross-request bookkeeping. Each request carries all the
+ * state it needs (client sends `initialize` and subsequent calls
+ * independently; re-negotiation is cheap). On `/mcp`, the Worker mints the
+ * `Mcp-Session-Id` at `initialize`, and the ID records only whether the
+ * client declared MCP Apps support.
  *
  * Auth gate: `extractBearer` runs BEFORE the SDK sees the request. A
  * malformed or empty `Authorization` header short-circuits here with a
@@ -1654,7 +1655,7 @@ export async function handleMcpRequest(
       (declaredUi ?? sessionRendersUi(sessionHeader));
     if (surface === "generic") {
       console.log(
-        `[mcp] session surface=generic declared_ui=${declaredUi ?? "n/a"} session=${sessionIdKind(sessionHeader)}`,
+        `[mcp] session surface=generic declared_ui=${declaredUi ?? "n/a"} session=${sessionIdKind(sessionHeader)} method=${jsonRpcMethodForLog(peekedBody)}`,
       );
     }
     const server = createMcpServer(ctx, {
@@ -1793,6 +1794,12 @@ const STREAMING_TOOL_NAMES: ReadonlySet<string> = new Set(
  * `streamsProgress`. `undefined` for a batch, for every other method, and for
  * every other tool.
  */
+function jsonRpcMethodForLog(body: unknown): string {
+  if (typeof body !== "object" || body === null || Array.isArray(body)) return "n/a";
+  const { method } = body as { method?: unknown };
+  return typeof method === "string" ? JSON.stringify(method.slice(0, 200)) : "n/a";
+}
+
 export function streamingToolCallName(body: unknown): string | undefined {
   if (typeof body !== "object" || body === null || Array.isArray(body)) {
     return undefined;

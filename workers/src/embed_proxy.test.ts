@@ -1160,7 +1160,7 @@ describe("dataProxyShim", () => {
       const body = dataProxyShim(TARGET)
         .replace(/^<script>/, "")
         .replace(/<\/script>$/, "");
-      // eslint-disable-next-line no-new-func
+      // eslint-disable-next-line no-new-func -- the test evaluates the shim body the proxy injects
       new Function("window", "URL", body)(win, URL);
       return {
         calls,

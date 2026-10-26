@@ -3526,13 +3526,6 @@ export function buildChartAppUiResource(
     // base; the primary data-URI path needs no CSP. webBase covers any
     // future web-hosted asset. Deduped — staging/prod use one host for
     // both.
-    // Plus, when the `PUBLIC_CDN_URL` experiment is armed, the front-end
-    // asset CDN — the origin that serves Tako's real `Card.js`, its lazily
-    // imported chunks, and the Geist/Inter fonts. Declaring it is what the
-    // `script-src` capability probe below actually measures: per the MCP Apps
-    // spec `resourceDomains` must reach script-src/style-src/font-src, and
-    // whether claude.ai honors that is the single unknown gating native
-    // interactive cards there. Unset in production → this array is unchanged.
     // Runtime fetches the widget makes — just this worker's own origin, for the
     // native-card proxy. Empty when the experiment is off or the origin is
     // unknown, and `mcp.ts` omits the key entirely then. Never tako.com: the

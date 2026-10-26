@@ -2869,6 +2869,42 @@ describe("chart widget or PNG per connection on /mcp", () => {
     expect(result._meta?.image_data_url).toBeUndefined();
   });
 
+  describe("session log line", () => {
+    async function sessionLogFor(body: unknown, sessionId: string | null): Promise<string | undefined> {
+      stubDjangoAndPng();
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+      await worker.fetch(
+        new Request("https://mcp.tako.com/mcp?tools=search", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            accept: "application/json, text/event-stream",
+            authorization: "Bearer raw-tako-token-no-dots",
+            ...(sessionId !== null ? { "mcp-session-id": sessionId } : {}),
+          },
+          body: JSON.stringify(body),
+        }),
+        env,
+      );
+      return logSpy.mock.calls.map((c) => String(c[0])).find((line) => line.startsWith("[mcp] session "));
+    }
+
+    it("records the session kind and the JSON-RPC method, never the session id", async () => {
+      const line = await sessionLogFor(
+        { jsonrpc: "2.0", id: 1, method: "tools/list", params: {} },
+        "ui-1b2c3d4e",
+      );
+
+      expect(line).toBe('[mcp] session surface=generic declared_ui=n/a session=ui method="tools/list"');
+    });
+
+    it("records method=n/a for a batch", async () => {
+      const line = await sessionLogFor([{ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }], null);
+
+      expect(line).toBe("[mcp] session surface=generic declared_ui=n/a session=absent method=n/a");
+    });
+  });
+
   describe("tako_agent finished run", () => {
     function stubFinishedRun(): void {
       vi.stubGlobal(
