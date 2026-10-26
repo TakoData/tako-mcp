@@ -334,6 +334,8 @@ const ASSUMED_WIDGET_WIDTH_PX = 800;
 
 const CAROUSEL_GAP_PX = 8;
 const CAROUSEL_PEEK_PX = 32;
+const LIVE_CARD_FAILURE_HEIGHT_PX = 160;
+const PROXIED_CARD_FETCH_TIMEOUT_MS = 7000;
 
 /**
  * HTML-escape a string for safe interpolation into attribute values
@@ -492,22 +494,24 @@ function buildFallbackWidgetHtml(embedUrl: string, message: string): string {
 }
 
 /**
- * Height reporter injected into the proxied embed page during a native upgrade.
+ * Height reporter injected into a proxied embed page: the document a native
+ * upgrade writes, or a live card's `blob:` frame. `postHeight` is the statement
+ * that sends the measured height `h`, so each variant names its own message.
  *
- * Lives here, as its own constant, because it is a `<script>` body nested
+ * Lives here, outside the template, because it is a `<script>` body nested
  * inside the widget template which is itself a `<script>` body.
  *
  * The runtime value MUST contain a real `</script>`, since it is injected into
- * a fetched HTML document. So the escaping cannot live in this constant — it
- * happens where the value is interpolated into the widget template, which
- * rewrites `</script` to `<\/script`. The HTML parser then no longer sees a
- * closing tag, while JS still reads the string as `</script>`. Skipping that
- * step truncates the entire widget bundle at this line, which is how it was
- * found: every executing widget test failed at once.
+ * a fetched HTML document. So the escaping cannot live in this builder — it
+ * happens where the value is interpolated into the widget template
+ * (`inlineScriptString`), which rewrites `</script` to `<\/script`. The HTML
+ * parser then no longer sees a closing tag, while JS still reads the string as
+ * `</script>`. Skipping that step truncates the entire widget bundle at this
+ * line, which is how it was found: every executing widget test failed at once.
  *
- * `__FALLBACK_HEIGHT__` is substituted at upgrade time. It covers the window
- * where Card.js has mounted but not laid out, so `offsetHeight` reads 0 and the
- * host would otherwise collapse the card to nothing.
+ * `__FALLBACK_HEIGHT__` is substituted when the reporter is injected. It covers
+ * the window where Card.js has mounted but not laid out, so `offsetHeight` reads
+ * 0 and the host would otherwise collapse the card to nothing.
  *
  * It honors {@link MAX_INLINE_WIDGET_HEIGHT_PX} the same way the PNG path does,
  * and it has to: that ceiling is a host constraint, not a preference — Claude
@@ -543,56 +547,70 @@ function buildFallbackWidgetHtml(embedUrl: string, message: string): string {
  *     style. That is what terminates the sequence: correction, one confirming
  *     callback, quiet — instead of clear/measure/re-apply every frame forever.
  */
-const NATIVE_HEIGHT_REPORTER = [
-  "<script>(function(){",
-  "var CAP=" + String(MAX_INLINE_WIDGET_HEIGHT_PX) + ";",
-  // Body's scrollHeight as of the end of the last pass that did work — the
-  // reentrancy guard described above. -1 so the first pass always runs.
-  "var last=-1;",
-  "function raw(){return document.body?document.body.scrollHeight:0;}",
-  "function n(force){",
-  "var d=document.documentElement;if(!d)return;",
-  // Nothing has moved since we last fitted the document, so re-fitting it would
-  // only be the observer answering itself. The `force` flag exists for the
-  // triggers that know something changed out-of-band (the frame resized) or that
-  // must report regardless of layout (the initial pass and the mount ladder).
-  "if(!force&&raw()===last)return;",
-  // Measure UNSCALED: clear any fit applied on an earlier pass so `offsetHeight`
-  // reports the card's natural height rather than a previously scaled one.
-  "d.style.transform='';d.style.transformOrigin='';d.style.width='';",
-  "var h=d.offsetHeight||0;",
-  "if(h<=0)h=__FALLBACK_HEIGHT__;",
-  // Over the host's inline ceiling: scale the whole document down to fit
-  // instead of letting the host crop the axis and source line off the bottom.
-  // Widening to `100/s`% first means the content still fills the frame after
-  // the transform shrinks it.
-  "if(h>CAP){var s=CAP/h;",
-  "d.style.transformOrigin='top left';",
-  "d.style.width=(100/s)+'%';",
-  "d.style.transform='scale('+s+')';",
-  "h=CAP;}",
-  "last=raw();",
-  "try{if(window.openai&&typeof window.openai.notifyIntrinsicHeight==='function')",
-  "window.openai.notifyIntrinsicHeight(h);}catch(e){}",
-  "try{window.parent.postMessage({jsonrpc:'2.0',method:'ui/notifications/size-changed',",
-  "params:{width:(document.documentElement&&document.documentElement.clientWidth)||0,height:h}},'*');}catch(e){}",
-  "}",
-  "function f(){n(true);}",
-  "f();",
-  "window.addEventListener('resize',f);",
-  "window.addEventListener('load',f);",
-  // Card.js mounts asynchronously and lazily imports its view chunks, so the
-  // first few reads land before the card has its real height. Re-report on a
-  // short ladder rather than once.
-  "setTimeout(f,400);setTimeout(f,1200);setTimeout(f,3000);",
-  // Everything after that ladder — a tab switch, `Show more`, a chart that
-  // finishes drawing late. Feature-detected because a failure to observe must
-  // leave the ladder's behaviour intact, not throw and lose it too.
-  "try{if(typeof ResizeObserver!=='undefined'&&document.body){",
-  "new ResizeObserver(function(){n(false);}).observe(document.body);",
-  "}}catch(e){}",
-  "})();<\/script>",
-].join("");
+function buildHeightReporter(postHeight: string): string {
+  return [
+    "<script>(function(){",
+    "var CAP=" + String(MAX_INLINE_WIDGET_HEIGHT_PX) + ";",
+    // Body's scrollHeight as of the end of the last pass that did work — the
+    // reentrancy guard described above. -1 so the first pass always runs.
+    "var last=-1;",
+    "function raw(){return document.body?document.body.scrollHeight:0;}",
+    "function n(force){",
+    "var d=document.documentElement;if(!d)return;",
+    // Nothing has moved since we last fitted the document, so re-fitting it would
+    // only be the observer answering itself. The `force` flag exists for the
+    // triggers that know something changed out-of-band (the frame resized) or that
+    // must report regardless of layout (the initial pass and the mount ladder).
+    "if(!force&&raw()===last)return;",
+    // Measure UNSCALED: clear any fit applied on an earlier pass so `offsetHeight`
+    // reports the card's natural height rather than a previously scaled one.
+    "d.style.transform='';d.style.transformOrigin='';d.style.width='';",
+    "var h=d.offsetHeight||0;",
+    "if(h<=0)h=__FALLBACK_HEIGHT__;",
+    // Over the host's inline ceiling: scale the whole document down to fit
+    // instead of letting the host crop the axis and source line off the bottom.
+    // Widening to `100/s`% first means the content still fills the frame after
+    // the transform shrinks it.
+    "if(h>CAP){var s=CAP/h;",
+    "d.style.transformOrigin='top left';",
+    "d.style.width=(100/s)+'%';",
+    "d.style.transform='scale('+s+')';",
+    "h=CAP;}",
+    "last=raw();",
+    postHeight,
+    "}",
+    "function f(){n(true);}",
+    "f();",
+    "window.addEventListener('resize',f);",
+    "window.addEventListener('load',f);",
+    // Card.js mounts asynchronously and lazily imports its view chunks, so the
+    // first few reads land before the card has its real height. Re-report on a
+    // short ladder rather than once.
+    "setTimeout(f,400);setTimeout(f,1200);setTimeout(f,3000);",
+    // Everything after that ladder — a tab switch, `Show more`, a chart that
+    // finishes drawing late. Feature-detected because a failure to observe must
+    // leave the ladder's behaviour intact, not throw and lose it too.
+    "try{if(typeof ResizeObserver!=='undefined'&&document.body){",
+    "new ResizeObserver(function(){n(false);}).observe(document.body);",
+    "}}catch(e){}",
+    "})();<\/script>",
+  ].join("");
+}
+
+const NATIVE_HEIGHT_REPORTER = buildHeightReporter(
+  "try{if(window.openai&&typeof window.openai.notifyIntrinsicHeight==='function')" +
+    "window.openai.notifyIntrinsicHeight(h);}catch(e){}" +
+    "try{window.parent.postMessage({jsonrpc:'2.0',method:'ui/notifications/size-changed'," +
+    "params:{width:(document.documentElement&&document.documentElement.clientWidth)||0,height:h}},'*');}catch(e){}",
+);
+
+const LIVE_CARD_HEIGHT_REPORTER = buildHeightReporter(
+  "try{window.parent.postMessage({type:'tako-embed-height',height:h},'*');}catch(e){}",
+);
+
+function inlineScriptString(value: string): string {
+  return JSON.stringify(value).replace(/<\/script/gi, "<\\/script");
+}
 
 /**
  * Bundle the host loads into a sandboxed iframe. One thin `<iframe>`
@@ -683,6 +701,9 @@ const WIDGET_HTML = `<!doctype html>
   .tako-track { display: flex; gap: ${CAROUSEL_GAP_PX}px; align-items: flex-start; overflow-x: auto; scroll-snap-type: x mandatory; scrollbar-width: none; }
   .tako-track::-webkit-scrollbar { display: none; }
   .tako-slide { flex: 0 0 calc(100% - ${CAROUSEL_PEEK_PX}px); min-width: 0; scroll-snap-align: start; }
+  .tako-slide:only-child { flex-basis: 100%; }
+  .tako-slide-failed { height: ${LIVE_CARD_FAILURE_HEIGHT_PX}px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; text-align: center; }
+  .tako-slide-failed p { margin: 0; }
   .tako-slide iframe { width: 100%; border: 0; display: block; background: transparent; }
   .tako-slide a { display: block; cursor: pointer; text-decoration: none; color: #4aa9ff; }
   .tako-slide img { width: 100%; height: auto; max-height: ${MAX_INLINE_WIDGET_HEIGHT_PX}px; object-fit: contain; display: block; background: transparent; }
@@ -1568,6 +1589,73 @@ const WIDGET_HTML = `<!doctype html>
     return typeof directive === "string" && directive.indexOf("frame-src") === 0;
   }
 
+  var NATIVE_CARD_REPORTER = ${inlineScriptString(NATIVE_HEIGHT_REPORTER)};
+  var LIVE_CARD_REPORTER = ${inlineScriptString(LIVE_CARD_HEIGHT_REPORTER)};
+
+  function withFallbackHeight(reporter, fallbackHeight) {
+    return reporter.replace("__FALLBACK_HEIGHT__", String(fallbackHeight || 0));
+  }
+
+  function hostSchemeSnapshot() {
+    return {
+      // Same scoping as \`applyHostSurface\`: the backdrop still rides into the
+      // native document on every host EXCEPT ChatGPT, unchanged from what
+      // claude.ai renders correctly in production today. This path replaces
+      // the document with the card, so on ChatGPT the paint would be the same
+      // full-bleed rectangle under a rounded card that the canvas tier was
+      // suppressed for — and ChatGPT is the only host measured to declare a
+      // surface that does not match what it renders.
+      backdrop: hasOpenAiRuntime() ? null : chartBackdrop(),
+      scheme: hostTheme(),
+    };
+  }
+
+  // The card paints its own surface with an 8px radius over a TRANSPARENT
+  // html/body, so its corners fall through to the document's backdrop —
+  // which behind claude.ai's widget frame is opaque WHITE. Those were the
+  // white triangles under the card's corners.
+  //
+  // Same backdrop \`applyHostSurface\` resolves, but it has to go on the
+  // CANVAS here: this path replaces the whole document with the card, so
+  // there is no chart element left to hang a background on. That also
+  // means the canvas is covered by the card everywhere except the corners
+  // and whatever the host reserved beyond it, which is what makes an
+  // approximate colour acceptable here too.
+  //
+  // Injected LAST so it wins over the page's own rules.
+  function hostSchemeStyle(hostScheme) {
+    var scheme = hostScheme.scheme;
+    // \`color-scheme\` only — the backdrop is deliberately NOT painted here.
+    //
+    // This path replaces the whole document with the card, so
+    // \`:root,body{background:…}\` paints a FULL-BLEED rectangle behind a card
+    // that has 8px rounded corners: the same square-behind-rounded mismatch
+    // that drew a visible outline on the iframe path, in the one place
+    // claude.ai actually renders. And the colour is no more knowable here —
+    // it comes from the same \`hostContext\` claim, which the reporting host
+    // got wrong (declared \`#212121\`, rendered black).
+    //
+    // Leaving the canvas transparent lets the host's real background show
+    // through the card's corners, which is correct on every host without
+    // trusting anyone's colour. \`color-scheme\` stays: it themes the
+    // UA-drawn surfaces inside the card (scrollbars, form controls) and
+    // paints nothing itself.
+    if (hostScheme.backdrop) {
+      return '<style id="tako-host-scheme">:root,body{background:' + hostScheme.backdrop + '}' +
+        (scheme ? ':root{color-scheme:' + scheme + '}' : "") + '</style>';
+    }
+    if (scheme) {
+      return '<style id="tako-host-scheme">:root{color-scheme:' + scheme + '}</style>';
+    }
+    return "";
+  }
+
+  function injectIntoCard(html, injected) {
+    return html.indexOf("</body>") !== -1
+      ? html.replace("</body>", injected + "</body>")
+      : html + injected;
+  }
+
   // Native-card upgrade. Replace the PNG with Tako's REAL card — the same
   // interactive document ChatGPT renders — by fetching the embed page through
   // our CORS-enabled proxy and letting its own scripts run here.
@@ -1597,14 +1685,13 @@ const WIDGET_HTML = `<!doctype html>
     // wrapped in a \`:root{background;color-scheme}\` block for the new one. And
     // \`nativeStarted\` means there is no second fetch to reconcile it, so the
     // inconsistency would be permanent for that card.
-    var snapBackdrop = chartBackdrop();
-    var snapScheme = hostTheme();
+    var hostScheme = hostSchemeSnapshot();
     var settled = false;
     var timer = setTimeout(function () {
       if (settled) return;
       settled = true;
       log("native card fetch timed out, staying on image", { url: nativeUrl });
-    }, 7000);
+    }, ${PROXIED_CARD_FETCH_TIMEOUT_MS});
     fetch(nativeUrl, { credentials: "omit" })
       .then(function (r) {
         if (!r.ok) throw new Error("HTTP " + r.status);
@@ -1621,62 +1708,13 @@ const WIDGET_HTML = `<!doctype html>
         // this script's document, listeners included. Injecting a reporter into
         // the markup keeps the host sized correctly — the same
         // size-changed / notifyIntrinsicHeight pair the baked variant sends.
-        var reporter = ${JSON.stringify(NATIVE_HEIGHT_REPORTER).replace(/<\/script/gi, "<\\/script")}.replace(
-          "__FALLBACK_HEIGHT__",
-          String(fallbackHeight || 0),
-        );
-        // The card paints its own surface with an 8px radius over a TRANSPARENT
-        // html/body, so its corners fall through to the document's backdrop —
-        // which behind claude.ai's widget frame is opaque WHITE. Those were the
-        // white triangles under the card's corners.
-        //
-        // Same backdrop \`applyHostSurface\` resolves, but it has to go on the
-        // CANVAS here: this path replaces the whole document with the card, so
-        // there is no chart element left to hang a background on. That also
-        // means the canvas is covered by the card everywhere except the corners
-        // and whatever the host reserved beyond it, which is what makes an
-        // approximate colour acceptable here too.
-        //
-        // Injected LAST so it wins over the page's own rules.
-        var scheme = snapScheme;
-        var schemeStyle = "";
-        // \`color-scheme\` only — the backdrop is deliberately NOT painted here.
-        //
-        // This path replaces the whole document with the card, so
-        // \`:root,body{background:…}\` paints a FULL-BLEED rectangle behind a card
-        // that has 8px rounded corners: the same square-behind-rounded mismatch
-        // that drew a visible outline on the iframe path, in the one place
-        // claude.ai actually renders. And the colour is no more knowable here —
-        // it comes from the same \`hostContext\` claim, which the reporting host
-        // got wrong (declared \`#212121\`, rendered black).
-        //
-        // Leaving the canvas transparent lets the host's real background show
-        // through the card's corners, which is correct on every host without
-        // trusting anyone's colour. \`color-scheme\` stays: it themes the
-        // UA-drawn surfaces inside the card (scrollbars, form controls) and
-        // paints nothing itself.
-        // Same scoping as \`applyHostSurface\`: the backdrop still rides into the
-        // native document on every host EXCEPT ChatGPT, unchanged from what
-        // claude.ai renders correctly in production today. This path replaces
-        // the document with the card, so on ChatGPT the paint would be the same
-        // full-bleed rectangle under a rounded card that the canvas tier was
-        // suppressed for — and ChatGPT is the only host measured to declare a
-        // surface that does not match what it renders.
-        var backdrop = hasOpenAiRuntime() ? null : snapBackdrop;
-        if (backdrop) {
-          schemeStyle =
-            '<style id="tako-host-scheme">:root,body{background:' + backdrop + '}' +
-            (scheme ? ':root{color-scheme:' + scheme + '}' : "") + '</style>';
-        } else if (scheme) {
-          schemeStyle =
-            '<style id="tako-host-scheme">:root{color-scheme:' + scheme + '}</style>';
-        }
-        var injected = schemeStyle + reporter;
-        var patched =
-          html.indexOf("</body>") !== -1
-            ? html.replace("</body>", injected + "</body>")
-            : html + injected;
-        log("native card upgrading", { bytes: patched.length, scheme: scheme || "(host silent)", backdrop: backdrop || "(none)" });
+        var reporter = withFallbackHeight(NATIVE_CARD_REPORTER, fallbackHeight);
+        var patched = injectIntoCard(html, hostSchemeStyle(hostScheme) + reporter);
+        log("native card upgrading", {
+          bytes: patched.length,
+          scheme: hostScheme.scheme || "(host silent)",
+          backdrop: hostScheme.backdrop || "(none)",
+        });
         document.open();
         document.write(patched);
         document.close();
@@ -2014,16 +2052,137 @@ const WIDGET_HTML = `<!doctype html>
     charts.forEach(function (chart, i) {
       carouselSlides.push(mountSlide(chart, i, charts.length, fallbackHeight));
     });
+    return openCarousel("carousel", scrollCarousel);
+  }
+
+  function renderLiveCards(charts, fallbackHeight) {
+    if (carouselSlides.length > 0) return true;
+    carousel.classList.remove("hidden");
+    charts.forEach(function (chart, i) {
+      carouselSlides.push(liveCardSlide(chart, i, charts.length, fallbackHeight));
+    });
+    showLiveCard(0);
+    carouselTrack.addEventListener("scroll", followLiveCardScroll);
+    return openCarousel("live-cards", stepLiveCard);
+  }
+
+  function openCarousel(mode, step) {
     carouselTrack.addEventListener("scroll", updateCarouselNav);
     window.addEventListener("resize", updateCarouselNav);
-    carouselPrev.addEventListener("click", function () { scrollCarousel(-1); });
-    carouselNext.addEventListener("click", function () { scrollCarousel(1); });
+    carouselPrev.addEventListener("click", function () { step(-1); });
+    carouselNext.addEventListener("click", function () { step(1); });
     applyHostSurface();
     placeholder.classList.add("hidden");
     rendered = true;
     updateCarouselNav();
-    log("rendered", { mode: "carousel", slides: charts.length });
+    log("rendered", { mode: mode, slides: carouselSlides.length });
     return true;
+  }
+
+  function liveCardSlide(chart, index, total, fallbackHeight) {
+    var el = document.createElement("div");
+    el.className = "tako-slide";
+    carouselTrack.appendChild(el);
+    return {
+      chart: chart,
+      title: "Tako chart " + (index + 1) + " of " + total,
+      el: el,
+      iframe: null,
+      img: null,
+      origin: null,
+      fallbackHeight: fallbackHeight,
+      height: 0,
+      revealed: false,
+      settled: false,
+      timer: null,
+      onLoad: null,
+      live: true,
+      mounted: false,
+    };
+  }
+
+  var liveCardIndex = 0;
+  function showLiveCard(index) {
+    liveCardIndex = Math.max(0, Math.min(index, carouselSlides.length - 1));
+    var last = Math.min(liveCardIndex + 1, carouselSlides.length - 1);
+    for (var i = 0; i <= last; i++) mountLiveCard(carouselSlides[i]);
+  }
+
+  function stepLiveCard(direction) {
+    showLiveCard(liveCardIndex + direction);
+    scrollCarousel(direction);
+  }
+
+  function followLiveCardScroll() {
+    var width = slideWidth();
+    if (width > 0) showLiveCard(Math.round(carouselTrack.scrollLeft / (width + ${CAROUSEL_GAP_PX})));
+  }
+
+  function mountLiveCard(slide) {
+    if (slide.mounted) return;
+    slide.mounted = true;
+    var url = slide.chart.native_card_url;
+    if (!isHttpUrl(url) || !nativeOriginOk(url)) {
+      failLiveCard(slide, "no native card url on the pinned origin");
+      return;
+    }
+    var hostScheme = hostSchemeSnapshot();
+    var settled = false;
+    var timer = setTimeout(function () {
+      if (settled) return;
+      settled = true;
+      failLiveCard(slide, "timeout");
+    }, ${PROXIED_CARD_FETCH_TIMEOUT_MS});
+    fetch(withHostTheme(url), { credentials: "omit" })
+      .then(function (r) {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.text();
+      })
+      .then(function (html) {
+        if (settled) return;
+        if (typeof html !== "string" || html.indexOf("<html") === -1) {
+          throw new Error("not an html document");
+        }
+        var reporter = withFallbackHeight(LIVE_CARD_REPORTER, slide.fallbackHeight);
+        var patched = injectIntoCard(html, hostSchemeStyle(hostScheme) + reporter);
+        var iframe = document.createElement("iframe");
+        iframe.className = "veiled";
+        iframe.setAttribute("scrolling", "no");
+        iframe.setAttribute("frameborder", "0");
+        iframe.setAttribute("allow", "fullscreen; clipboard-write");
+        iframe.setAttribute("title", slide.title);
+        iframe.src = URL.createObjectURL(new Blob([patched], { type: "text/html" }));
+        settled = true;
+        clearTimeout(timer);
+        slide.iframe = iframe;
+        slide.el.appendChild(iframe);
+        applyHostSurface();
+        log("live card mounted", { bytes: patched.length, src: url });
+      })
+      .catch(function (err) {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        failLiveCard(slide, String(err && err.message ? err.message : err));
+      });
+  }
+
+  function failLiveCard(slide, reason) {
+    var box = document.createElement("div");
+    box.className = "tako-slide-failed";
+    var message = document.createElement("p");
+    message.textContent = "Couldn't load this chart.";
+    var link = document.createElement("a");
+    link.href = slide.chart.embed_url;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    link.textContent = "Open in Tako";
+    box.appendChild(message);
+    box.appendChild(link);
+    slide.el.appendChild(box);
+    settleSlide(slide);
+    revealSlide(slide, ${LIVE_CARD_FAILURE_HEIGHT_PX});
+    log("live card failed", { reason: reason, src: slide.chart.native_card_url });
   }
 
   function mountSlide(chart, index, total, fallbackHeight) {
@@ -2182,9 +2341,10 @@ const WIDGET_HTML = `<!doctype html>
 
   function onCarouselEmbedHeight(event, height) {
     var slide = carouselSlideFor(event.source);
-    if (!slide || event.origin !== slide.origin) return;
+    if (!slide || (!slide.live && event.origin !== slide.origin)) return;
     var n = acceptedEmbedHeight(height);
     if (n === null) return;
+    if (slide.live) n = Math.min(n, ${MAX_INLINE_WIDGET_HEIGHT_PX});
     settleSlide(slide);
     revealSlide(slide, n);
     log("carousel slide resized via embed handshake", { height: n });
@@ -2222,15 +2382,19 @@ const WIDGET_HTML = `<!doctype html>
   }
 
   function updateCarouselNav() {
-    var shown = anySlideRevealed();
+    var shown = carouselSlides.length > 1 && anySlideRevealed();
     var maxScroll = carouselTrack.scrollWidth - carouselTrack.clientWidth;
     carouselPrev.classList.toggle("hidden", !shown || carouselTrack.scrollLeft <= 1);
     carouselNext.classList.toggle("hidden", !shown || carouselTrack.scrollLeft >= maxScroll - 1);
   }
 
-  function scrollCarousel(direction) {
+  function slideWidth() {
     var first = carouselSlides.length > 0 ? carouselSlides[0].el : null;
-    var step = (first ? first.getBoundingClientRect().width : 0) + ${CAROUSEL_GAP_PX};
+    return first ? first.getBoundingClientRect().width : 0;
+  }
+
+  function scrollCarousel(direction) {
+    var step = slideWidth() + ${CAROUSEL_GAP_PX};
     if (typeof carouselTrack.scrollBy === "function") {
       carouselTrack.scrollBy({ left: direction * step, behavior: "smooth" });
     } else {
@@ -2255,6 +2419,16 @@ const WIDGET_HTML = `<!doctype html>
     if (isAgentResult(structuredContent) && structuredContent.status === "running") {
       collapseAndClose();
       log("running agent result, closed widget");
+      return true;
+    }
+    var liveCardList = hasOpenAiRuntime() ? null : pickChartList(structuredContent, meta);
+    if (liveCardList !== null) {
+      var liveCards = carouselCharts(liveCardList);
+      if (liveCards.length > 0) {
+        return renderLiveCards(liveCards, requestedHeight(structuredContent));
+      }
+      collapse(looksComplete(structuredContent));
+      log("no live card in the chart list, collapsed widget");
       return true;
     }
     structuredContent = promoteAgentChart(structuredContent, meta);

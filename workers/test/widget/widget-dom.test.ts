@@ -2621,3 +2621,416 @@ describe("no-image embed fallback strips tracking too", () => {
     expect(widgetFrame(m).classList.contains("hidden")).toBe(false);
   });
 });
+
+describe("live cards (no window.openai)", () => {
+  const WORKER_ORIGIN = "https://mcp.example.test";
+
+  interface LiveChart {
+    pub_id: string;
+    embed_url: string;
+    image_url: string;
+    native_card_url?: string;
+  }
+
+  interface FetchCall {
+    url: string;
+    init: { credentials?: string } | undefined;
+  }
+
+  interface LiveStubs {
+    fetches: FetchCall[];
+    blobs: Map<string, Blob>;
+  }
+
+  const SEARCH_CONTENT = {
+    cards: [{ title: "Card", url: "https://tako.com/card/x" }],
+    web_results: [],
+    usage: null,
+  };
+
+  function liveChart(i: number): LiveChart {
+    const pubId = `live${i}`;
+    return {
+      pub_id: pubId,
+      embed_url: `https://staging.trytako.com/embed/${pubId}/?dark_mode=auto&showShare=true`,
+      image_url: `https://staging.trytako.com/api/v1/image/${pubId}/?dark_mode=true`,
+      native_card_url: `${WORKER_ORIGIN}/embed-html/${pubId}`,
+    };
+  }
+
+  function liveCharts(count: number): LiveChart[] {
+    return Array.from({ length: count }, (_, i) => liveChart(i));
+  }
+
+  function liveHtml(): string {
+    return buildChartAppUiResourceFromOutputPubId(ENV, WORKER_ORIGIN, "generic").html;
+  }
+
+  function cardHtml(url: string): string {
+    return `<!doctype html><html><body><div id="app">CARD ${url}</div></body></html>`;
+  }
+
+  function okResponse(body: string): Promise<unknown> {
+    return Promise.resolve({
+      ok: true,
+      status: 200,
+      text: () => Promise.resolve(body),
+    });
+  }
+
+  function stubLive(
+    m: Mounted,
+    respond: (url: string) => Promise<unknown> = (url) => okResponse(cardHtml(url)),
+  ): LiveStubs {
+    const stubs: LiveStubs = { fetches: [], blobs: new Map() };
+    const win = m.widgetWin as unknown as {
+      fetch: unknown;
+      URL: { createObjectURL: unknown };
+    };
+    win.fetch = (url: string, init?: { credentials?: string }) => {
+      stubs.fetches.push({ url: String(url), init });
+      return respond(String(url));
+    };
+    win.URL.createObjectURL = (blob: Blob) => {
+      const url = `blob:https://host.example/${stubs.blobs.size}`;
+      stubs.blobs.set(url, blob);
+      return url;
+    };
+    return stubs;
+  }
+
+  function fetchedUrls(stubs: LiveStubs): string[] {
+    return stubs.fetches.map((f) => f.url);
+  }
+
+  function nativeUrls(charts: LiveChart[]): string[] {
+    return charts.map((c) => c.native_card_url ?? "");
+  }
+
+  function liveSlides(m: Mounted): HTMLElement[] {
+    return Array.from(
+      m.widgetWin.document.querySelectorAll<HTMLElement>("#tako-carousel .tako-slide"),
+    );
+  }
+
+  function slideFrame(m: Mounted, i: number): HTMLIFrameElement | null {
+    const slide = liveSlides(m)[i];
+    if (slide === undefined) throw new Error(`no slide at index ${i}`);
+    return slide.querySelector("iframe");
+  }
+
+  function mountedFrame(m: Mounted, i: number): HTMLIFrameElement {
+    const frame = slideFrame(m, i);
+    if (frame === null) throw new Error(`slide ${i} has no frame`);
+    return frame;
+  }
+
+  function navButton(m: Mounted, id: "tako-prev" | "tako-next"): HTMLButtonElement {
+    return m.widgetWin.document.getElementById(id) as HTMLButtonElement;
+  }
+
+  function deliverLive(m: Mounted, charts: LiveChart[], content: unknown = SEARCH_CONTENT): void {
+    deliver(m, toolResult(content, { charts }), m.wrapperWin);
+  }
+
+  async function settle(): Promise<void> {
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+  }
+
+  function postSlideHeight(m: Mounted, source: Window, height: number): void {
+    const WidgetMessageEvent = (
+      m.widgetWin as unknown as { MessageEvent: typeof MessageEvent }
+    ).MessageEvent;
+    m.widgetWin.dispatchEvent(
+      new WidgetMessageEvent("message", {
+        data: { type: "tako-embed-height", height },
+        origin: "null",
+        source: source as unknown as MessageEventSource,
+      }),
+    );
+  }
+
+  function expectFailureCopy(m: Mounted, i: number, chart: LiveChart): void {
+    const slide = liveSlides(m)[i] as HTMLElement;
+    expect(slide.textContent).toContain("Couldn't load this chart.");
+    const link = Array.from(slide.querySelectorAll("a")).find(
+      (a) => a.textContent === "Open in Tako",
+    );
+    expect(link?.getAttribute("href")).toBe(chart.embed_url);
+    expect(link?.getAttribute("target")).toBe("_blank");
+    expect(link?.getAttribute("rel")).toBe("noopener noreferrer");
+    expect(slide.querySelector("iframe")).toBeNull();
+  }
+
+  it("mounts one chart as a blob: frame with no nav and no image", async () => {
+    const m = mountWidget(liveHtml());
+    const stubs = stubLive(m);
+    const charts = liveCharts(1);
+    deliverLive(m, charts);
+    await settle();
+
+    expect(fetchedUrls(stubs)).toEqual(nativeUrls(charts));
+    expect(stubs.fetches[0]?.init?.credentials).toBe("omit");
+    const frames = m.widgetWin.document.querySelectorAll("#tako-carousel iframe");
+    expect(frames).toHaveLength(1);
+    expect(mountedFrame(m, 0).getAttribute("src")?.startsWith("blob:")).toBe(true);
+    expect(navButton(m, "tako-prev").classList.contains("hidden")).toBe(true);
+    expect(navButton(m, "tako-next").classList.contains("hidden")).toBe(true);
+    expect(fetchedUrls(stubs)).not.toContain(charts[0]?.image_url);
+    expect(m.widgetWin.document.querySelectorAll("img[src]")).toHaveLength(0);
+    expect(widgetFrame(m).getAttribute("src")).toBeNull();
+  });
+
+  it("writes the card, the host scheme, and a tako-embed-height reporter into the blob", async () => {
+    const m = mountWidget(liveHtml());
+    const stubs = stubLive(m);
+    deliver(
+      m,
+      {
+        jsonrpc: "2.0",
+        id: "tako-ui-init",
+        result: { hostContext: { theme: "dark" } },
+      },
+      m.wrapperWin,
+    );
+    const charts = liveCharts(1);
+    deliverLive(m, charts);
+    await settle();
+
+    const src = mountedFrame(m, 0).getAttribute("src") ?? "";
+    const blob = stubs.blobs.get(src);
+    expect(blob?.type).toBe("text/html");
+    const body = (await blob?.text()) ?? "";
+    expect(body).toContain(`CARD ${stubs.fetches[0]?.url}`);
+    expect(body).toContain('id="tako-host-scheme"');
+    expect(body).toContain("color-scheme:dark");
+    expect(body).toContain("tako-embed-height");
+    expect(body).not.toContain("ui/notifications/size-changed");
+    expect(body.indexOf("tako-embed-height")).toBeLessThan(body.indexOf("</body>"));
+  });
+
+  it("caps the height the blob's reporter posts at the inline ceiling", async () => {
+    const m = mountWidget(liveHtml());
+    const stubs = stubLive(m);
+    deliverLive(m, liveCharts(1));
+    await settle();
+    const blob = stubs.blobs.get(mountedFrame(m, 0).getAttribute("src") ?? "");
+    const body = (await blob?.text()) ?? "";
+
+    const posted: unknown[] = [];
+    const card = new JSDOM(body, { runScripts: "dangerously" });
+    mounted.push(card);
+    card.window.addEventListener("message", (event) => posted.push(event.data));
+    await new Promise((r) => setTimeout(r, 10));
+
+    const heights = posted
+      .filter((d) => (d as { type?: string }).type === "tako-embed-height")
+      .map((d) => (d as { height: number }).height);
+    expect(heights.length).toBeGreaterThan(0);
+    heights.forEach((h) => expect(h).toBeLessThanOrEqual(500));
+  });
+
+  it("mounts the first two of five charts, in search order, and the third on next", async () => {
+    const m = mountWidget(liveHtml());
+    const stubs = stubLive(m);
+    const charts = liveCharts(5);
+    deliverLive(m, charts);
+
+    expect(fetchedUrls(stubs)).toEqual(nativeUrls(charts.slice(0, 2)));
+    const slides = liveSlides(m);
+    expect(slides).toHaveLength(5);
+    await settle();
+    expect(slideFrame(m, 2)).toBeNull();
+
+    const track = m.widgetWin.document.querySelector("#tako-carousel .tako-track") as HTMLElement;
+    const scrollBy = vi.fn();
+    (track as unknown as { scrollBy: unknown }).scrollBy = scrollBy;
+    navButton(m, "tako-next").click();
+    expect(fetchedUrls(stubs)).toEqual(nativeUrls(charts.slice(0, 3)));
+    expect(scrollBy).toHaveBeenCalledTimes(1);
+    await settle();
+
+    for (let i = 0; i < 3; i++) {
+      const frame = mountedFrame(m, i);
+      expect(frame.getAttribute("title")).toBe(`Tako chart ${i + 1} of 5`);
+      const body = (await stubs.blobs.get(frame.getAttribute("src") ?? "")?.text()) ?? "";
+      expect(body).toContain(`CARD ${charts[i]?.native_card_url}`);
+    }
+    expect(slideFrame(m, 3)).toBeNull();
+    expect(slideFrame(m, 4)).toBeNull();
+  });
+
+  it.each([
+    ["HTTP 429", () => Promise.resolve({ ok: false, status: 429, text: () => Promise.resolve("slow down") })],
+    ["a non-HTML body", () => okResponse('{"error":"UNIQUE-SENTINEL-BODY"}')],
+  ])("shows the failure copy on the slide whose fetch returns %s", async (_label, failure) => {
+    const m = mountWidget(liveHtml());
+    const charts = liveCharts(3);
+    const failing = charts[1]?.native_card_url;
+    const stubs = stubLive(m, (url) => (url === failing ? failure() : okResponse(cardHtml(url))));
+    deliverLive(m, charts);
+    await settle();
+
+    expectFailureCopy(m, 1, charts[1] as LiveChart);
+    expect(m.widgetWin.document.body.innerHTML).not.toContain("UNIQUE-SENTINEL-BODY");
+    expect(mountedFrame(m, 0).getAttribute("src")?.startsWith("blob:")).toBe(true);
+
+    const track = m.widgetWin.document.querySelector("#tako-carousel .tako-track") as HTMLElement;
+    const scrollBy = vi.fn();
+    (track as unknown as { scrollBy: unknown }).scrollBy = scrollBy;
+    navButton(m, "tako-next").click();
+    navButton(m, "tako-prev").click();
+    expect(fetchedUrls(stubs)).toEqual(nativeUrls(charts));
+    await settle();
+    expect(mountedFrame(m, 2).getAttribute("src")?.startsWith("blob:")).toBe(true);
+    const lefts = scrollBy.mock.calls.map((call) => (call[0] as { left: number }).left);
+    expect(lefts[0]).toBeGreaterThan(0);
+    expect(lefts[1]).toBeLessThan(0);
+  });
+
+  it("shows the failure copy on a slide whose fetch outlives the 7000 ms timeout", async () => {
+    vi.useFakeTimers();
+    try {
+      const m = mountWidget(liveHtml());
+      const charts = liveCharts(3);
+      const stalled = charts[1]?.native_card_url;
+      const stubs = stubLive(m, (url) =>
+        url === stalled ? new Promise(() => {}) : okResponse(cardHtml(url)),
+      );
+      deliverLive(m, charts);
+      await vi.advanceTimersByTimeAsync(6900);
+      expect(liveSlides(m)[1]?.textContent).not.toContain("Couldn't load this chart.");
+      await vi.advanceTimersByTimeAsync(200);
+
+      expectFailureCopy(m, 1, charts[1] as LiveChart);
+      expect(mountedFrame(m, 0).getAttribute("src")?.startsWith("blob:")).toBe(true);
+      navButton(m, "tako-next").click();
+      navButton(m, "tako-next").click();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(fetchedUrls(stubs)).toEqual(nativeUrls(charts));
+      expect(mountedFrame(m, 2).getAttribute("src")?.startsWith("blob:")).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("never fetches a native card on a foreign origin, and shows the failure copy", async () => {
+    const m = mountWidget(liveHtml());
+    const stubs = stubLive(m);
+    const charts = liveCharts(2);
+    charts[0] = { ...(charts[0] as LiveChart), native_card_url: "https://evil.example/embed-html/live0" };
+    deliverLive(m, charts);
+    await settle();
+
+    expect(fetchedUrls(stubs)).toEqual([charts[1]?.native_card_url]);
+    expectFailureCopy(m, 0, charts[0]);
+    expect(mountedFrame(m, 1).getAttribute("src")?.startsWith("blob:")).toBe(true);
+  });
+
+  it("shows the failure copy on a slide whose chart has no native card url", async () => {
+    const m = mountWidget(liveHtml());
+    const stubs = stubLive(m);
+    const { native_card_url: _dropped, ...withoutNative } = liveChart(0);
+    deliverLive(m, [withoutNative]);
+    await settle();
+
+    expect(stubs.fetches).toEqual([]);
+    expectFailureCopy(m, 0, withoutNative);
+    expect(sizeChangesOf(m).at(-1)?.params.height).toBeGreaterThan(1);
+  });
+
+  it("resizes only the slide whose frame reported, within the 500 px ceiling, and never shrinks", async () => {
+    const m = mountWidget(liveHtml());
+    stubLive(m);
+    deliverLive(m, liveCharts(3));
+    await settle();
+    const first = mountedFrame(m, 0);
+    const second = mountedFrame(m, 1);
+    expect(first.classList.contains("veiled")).toBe(true);
+
+    postSlideHeight(m, first.contentWindow as Window, 380);
+    expect(first.getAttribute("height")).toBe("380");
+    expect(first.classList.contains("veiled")).toBe(false);
+    expect(second.classList.contains("veiled")).toBe(true);
+    const afterFirst = sizeChangesOf(m).at(-1)?.params.height ?? 0;
+    expect(afterFirst).toBe(380);
+
+    postSlideHeight(m, second.contentWindow as Window, 250);
+    expect(second.getAttribute("height")).toBe("250");
+    expect(first.getAttribute("height")).toBe("380");
+
+    const before = sizeChangesOf(m).length;
+    postSlideHeight(m, m.siblingWin, 450);
+    expect(first.getAttribute("height")).toBe("380");
+    expect(second.getAttribute("height")).toBe("250");
+    expect(sizeChangesOf(m)).toHaveLength(before);
+
+    postSlideHeight(m, first.contentWindow as Window, 900);
+    postSlideHeight(m, first.contentWindow as Window, 200);
+    const notified = sizeChangesOf(m).map((s) => s.params.height);
+    expect(Math.max(...notified)).toBe(500);
+    notified.forEach((h, i) => {
+      if (i > 0) expect(h).toBeGreaterThanOrEqual(notified[i - 1] as number);
+    });
+  });
+
+  it("renders a finished agent result's charts as live cards", async () => {
+    const m = mountWidget(liveHtml());
+    const stubs = stubLive(m);
+    const charts = liveCharts(2);
+    deliverLive(m, charts, {
+      status: "completed",
+      run_id: "run_live",
+      answer: "Two cards.",
+      cards: [{ title: "A" }, { title: "B" }],
+      citations: [],
+      usage: null,
+    });
+    await settle();
+
+    expect(fetchedUrls(stubs)).toEqual(nativeUrls(charts));
+    expect(liveSlides(m)).toHaveLength(2);
+    expect(widgetEmpty(m).classList.contains("hidden")).toBe(true);
+  });
+
+  it("collapses a running agent result without fetching", () => {
+    const m = mountWidget(liveHtml());
+    const stubs = stubLive(m);
+    deliverLive(m, liveCharts(2), {
+      status: "running",
+      run_id: "run_live",
+      cards: [],
+      citations: [],
+      usage: null,
+    });
+
+    expect(stubs.fetches).toEqual([]);
+    expect(liveSlides(m)).toHaveLength(0);
+    expect(sizeChangesOf(m).at(-1)?.params.height).toBe(0);
+  });
+
+  it("collapses with the label when the chart list has no valid slide", () => {
+    const m = mountWidget(liveHtml());
+    const stubs = stubLive(m);
+    const offOrigin = {
+      ...liveChart(0),
+      embed_url: "https://evil.example/embed/live0/?dark_mode=auto",
+    };
+    deliverLive(m, [offOrigin]);
+
+    expect(stubs.fetches).toEqual([]);
+    expect(liveSlides(m)).toHaveLength(0);
+    expect(widgetEmpty(m).classList.contains("hidden")).toBe(false);
+    expect(sizeChangesOf(m).at(-1)?.params.height).toBe(0);
+  });
+
+  it("collapses a generic search result that carries no chart list", () => {
+    const m = mountWidget(liveHtml());
+    const stubs = stubLive(m);
+    deliver(m, toolResult(SEARCH_CONTENT), m.wrapperWin);
+
+    expect(stubs.fetches).toEqual([]);
+    expect(widgetEmpty(m).classList.contains("hidden")).toBe(false);
+    expect(sizeChangesOf(m).at(-1)?.params.height).toBe(0);
+  });
+});
