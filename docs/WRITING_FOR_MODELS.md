@@ -96,36 +96,63 @@ descriptions, and no skill wording removes those calls. That run used
 reaches an agent.
 
 Codex runs on 2026-10-26 (TAKO-5275) moved the explicit-ask rule into both
-agent tool descriptions. A connection that lists one agent without the other
-gets `tako-search` over `/mcp` but not `tako-agent`, so the descriptions are
-the only place it reads the rule. Each arm listed the four default tools plus
-one agent, and ran the same 83 prompts plus 10 explicit asks for that agent,
-twice each. The `tako_company_agent` arms without a skill ran only the
-explicit asks:
+agent tool descriptions, and chose between the agents by what the user wants
+back instead of by the question's shape. A connection that lists one agent
+without the other gets `tako-search` over `/mcp` but not `tako-agent`, so the
+descriptions are the only place it reads the rule. Three descriptions ran:
+
+- Shape-triggered: an agent for a ranking, trend, or calculation, and the
+  fallback when `tako_search` finds nothing.
+- Explicit ask, scope by shape: the explicit-ask rule, with `Best for:` still
+  naming a ranking, trend, or calculation.
+- Explicit ask, scope by result (shipped): the explicit-ask rule, with the
+  Company Agent for a list of companies or people and the Answer Agent for
+  anything else.
+
+Each arm below listed the four default tools plus one agent, and ran the same
+83 prompts plus 10 explicit asks for that agent, twice each. The shipped arms
+ran only the 83 prompts, and the `tako_company_agent` arms without a skill
+ran only the explicit asks:
 
 | Arm | Lookups that start an agent first | Lookups that start with `tako_search` | No-lookup tasks that call Tako | Explicit asks that start the agent |
 |---|---|---|---|---|
-| `tako_agent`, shape-triggered description, `tako-search` | 3 of 136 | 45 of 136 | 1 of 30 | 19 of 20 |
-| `tako_agent`, explicit-ask description (shipped), `tako-search` | 0 of 136 | 52 of 136 | 2 of 30 | 17 of 20 |
-| `tako_agent`, shape-triggered description, no skill | 1 of 136 | 1 of 136 | 0 of 30 | 16 of 20 |
-| `tako_agent`, explicit-ask description (shipped), no skill | 0 of 136 | 1 of 136 | 0 of 30 | 18 of 20 |
-| `tako_company_agent`, shape-triggered description, `tako-search` | 0 of 136 | 54 of 136 | 1 of 30 | 20 of 20 |
-| `tako_company_agent`, explicit-ask description (shipped), `tako-search` | 0 of 136 | 50 of 136 | 1 of 30 | 19 of 20 |
-| `tako_company_agent`, shape-triggered description, no skill | — | — | — | 20 of 20 |
-| `tako_company_agent`, explicit-ask description (shipped), no skill | — | — | — | 20 of 20 |
+| `tako_agent`, shape-triggered, `tako-search` | 3 of 136 | 45 of 136 | 1 of 30 | 19 of 20 |
+| `tako_agent`, scope by shape, `tako-search` | 0 of 136 | 52 of 136 | 2 of 30 | 17 of 20 |
+| `tako_agent`, scope by result (shipped), `tako-search` | 0 of 136 | 44 of 136 | 1 of 30 | — |
+| `tako_agent`, shape-triggered, no skill | 1 of 136 | 1 of 136 | 0 of 30 | 16 of 20 |
+| `tako_agent`, scope by shape, no skill | 0 of 136 | 1 of 136 | 0 of 30 | 18 of 20 |
+| `tako_company_agent`, shape-triggered, `tako-search` | 0 of 136 | 54 of 136 | 1 of 30 | 20 of 20 |
+| `tako_company_agent`, scope by shape, `tako-search` | 0 of 136 | 50 of 136 | 1 of 30 | 19 of 20 |
+| `tako_company_agent`, scope by result (shipped), `tako-search` | 0 of 136 | 49 of 136 | 0 of 30 | — |
+| `tako_company_agent`, shape-triggered, no skill | — | — | — | 20 of 20 |
+| `tako_company_agent`, scope by shape, no skill | — | — | — | 20 of 20 |
 
-The rule in the `tako_agent` description removed the agent calls that the
-listing started on its own, and explicit asks reached `tako_agent` as often as
-before: 35 of 40 in both. Its lookup columns come from a first run whose
-trigger also counted "ask Tako to build a list of companies or people". The
-shipped trigger drops that clause, which can only remove agent calls, and a
-rerun of its explicit asks matched the first run. The shape-triggered
-`tako_company_agent` description started that agent after a search on 2
-lookups, and the explicit-ask description on none. Explicit company asks
-reached `tako_company_agent` 40 of 40 and 39 of 40 times. Without a skill,
-Codex called Tako on 1 lookup in 136, so those arms measure only the explicit
-asks. The runs used the same model and Codex version, and the `tako-search`
-skill from before TAKO-5270.
+The explicit-ask rule removed the agent calls that the listing started on its
+own. The shape-triggered `tako_company_agent` description also started that
+agent after a search on 2 lookups; no later description started one on any
+lookup. The `tako_agent` scope-by-shape lookup columns come from a first run
+whose trigger also counted "ask Tako to build a list of companies or people",
+and a rerun of its explicit asks matched that run. Without a skill, Codex
+called Tako on 1 lookup in 136, so those arms measure only the explicit asks.
+
+Four more arms listed both agents, the setup of `/mcp/chatgpt` and the Claude
+Code plugin, and ran the 20 explicit asks twice. The arms with skills had
+`tako-search` and the `tako-agent` skill from the same commit as the
+descriptions:
+
+| Descriptions | Skills | Answer Agent asks that start it | Company Agent asks that start it | Asks that start the other agent |
+|---|---|---|---|---|
+| Scope by shape | `tako-search`, `tako-agent` | 20 of 20 | 20 of 20 | 0 of 40 |
+| Scope by result (shipped) | `tako-search`, `tako-agent` | 20 of 20 | 20 of 20 | 0 of 40 |
+| Scope by shape | None | 17 of 20 | 20 of 20 | 0 of 40 |
+| Scope by result (shipped) | None | 19 of 20 | 20 of 20 | 0 of 40 |
+
+Every miss called no Tako tool. Two Answer Agent asks rank companies by a
+metric, such as "rank the top 10 airlines by revenue growth in 2024", and
+every run sent them to `tako_agent`. One Company Agent ask resolves company
+names, which the shipped description no longer names, and every run sent it
+to `tako_company_agent`. All runs used `gpt-6-luna` on Codex 0.164.0, and the
+`tako-search` skill from before TAKO-5270.
 
 An earlier run on `gpt-6-astra` (Codex 0.155.1) tested the tool description.
 Rewriting the `tako_search` description to list its domains and sources left

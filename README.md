@@ -304,7 +304,7 @@ On connect, the server also advertises [MCP server instructions](https://modelco
 | ---- | ----- | ------------- |
 | `tako_search_advanced` | `search_advanced` | The whole v3 search request body: per-source `count`, inline rows and `max_rows`, graph pins (`node_ids` + `strict`), web `include_domains` / `exclude_domains` / `category` / `snippet_max_chars` / `published_after` / `published_before`, `location`, `timezone`, `include_related`, and `effort: deep`. Set `include_answer: true` for one synthesized, citation-backed answer (and `output_schema` to fill a JSON Schema from the same evidence). Same structured payload as `tako_search`, minus the auto-rendered inline chart — `embed_url` is still there to click through. |
 | `tako_agent` | `agent` | Tako's **Answer Agent**: multi-step research across many retrievals, returning a synthesized answer plus chart cards. Its description tells the model to start a run only when the user asks for an agent. A call waits up to 45 s. If the run is still going, it returns `status: "running"` and an `answer_run_…` `run_id`; call again with that `run_id` instead of `query`. On `/mcp/chatgpt`, every card renders inline in the chart widget. |
-| `tako_company_agent` | `company_agent` | Tako's **Company Agent**: which companies or people match registry facts (status, incorporation date, location, industry), plus officers and directors. Same explicit-ask rule and start-or-resume contract with a `company_run_…` `run_id`. On by default on `/mcp/chatgpt`, like `tako_agent`. On `/mcp/chatgpt`, every card renders inline in the chart widget. |
+| `tako_company_agent` | `company_agent` | Tako's **Company Agent**: lists of companies or people, such as companies by location, industry, status, founding date, funding stage, or size, and the officers, directors, owners, or employees of those companies. Same explicit-ask rule and start-or-resume contract with a `company_run_…` `run_id`. On by default on `/mcp/chatgpt`, like `tako_agent`. On `/mcp/chatgpt`, every card renders inline in the chart widget. |
 | `tako_visualize` | `visualize` | Author a Tako card from your own typed `components` (timeseries, bar, table, financial boxes…). It PUBLISHES: the card is public, permanent, and readable by anyone with the link. On by default on `/mcp/chatgpt`, the host that renders the widget inline. |
 
 **`?tools=` is an allowlist that replaces the defaults.** `?tools=search,contents` lists exactly those two; `?tools=agent` lists only `tako_agent`. Tokens are tool names with the `tako_` prefix optional. Unknown tokens are ignored, and a param that names nothing yields the defaults, so a typo never breaks the connection. Include the defaults you rely on:
@@ -447,8 +447,8 @@ Start an agent only when the user asks for one: they name Tako's agent, ask for 
 
 ## Choose the agent
 
-- Use `tako_company_agent` to find which companies or people match a set of facts: a screen by location, industry, status, founding date, funding, or size; officers, directors, or owners; or companies filtered by a financial metric, such as "UK software companies with more than £10 million in revenue".
-- Use `tako_agent` for a ranking, trend, total, or calculation, including companies ranked by a metric: "the 10 largest UK software companies by revenue", countries ranked by GDP, a growth rate across several periods, or a figure computed from several metrics.
+- Use `tako_company_agent` when the user names the Company Agent or wants a list of companies or people: companies by location, industry, status, founding date, funding, or size, or the officers, directors, owners, or employees of those companies.
+- Use `tako_agent` for anything else, such as a chart or a written finding.
 
 ## Run an agent
 

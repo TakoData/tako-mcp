@@ -33,9 +33,9 @@ import { AGENT_SOURCES_THREAD_RULE } from "./_shared_prose.js";
 import type { AppUiResource, ToolModule } from "./types.js";
 
 const DESCRIPTION = [
-  `Run Tako's Company Agent. It searches the company registry and the web over several steps, and returns a written \`answer\` with numbered citations plus any list \`cards\` it built. ${AGENT_EXPLICIT_ASK_SENTENCE}`,
+  `Run Tako's Company Agent. It searches company registries, company and people profiles, and the web over several steps, and returns a written \`answer\` with numbered citations plus the list \`cards\` it built. ${AGENT_EXPLICIT_ASK_SENTENCE} Otherwise, use \`tako_search\`.`,
   "",
-  "Best for: finding which companies or people match registry facts, such as a screen by status, incorporation date, registered location, or industry; resolving named companies; finding a company's officers and directors. At `medium` and `high` effort it can also filter by financial metrics such as revenue or headcount. Without that ask, use `tako_search`, even for a list of companies or people.",
+  "Best for: an ask for Tako's Company Agent, or an ask for Tako's agent to build a list of companies or people. It filters companies by location, industry, status, founding date, funding stage, or size, and people by role, seniority, department, or ownership at those companies. At `medium` and `high` effort, it can also filter companies by financial metrics such as revenue.",
   "",
   AGENT_DESCRIPTION_LAST_LINE,
 ].join("\n");

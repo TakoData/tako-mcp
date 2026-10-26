@@ -40,9 +40,9 @@ import { AGENT_SOURCES_THREAD_RULE, SOURCES_DESCRIBE } from "./_shared_prose.js"
 import type { AppUiResource, ToolModule } from "./types.js";
 
 const DESCRIPTION = [
-  `Run Tako's Answer Agent. It plans, queries the data graph and the web over several steps, and returns a written \`answer\` with numbered citations plus the chart \`cards\` it built. ${AGENT_EXPLICIT_ASK_SENTENCE}`,
+  `Run Tako's Answer Agent. It plans, queries the data graph and the web over several steps, and returns a written \`answer\` with numbered citations plus the chart \`cards\` it built. ${AGENT_EXPLICIT_ASK_SENTENCE} Otherwise, use \`tako_search\`.`,
   "",
-  "Best for: a ranking, trend, total, or calculation across several metrics or entities. Without that ask, use `tako_search`, even for a ranking or a calculation.",
+  "Best for: an ask for Tako's agent whose answer is a chart or a written finding, not a list of companies or people.",
   "",
   AGENT_DESCRIPTION_LAST_LINE,
 ].join("\n");

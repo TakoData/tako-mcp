@@ -97,7 +97,7 @@
     {
       "id": "deep-research",
       "name": "Answer Agent",
-      "description": "Run Tako's Answer Agent when the user asks for it: they name Tako's agent or ask for deep or multi-step research with Tako. It handles ranking or screening by financial or economic metrics, aggregation, and multi-hop reasoning across many entities. It plans several searches across Tako's data and the web, and returns a cited answer with the charts it built. Opt-in on /mcp via ?tools=search,available_data,agent (an allowlist that replaces the default listing, so name the defaults you rely on too); listed by default at https://mcp.tako.com/mcp/chatgpt.",
+      "description": "Run Tako's Answer Agent when the user asks for it: they name Tako's agent or ask for deep or multi-step research with Tako. It plans several searches across Tako's data and the web, and returns a cited answer with the charts it built. Opt-in on /mcp via ?tools=search,available_data,agent (an allowlist that replaces the default listing, so name the defaults you rely on too); listed by default at https://mcp.tako.com/mcp/chatgpt.",
       "tags": [
         "agent",
         "research",
@@ -112,7 +112,7 @@
     {
       "id": "company-research",
       "name": "Company Agent",
-      "description": "Run Tako's Company Agent when the user asks for it: they name Tako's agent or ask for deep or multi-step research with Tako. It finds which companies match registry facts, such as status, incorporation date, registered location, or industry, or a company's officers and directors. It returns a cited answer with the list cards it built. Opt-in on /mcp via ?tools=search,available_data,company_agent (an allowlist that replaces the default listing, so name the defaults you rely on too); listed by default at https://mcp.tako.com/mcp/chatgpt.",
+      "description": "Run Tako's Company Agent when the user asks for it: they name Tako's agent or ask for deep or multi-step research with Tako. It builds lists of companies or people: companies by location, industry, status, founding date, funding stage, or size, and the officers, directors, owners, or employees of those companies. It returns a cited answer with the list cards it built. Opt-in on /mcp via ?tools=search,available_data,company_agent (an allowlist that replaces the default listing, so name the defaults you rely on too); listed by default at https://mcp.tako.com/mcp/chatgpt.",
       "tags": [
         "agent",
         "companies",
