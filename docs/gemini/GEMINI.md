@@ -54,6 +54,10 @@ opt-in `tako_search_advanced` returns a prose answer instead — name `search_ad
 - **People by name: search the name alone.** "Jane Doe" lists everyone with that name, with
   each person's title, employer, and location. Any other word, such as the employer the user
   mentioned, drops the list, so use those details to pick the person from the rows.
+- **Contact details cost extra.** A people list withholds emails and phones, and the
+  `tako_contents` result's `note` names them. When the user asks for contact details, call
+  `tako_contents` with `premium: true`, and `offset` and `max_rows` set to only the rows
+  they want, because each of those rows is billed.
 - **Search first.** Use `tako_available_data` for questions about what Tako covers. It
   reports on the graph only, so a miss there means fall back to the web half, not give up.
 - **When no card answers the question**, answer from the web results. To read a page in

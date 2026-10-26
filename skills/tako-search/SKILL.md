@@ -42,7 +42,7 @@ Then read the list:
 1. The card's `description` doesn't name the matches. To see them, pass the card's url to `tako_contents` with `max_rows` set to the rows the answer needs, such as 25. Fetch the full list, up to 1,000 rows, only when the user asks for it.
 2. Check each row before you use it. A name list holds everyone with that name, and a company name can match more than one company. If more than one row fits the person the user means, ask which one.
 3. Each row's `tako_url` opens that one person or company in Tako. Link it.
-4. A contact field such as `work_email` or `phone` can be empty because it's locked, not because it doesn't exist. Don't tell the user that a person has no email or phone.
+4. Tako withholds contact fields such as `work_email` and `phone`, and the result's `note` names the ones it withheld. Don't tell the user that a person has no email or phone. When the user asks for contact details, call `tako_contents` again with `premium: true`, and set `offset` and `max_rows` to only the rows they want, because each of those rows is billed. If `tako_contents` has no `premium` input, tell the user that contact details aren't available on this connection.
 5. A list can't filter on revenue, investors, registry status, or a company's officers and directors. If the question needs one of those, say so. If the `tako-agent` skill is installed, offer Tako's company agent.
 6. If no list card comes back, tell the user that Tako found no list. If the `tako-agent` skill is installed, offer Tako's company agent.
 

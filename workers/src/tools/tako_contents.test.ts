@@ -954,3 +954,104 @@ describe("tako_contents links and card structure", () => {
     expect(item).not.toHaveProperty("card");
   });
 });
+
+describe("tako_contents premium and offset", () => {
+  const cardUrl = "https://tako.com/card/people";
+  const sentBody = (call: number) => vi.mocked(djangoPost).mock.calls[call]![3] as Record<string, unknown>;
+  const peopleCard = (redacted: Record<string, number[]> | null) =>
+    card({
+      dataset: {
+        columns: [
+          { name: "name", type: "string", unit: null },
+          { name: "work_email", type: "string", unit: null },
+          { name: "phone", type: "string", unit: null },
+        ],
+        rows: [["A. Person", null, null], ["B. Person", null, null]],
+        total_rows: 2,
+        truncated: false,
+        ref: cardUrl,
+        sources: [{ name: "People Data Labs", index: "data" }],
+        provenance: "query",
+      },
+      total_rows: 2,
+      truncated: false,
+      redacted_cells: redacted,
+    });
+
+  it("sends premium and offset for a Tako url, and neither for a web url in the same batch", async () => {
+    vi.mocked(djangoPost).mockResolvedValueOnce(peopleCard(null)).mockResolvedValueOnce(page("web text"));
+    await tool.handler(
+      tool.inputSchema.parse({ urls: [cardUrl, "https://example.com/a"], premium: true, offset: 3, max_rows: 1 }),
+      ctx,
+    );
+    expect(sentBody(0)).toMatchObject({ premium: true, offset: 3, max_rows: 1 });
+    expect(sentBody(1)).not.toHaveProperty("premium");
+    expect(sentBody(1)).not.toHaveProperty("offset");
+  });
+
+  it("sends no premium and no offset when the caller sets neither", async () => {
+    vi.mocked(djangoPost).mockResolvedValue(peopleCard(null));
+    await tool.handler(tool.inputSchema.parse({ urls: [cardUrl] }), ctx);
+    expect(sentBody(0)).not.toHaveProperty("premium");
+    expect(sentBody(0)).not.toHaveProperty("offset");
+  });
+
+  it("refuses premium and a nonzero offset with format card", () => {
+    const premium = tool.inputSchema.safeParse({ urls: [cardUrl], format: "card", premium: true });
+    expect(premium.success).toBe(false);
+    expect(premium.error!.issues[0]!.path).toEqual(["premium"]);
+    const offset = tool.inputSchema.safeParse({ urls: [cardUrl], format: "card", offset: 5 });
+    expect(offset.success).toBe(false);
+    expect(offset.error!.issues[0]!.path).toEqual(["offset"]);
+  });
+
+  it("chatgpt surface strips premium and offset", async () => {
+    const parsed = tool.inputSchemaBySurface!.chatgpt!.parse({ urls: [cardUrl], premium: true, offset: 3 });
+    vi.mocked(djangoPost).mockResolvedValue(peopleCard(null));
+    await tool.handler(parsed, { ...ctx, surface: "chatgpt" as const });
+    expect(sentBody(0)).not.toHaveProperty("premium");
+    expect(sentBody(0)).not.toHaveProperty("offset");
+  });
+
+  it("names the withheld cells and the rows that hold them, and points to premium", async () => {
+    vi.mocked(djangoPost).mockResolvedValue(peopleCard({ work_email: [0, 1], phone: [0] }));
+    const out = await tool.handler(tool.inputSchema.parse({ urls: [cardUrl] }), ctx);
+    expect(out.results[0]!.note).toBe(
+      "Tako withheld `work_email`, `phone` in 2 rows. To get them, call again with `premium: true`, which bills each of those rows.",
+    );
+  });
+
+  it("names the withheld cells on chatgpt without pointing to an input it doesn't have", async () => {
+    vi.mocked(djangoPost).mockResolvedValue(peopleCard({ phone: [1] }));
+    const out = await tool.handler(
+      tool.inputSchemaBySurface!.chatgpt!.parse({ urls: [cardUrl] }),
+      { ...ctx, surface: "chatgpt" as const },
+    );
+    expect(out.results[0]!.note).toBe("Tako withheld `phone` in 1 row.");
+  });
+
+  it("adds no note when nothing was withheld", async () => {
+    vi.mocked(djangoPost).mockResolvedValue(peopleCard(null));
+    const out = await tool.handler(tool.inputSchema.parse({ urls: [cardUrl], premium: true }), ctx);
+    expect(out.results[0]).not.toHaveProperty("note");
+  });
+
+  it("a 403 on a premium request says to drop premium, not that the card can't export", async () => {
+    vi.mocked(djangoPost).mockRejectedValue(
+      new DjangoHttpError({
+        path: "/api/v1/contents/",
+        method: "POST",
+        status: 403,
+        body: '{"detail":"This account may not request premium contents."}',
+      }),
+    );
+    const err = await tool
+      .handler(tool.inputSchema.parse({ urls: [cardUrl], premium: true }), ctx)
+      .catch((e: unknown) => e);
+    const guidance = (err as DjangoHttpError).modelGuidance ?? "";
+    expect(guidance).toContain("This account may not request premium contents.");
+    expect(guidance).toMatch(/without `premium`/);
+    expect(guidance).not.toMatch(/export gate/);
+    expect(guidance.split(/(?<=\.)\s+/).filter((s) => s.length > 0)).toHaveLength(2);
+  });
+});

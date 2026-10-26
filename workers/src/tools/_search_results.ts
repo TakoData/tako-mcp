@@ -1344,6 +1344,20 @@ export function withheldDataGuidance(cards: ReadonlyArray<TakoCard>): string | u
   return `${sources.join(" and ")} data on a placeholder card needs a signed-in connection. ${GENERIC_SIGN_IN_HINT}`;
 }
 
+export const WITHHELD_CELLS_GUIDANCE =
+  "A card withholds cells, such as each person's email and phone. When the user asks for them, `tako_contents` with `premium: true` returns them and bills each row that holds one.";
+
+export function withheldCellsGuidance(cards: ReadonlyArray<TakoCard>): string | undefined {
+  const withholds = cards.some((card) => {
+    const content = card.content as Record<string, unknown> | null | undefined;
+    if (content == null || content.premium === true) return false;
+    const premiumRows = content.premium_rows;
+    if (premiumRows == null || typeof premiumRows !== "object") return false;
+    return Object.values(premiumRows).some((count) => typeof count === "number" && count > 0);
+  });
+  return withholds ? WITHHELD_CELLS_GUIDANCE : undefined;
+}
+
 /** Wire fields that ride into the output when the request asked for them. */
 export type SearchOutputExtras = {
   related?: z.infer<typeof RelatedSuggestion>[];
@@ -1378,6 +1392,7 @@ export function buildSearchOutput(
     keepWebText: boolean;
     /** The tool this output belongs to, named in the projection log. */
     toolName: SearchToolName;
+    premiumInput: boolean;
   },
   extras: SearchOutputExtras = {},
 ): SearchOutput {
@@ -1387,6 +1402,7 @@ export function buildSearchOutput(
   );
   const web = webResults.map((w) => projectWebResult(w, opts.keepWebText));
   const withheld = withheldDataGuidance(rawCards);
+  const withheldCells = tier !== "free" && opts.premiumInput ? withheldCellsGuidance(rawCards) : undefined;
   const base: SearchOutput = {
     cards,
     web_results: web,
@@ -1403,6 +1419,7 @@ export function buildSearchOutput(
     ...(cards.length === 0 && strictPin ? { guidance: STRICT_PIN_GUIDANCE } : {}),
     // A placeholder is a card, so this never competes with the strict-pin verdict.
     ...(tier === "free" && withheld !== undefined ? { guidance: withheld } : {}),
+    ...(withheldCells !== undefined ? { guidance: withheldCells } : {}),
     // Reference maps LAST so tail-truncating hosts lose prose before data.
     ...(maps.metric_definitions !== undefined
       ? { metric_definitions: maps.metric_definitions }

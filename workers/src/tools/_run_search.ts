@@ -155,7 +155,7 @@ export async function runSearch(
     ctx.env,
     strictPin,
     ctx.tier ?? "authenticated",
-    { rowCap, keepWebText, toolName },
+    { rowCap, keepWebText, toolName, premiumInput: ctx.surface !== "chatgpt" },
     extras,
   );
 }
