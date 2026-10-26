@@ -21,10 +21,11 @@ Default listing:
 
 Opt-in (name them in `?tools=`):
 
-- `tako_agent` — `?tools=available_data,contents,graph_related,search,agent`
-- `tako_company_agent` — `?tools=available_data,contents,graph_related,search,company_agent`
-- `tako_search_advanced` — `?tools=available_data,contents,graph_related,search,search_advanced`
-- `tako_visualize` — `?tools=available_data,contents,graph_related,search,visualize`
+- `tako_agent` — `?tools=available_data,contents,graph_related,search,agent` (skills: `tako-search`)
+- `tako_company_agent` — `?tools=available_data,contents,graph_related,search,company_agent` (skills: `tako-search`)
+- `tako_search_advanced` — `?tools=available_data,contents,graph_related,search,search_advanced` (skills: `tako-search`)
+- `tako_visualize` — `?tools=available_data,contents,graph_related,search,visualize` (skills: `tako-search`)
+- The Claude Code plugin and Gemini CLI extension — `?tools=agent,available_data,company_agent,contents,graph_related,search,visualize` (skills: `tako-agent`, `tako-search`)
 
 Server instructions:
 
@@ -33,6 +34,8 @@ Tako searches the web and a proprietary knowledge graph of live structured data 
 
 `tako_search` finds cards and web links. `tako_contents` fetches a url in full: a web page returns its text, and an exportable Tako card returns its data rows. `tako_available_data` answers what data Tako has on an entity or metric, including a metric's canonical name. `tako_graph_related` lists a node's related metrics, entities, competitors, and sources.
 ```
+
+Skills served through the MCP Skills extension: `tako-search`
 
 ## `/mcp/chatgpt` — the ChatGPT app surface, OAuth only
 
@@ -51,8 +54,10 @@ Server instructions:
 ```text
 Tako searches the web and a proprietary knowledge graph of live structured data in the same call. Default sources are data + web, so one call answers a question that mixes a figure with context. Coverage includes finance, markets, company KPIs, economics, website traffic, sports, weather, elections, prediction markets, demographics, energy, real estate, health, and more.
 
-`tako_search` finds cards and web links. `tako_contents` fetches a url in full: a web page returns its text, and an exportable Tako card returns its data rows. `tako_available_data` answers what data Tako has on an entity or metric, including a metric's canonical name. `tako_graph_related` lists a node's related metrics, entities, competitors, and sources. Use `tako_company_agent` for a list of companies or people, such as a registry screen, and `tako_agent` for a ranking, trend, or aggregate of metrics.
+`tako_search` finds cards and web links. `tako_contents` fetches a url in full: a web page returns its text, and an exportable Tako card returns its data rows. `tako_available_data` answers what data Tako has on an entity or metric, including a metric's canonical name. `tako_graph_related` lists a node's related metrics, entities, competitors, and sources. When the user asks for Tako's agent, use `tako_company_agent` for a list of companies or people and `tako_agent` for anything else.
 ```
+
+Skills served through the MCP Skills extension: none
 
 ## Tools
 
@@ -65,9 +70,9 @@ Tako searches the web and a proprietary knowledge graph of live structured data 
 
 Description:
 
-Run Tako's Answer Agent on a question that needs research rather than a lookup. It plans, queries the data graph and the web over several steps, and returns a written `answer` with numbered citations plus the chart `cards` it built.
+Run Tako's Answer Agent. It plans, queries the data graph and the web over several steps, and returns a written `answer` with numbered citations plus the chart `cards` it built. Start a run only when the user asks for one: they name Tako's agent or ask for deep or multi-step research with Tako. Otherwise, use `tako_search`.
 
-Best for metric-driven research: ranking or screening by financial or economic metrics, multi-step aggregation, multi-hop reasoning. Also the fallback when `tako_search` finds nothing. Not for a known value or a two-entity comparison — `tako_search` answers those in one round trip.
+Best for: an ask for Tako's agent whose answer is a chart or a written finding, not a list of companies or people.
 
 A call returns within 45 s. If `status` is `running`, call again with `run_id`; don't start a new run. In your reply, link each card's `url`; the full list or chart lives on that page.
 
@@ -876,9 +881,9 @@ tako_search: Carnival, Inc. Revenues
 
 Description:
 
-Run Tako's Company Agent on a question about which companies or people match registry facts. It searches the company registry and the web over several steps, and returns a written `answer` with numbered citations plus any list `cards` it built.
+Run Tako's Company Agent. It searches company registries, company and people profiles, and the web over several steps, and returns a written `answer` with numbered citations plus the list `cards` it built. Start a run only when the user asks for one: they name Tako's agent or ask for deep or multi-step research with Tako. Otherwise, use `tako_search`.
 
-Best for: screening companies by status, incorporation date, registered location, or industry; resolving named companies; finding a company's officers and directors. At `medium` and `high` effort it can also filter by financial metrics such as revenue or headcount.
+Best for: an ask for Tako's Company Agent, or an ask for Tako's agent to build a list of companies or people. It filters companies by location, industry, status, founding date, funding stage, or size, and people by role, seniority, department, or ownership at those companies. At `medium` and `high` effort, it can also filter companies by financial metrics such as revenue.
 
 A call returns within 45 s. If `status` is `running`, call again with `run_id`; don't start a new run. In your reply, link each card's `url`; the full list or chart lives on that page.
 
@@ -1223,6 +1228,8 @@ Parameters:
 | `query` | string | no |  | Web pages only: a question the passages should answer. The result holds those passages instead of the page. Omit it to get the whole page. |
 | `delivery` | string ("inline" \\| "link") | no |  | Tako cards only. `inline` returns the data in the result. `link` returns a download link: a CSV file, or a JSON file with `format: "card"`. It expires in 5 minutes. Use `link` when you can run shell commands and want to analyze the data in code. If the download fails, call again inline with `max_rows` at 2,000 or less. |
 | `format` | string ("rows" \\| "card") | no |  | Tako cards only. `rows` returns the card's data as one table. `card` returns the card's own structure, such as a company card's tabs or a game's box score. A card type without its own structure returns `rows`. Web pages ignore it. |
+| `offset` | integer | no |  | Tako list cards only: rows to skip. With `max_rows: 1`, it fetches one person's row. |
+| `premium` | boolean | no |  | Tako cards only: `true` returns withheld cells, such as a person's email and phone. Tako bills each row with one, so set it only when the user asks. |
 
 Fixed request inputs (the caller cannot change these):
 
@@ -1285,6 +1292,16 @@ Annotations:
         "rows",
         "card"
       ]
+    },
+    "offset": {
+      "description": "Tako list cards only: rows to skip. With `max_rows: 1`, it fetches one person's row.",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100000
+    },
+    "premium": {
+      "description": "Tako cards only: `true` returns withheld cells, such as a person's email and phone. Tako bills each row with one, so set it only when the user asks.",
+      "type": "boolean"
     }
   },
   "required": [
@@ -1355,7 +1372,7 @@ Annotations:
             "description": "The url this entry is for."
           },
           "note": {
-            "description": "Whether `text` is passages or the whole page, or a card fell back to rows.",
+            "description": "Passages or the whole page, a card that fell back to rows, or withheld cells.",
             "type": "string"
           },
           "rows": {
@@ -1496,7 +1513,7 @@ Annotations:
             "description": "The url this entry is for."
           },
           "note": {
-            "description": "Whether `text` holds the passages for `query` or the whole page.",
+            "description": "Whether `text` holds the passages for `query` or the whole page, or which card cells Tako withheld.",
             "type": "string"
           },
           "rows": {
@@ -1988,7 +2005,7 @@ Search Tako's data graph and the live web in one call: many results at once, as 
 
 It finds results; `tako_contents` fetches what's behind them. Each card carries a headline value, node ids, and a url — pass the url to `tako_contents` for rows (`exportable: true` cards) or a web result's full page text. When `exportable` is false the rows are locked — read the headline value from the card's `description`.
 
-Best for: breadth — fan out several narrow queries in parallel. Each query answers one question — one metric for one entity, a comparison set ("Apple revenue", "Nvidia vs AMD gross margin"), or one news or web lookup ("EU AI Act timeline"); several metrics or topics in one query retrieve poorly.
+Best for: breadth — fan out several narrow queries in parallel. Each query answers one question — one metric for one entity, a comparison set ("Apple revenue", "Nvidia vs AMD gross margin"), one news or web lookup ("EU AI Act timeline"), or one list of people or companies ("CFOs in Austin", "fintechs in London"); several metrics or topics in one query retrieve poorly. To find a person, search the name alone ("Jane Doe"); extra words drop the list.
 
 Parameters:
 
@@ -2203,7 +2220,7 @@ Annotations:
       "description": "Cost-plus usage for this request (null when not metered)."
     },
     "guidance": {
-      "description": "How a keyless caller unlocks a placeholder card.",
+      "description": "How to unlock a placeholder card or a card's withheld cells.",
       "type": "string"
     },
     "metric_definitions": {
@@ -3125,7 +3142,7 @@ Annotations:
       "description": "Cost-plus usage for this request (null when not metered)."
     },
     "guidance": {
-      "description": "Why a `strict: true` pin returned no cards.",
+      "description": "Why a `strict: true` pin returned no cards, or how to get withheld cells.",
       "type": "string"
     },
     "metric_definitions": {

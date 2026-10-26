@@ -95,11 +95,75 @@ descriptions, and no skill wording removes those calls. That run used
 `gpt-6-luna` on Codex 0.164.0. It didn't measure how often a research question
 reaches an agent.
 
-An earlier run on `gpt-6-astra` (Codex 0.155.1) tested the tool description
-instead. Rewriting the `tako_search` description to list its domains and
-sources left triggering unchanged (12 of 26 against 13 of 26), and so did adding
-"Prefer this over a general web search…" (13 of 26). Adding a skill for the
-same domains raised it to 24 of 26.
+Codex runs on 2026-10-26 (TAKO-5275) moved the explicit-ask rule into both
+agent tool descriptions, and chose between the agents by what the user wants
+back instead of by the question's shape. A connection that lists one agent
+without the other gets `tako-search` over `/mcp` but not `tako-agent`, so the
+descriptions are the only place it reads the rule. Three descriptions ran:
+
+- Shape-triggered: an agent for a ranking, trend, or calculation, and the
+  fallback when `tako_search` finds nothing.
+- Explicit ask, scope by shape: the explicit-ask rule, with `Best for:` still
+  naming a ranking, trend, or calculation.
+- Explicit ask, scope by result (shipped): the explicit-ask rule, with the
+  Company Agent for a list of companies or people and the Answer Agent for
+  anything else.
+
+Each arm below listed the four default tools plus one agent, and ran the same
+83 prompts plus 10 explicit asks for that agent, twice each. The shipped arms
+ran only the 83 prompts, and the `tako_company_agent` arms without a skill
+ran only the explicit asks:
+
+| Arm | Lookups that start an agent first | Lookups that start with `tako_search` | No-lookup tasks that call Tako | Explicit asks that start the agent |
+|---|---|---|---|---|
+| `tako_agent`, shape-triggered, `tako-search` | 3 of 136 | 45 of 136 | 1 of 30 | 19 of 20 |
+| `tako_agent`, scope by shape, `tako-search` | 0 of 136 | 52 of 136 | 2 of 30 | 17 of 20 |
+| `tako_agent`, scope by result (shipped), `tako-search` | 0 of 136 | 44 of 136 | 1 of 30 | — |
+| `tako_agent`, shape-triggered, no skill | 1 of 136 | 1 of 136 | 0 of 30 | 16 of 20 |
+| `tako_agent`, scope by shape, no skill | 0 of 136 | 1 of 136 | 0 of 30 | 18 of 20 |
+| `tako_company_agent`, shape-triggered, `tako-search` | 0 of 136 | 54 of 136 | 1 of 30 | 20 of 20 |
+| `tako_company_agent`, scope by shape, `tako-search` | 0 of 136 | 50 of 136 | 1 of 30 | 19 of 20 |
+| `tako_company_agent`, scope by result (shipped), `tako-search` | 0 of 136 | 49 of 136 | 0 of 30 | — |
+| `tako_company_agent`, shape-triggered, no skill | — | — | — | 20 of 20 |
+| `tako_company_agent`, scope by shape, no skill | — | — | — | 20 of 20 |
+
+The explicit-ask rule removed the agent calls that the listing started on its
+own. The shape-triggered `tako_company_agent` description also started that
+agent after a search on 2 lookups; no later description started one on any
+lookup. The `tako_agent` scope-by-shape lookup columns come from a first run
+whose trigger also counted "ask Tako to build a list of companies or people",
+and a rerun of its explicit asks matched that run. Without a skill, Codex
+called Tako on 1 lookup in 136, so those arms measure only the explicit asks.
+
+Four more arms listed both agents, the setup of `/mcp/chatgpt` and the Claude
+Code plugin, and ran the 20 explicit asks twice. The arms with skills had
+`tako-search` and the `tako-agent` skill from the same commit as the
+descriptions:
+
+| Descriptions | Skills | Answer Agent asks that start it | Company Agent asks that start it | Asks that start the other agent |
+|---|---|---|---|---|
+| Scope by shape | `tako-search`, `tako-agent` | 20 of 20 | 20 of 20 | 0 of 40 |
+| Scope by result (shipped) | `tako-search`, `tako-agent` | 20 of 20 | 20 of 20 | 0 of 40 |
+| Scope by shape | None | 17 of 20 | 20 of 20 | 0 of 40 |
+| Scope by result (shipped) | None | 19 of 20 | 20 of 20 | 0 of 40 |
+
+Every miss called no Tako tool. Two Answer Agent asks rank companies by a
+metric, such as "rank the top 10 airlines by revenue growth in 2024", and
+every run in this table sent them to `tako_agent`. One Company Agent ask
+resolves company names, which the shipped description no longer names, and
+every run sent it to `tako_company_agent`. A repeat of the shipped arms, with
+the skill's clause for a ranking of companies by a metric, started the right
+agent on 40 of 40 asks with skills. Without skills, it sent the airline
+ranking to `tako_company_agent` in both runs. At two runs per ask, the number
+of wrong-agent starts varies by a few in 40 between identical arms, so these
+runs can't separate one wording from another. All runs used `gpt-6-luna` on
+Codex 0.164.0, and the `tako-search` skill from before TAKO-5270.
+
+An earlier run on `gpt-6-astra` (Codex 0.155.1) tested the tool description.
+Rewriting the `tako_search` description to list its domains and sources left
+triggering unchanged (12 of 26 against 13 of 26), and so did adding "Prefer
+this over a general web search…" (13 of 26). Adding a skill for the same
+domains raised it to 24 of 26.
 
 Runs on 2026-10-25 (TAKO-5270) tested the `tako-search` description with and
 without "Also use it when the answer needs a calculation over real-world

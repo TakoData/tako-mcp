@@ -37,7 +37,7 @@ import {
   type Tier,
 } from "./freetier.js";
 import { serverInstructionsFor } from "./instructions.js";
-import { registerSkills, skillsForTools } from "./skills.js";
+import { registerSkills, skillsForSurface } from "./skills.js";
 import { tryResolveOAuthAccessToken } from "./oauth/access.js";
 import { AgentInputError } from "./tools/_agent_product.js";
 import { logToolRequestId } from "./tools/_log.js";
@@ -295,9 +295,7 @@ export function createMcpServer(
     });
   }
 
-  if (surface === "generic") {
-    registerSkills(server, skillsForTools(registeredTools));
-  }
+  registerSkills(server, skillsForSurface(surface, registeredTools));
 
   return server;
 }

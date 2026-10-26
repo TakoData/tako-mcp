@@ -3,6 +3,7 @@ import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 
 import { SKILLS, type GeneratedSkill } from "./generated/skills.js";
+import type { Surface } from "./surface.js";
 
 const SKILLS_EXTENSION = "io.modelcontextprotocol/skills";
 const SKILL_MIME_TYPE = "text/markdown";
@@ -24,6 +25,15 @@ export function skillsForTools(
   skills: readonly GeneratedSkill[] = SKILLS,
 ): GeneratedSkill[] {
   return skills.filter((skill) => skill.toolNames.every((toolName) => registered.has(toolName)));
+}
+
+/** The skills a surface serves over MCP; `/mcp/chatgpt` serves none, because ChatGPT installs them from the plugin zip. */
+export function skillsForSurface(
+  surface: Surface,
+  registered: ReadonlySet<string>,
+  skills: readonly GeneratedSkill[] = SKILLS,
+): GeneratedSkill[] {
+  return surface === "generic" ? skillsForTools(registered, skills) : [];
 }
 
 function skillEntry(skill: GeneratedSkill) {

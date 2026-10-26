@@ -131,6 +131,10 @@ export function isToolOnSurface(
   return resolveToolSet(surface, requested).has(name);
 }
 
+export function contentsAcceptsPremium(surface: Surface): boolean {
+  return surface !== "chatgpt";
+}
+
 /**
  * Resolve the annotations a surface sees for a tool: the canonical MCP
  * annotations (what the generic surface and the generated registry serve),

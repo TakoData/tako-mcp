@@ -101,7 +101,7 @@ import { EMBED_DATA_PREFIX } from "../src/embed_proxy.js";
 import type { ProjectedCard } from "../src/tools/_search_results.js";
 import { TOOL_REGISTRY } from "../src/tools/_registry.js";
 import takoVisualize from "../src/tools/tako_visualize.js";
-import { skillsForTools } from "../src/skills.js";
+import { skillsForSurface } from "../src/skills.js";
 
 const CANARY_QUERY = "US GDP";
 
@@ -406,7 +406,7 @@ try {
     }),
   );
   const skillUris = skills.map((skill) => skill.uri).sort();
-  const expectedSkillUris = skillsForTools(new Set(toolNames)).map((skill) => skill.uri).sort();
+  const expectedSkillUris = skillsForSurface("generic", new Set(toolNames)).map((skill) => skill.uri).sort();
   assert(
     skillUris.join(",") === expectedSkillUris.join(","),
     `skills/list expected ${expectedSkillUris.join(", ")} (got: ${skillUris.join(", ")})`,

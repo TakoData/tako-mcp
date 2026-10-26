@@ -79,9 +79,11 @@ import {
 } from "../src/tools/_available_data.js";
 import { graphRelatedOutputShape, graphSearchOutputShape, projectRelated } from "../src/tools/_graph.js";
 import type { Env } from "../src/env.js";
+import { skillsForSurface } from "../src/skills.js";
 import type { Surface } from "../src/surface.js";
 import type { ToolAnnotations, ToolModule } from "../src/tools/types.js";
 import { readSkills, renderSkillsModule, skillMarkdownPaths } from "./gen-skills.js";
+import { PLUGIN_TOOL_NAMES } from "./plugin-tool-url.js";
 
 // ---------------------------------------------------------------------------
 // Curated tool surface
@@ -838,7 +840,7 @@ function buildSearchSample(tool: ToolModule): ToolSample {
     SAMPLE_FIXTURE_ENV,
     false,
     "authenticated",
-    { rowCap: null, keepWebText: false, toolName: "tako_search" },
+    { rowCap: null, keepWebText: false, toolName: "tako_search", canRequestPremium: true },
   );
   return {
     // The generic-surface narrowing — what an `/mcp` client's model reads.
@@ -885,7 +887,7 @@ function buildAdvancedSample(tool: ToolModule): ToolSample {
     SAMPLE_FIXTURE_ENV,
     false,
     "authenticated",
-    { rowCap: "all", keepWebText: true, toolName: "tako_search_advanced" },
+    { rowCap: "all", keepWebText: true, toolName: "tako_search_advanced", canRequestPremium: true },
     { answer: raw.answer, structured_output: raw.structured_output },
   );
   return {
@@ -1066,6 +1068,10 @@ export interface ToolsDocInput {
   registryTools: ReadonlyArray<RegistryTool>;
   /** The `initialize` instructions a connection gets for the tools it registers. */
   instructionsFor: (registered: ReadonlySet<string>) => string;
+  /** The names of the skills a surface serves a connection for the tools it registers. */
+  skillsFor: (surface: Surface, registered: ReadonlySet<string>) => readonly string[];
+  /** The tools the Claude Code plugin and Gemini CLI extension pin in their `?tools=` URL. */
+  pluginToolNames: ReadonlySet<string>;
   freeTierToolNames: ReadonlySet<string>;
   /** Generated sample results (see `buildToolSamples`); tools without an
    *  entry render schemas only. */
@@ -1130,6 +1136,15 @@ function declaresExtraTopLevelFields(schema: z.ZodType, baseline: z.ZodType): bo
   return keysOf(schema).some((key) => !baselineKeys.has(key));
 }
 
+function skillNamesMarkdown(names: readonly string[]): string {
+  return names.length === 0 ? "none" : names.map((name) => `\`${name}\``).join(", ");
+}
+
+function allowlistMarkdown(requested: readonly string[], input: ToolsDocInput): string {
+  const servedSkills = input.skillsFor("generic", resolveToolSet("generic", new Set(requested)));
+  return `\`?tools=${requested.map(toolsToken).join(",")}\` (skills: ${skillNamesMarkdown(servedSkills)})`;
+}
+
 export function buildToolsDoc(input: ToolsDocInput): string {
   const byName = new Map(input.registryTools.map((t) => [t.name, t]));
   const modules = [...input.modules].sort((a, b) => a.name.localeCompare(b.name));
@@ -1163,16 +1178,17 @@ export function buildToolsDoc(input: ToolsDocInput): string {
       // rely on" warning six lines above exists to prevent, and this list is
       // the thing a reader copies.
       for (const m of optIn) {
-        const value = [...modules.filter((x) => listed.has(x.name)).map((x) => x.name), m.name]
-          .map(toolsToken)
-          .join(",");
-        out.push(`- \`${m.name}\` — \`?tools=${value}\``);
+        const requested = [...modules.filter((x) => listed.has(x.name)).map((x) => x.name), m.name];
+        out.push(`- \`${m.name}\` — ${allowlistMarkdown(requested, input)}`);
       }
+      const pluginRequested = modules.filter((x) => input.pluginToolNames.has(x.name)).map((x) => x.name);
+      out.push(`- The Claude Code plugin and Gemini CLI extension — ${allowlistMarkdown(pluginRequested, input)}`);
     }
     // One string for every tier: the host loads it once at `initialize`,
     // so a per-tier variant would outlive a mid-conversation sign-in (see
     // `instructions.ts`). Anonymous connections differ only at dispatch.
     out.push("", "Server instructions:", "", "```text", input.instructionsFor(listed), "```", "");
+    out.push(`Skills served through the MCP Skills extension: ${skillNamesMarkdown(input.skillsFor(surface, listed))}`, "");
   }
 
   out.push("## Tools", "");
@@ -1950,9 +1966,8 @@ async function main(): Promise<void> {
   const registry = buildRegistry(metadata, registryTools);
   const registryJson = serializeJson(registry);
   const barrel = buildBarrel(modules);
-  const skillsModule = renderSkillsModule(
-    readSkills(SKILLS_DIR, modules.map((m) => m.tool.name)),
-  );
+  const skills = readSkills(SKILLS_DIR, modules.map((m) => m.tool.name));
+  const skillsModule = renderSkillsModule(skills);
   const committedLobehub = JSON.parse(
     readFileSync(LOBEHUB_PATH, "utf8"),
   ) as Record<string, unknown>;
@@ -1969,6 +1984,8 @@ async function main(): Promise<void> {
     modules: modules.map((m) => m.tool),
     registryTools,
     instructionsFor: serverInstructionsFor,
+    skillsFor: (surface, registered) => skillsForSurface(surface, registered, skills).map((skill) => skill.name),
+    pluginToolNames: new Set(PLUGIN_TOOL_NAMES),
     freeTierToolNames: FREE_TIER_TOOL_NAMES,
     samples: buildToolSamples(modules.map((m) => m.tool)),
   });

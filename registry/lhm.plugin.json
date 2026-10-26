@@ -121,6 +121,16 @@
               "rows",
               "card"
             ]
+          },
+          "offset": {
+            "description": "Tako list cards only: rows to skip. With `max_rows: 1`, it fetches one person's row.",
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100000
+          },
+          "premium": {
+            "description": "Tako cards only: `true` returns withheld cells, such as a person's email and phone. Tako bills each row with one, so set it only when the user asks.",
+            "type": "boolean"
           }
         },
         "required": [
@@ -130,7 +140,7 @@
     },
     {
       "name": "tako_search",
-      "description": "Search Tako's data graph and the live web in one call: many results at once, as structured cards plus web results. The first card's chart renders inline; some hosts also show every other card's chart, in search's order.\n\nIt finds results; `tako_contents` fetches what's behind them. Each card carries a headline value, node ids, and a url — pass the url to `tako_contents` for rows (`exportable: true` cards) or a web result's full page text. When `exportable` is false the rows are locked — read the headline value from the card's `description`.\n\nBest for: breadth — fan out several narrow queries in parallel. Each query answers one question — one metric for one entity, a comparison set (\"Apple revenue\", \"Nvidia vs AMD gross margin\"), or one news or web lookup (\"EU AI Act timeline\"); several metrics or topics in one query retrieve poorly.",
+      "description": "Search Tako's data graph and the live web in one call: many results at once, as structured cards plus web results. The first card's chart renders inline; some hosts also show every other card's chart, in search's order.\n\nIt finds results; `tako_contents` fetches what's behind them. Each card carries a headline value, node ids, and a url — pass the url to `tako_contents` for rows (`exportable: true` cards) or a web result's full page text. When `exportable` is false the rows are locked — read the headline value from the card's `description`.\n\nBest for: breadth — fan out several narrow queries in parallel. Each query answers one question — one metric for one entity, a comparison set (\"Apple revenue\", \"Nvidia vs AMD gross margin\"), one news or web lookup (\"EU AI Act timeline\"), or one list of people or companies (\"CFOs in Austin\", \"fintechs in London\"); several metrics or topics in one query retrieve poorly. To find a person, search the name alone (\"Jane Doe\"); extra words drop the list.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "type": "object",

@@ -291,7 +291,7 @@ The full reference — every description and parameter exactly as the model sees
 | ---- | ------------- |
 | `tako_search` | **Find the data.** Fast search over Tako's curated graph and the live web. Four parameters — `query`, `sources`, `country_code`, `locale` — and no defaults of its own, so an omitted field takes the API's. Cards carry headline values, node ids and chart links; `tako_contents` reads the rows. Every card renders as a chart on the ChatGPT app, and the first card's chart renders elsewhere, each with an **Open in Tako** link. Parallelize broad questions into narrow single entity+metric searches. |
 | `tako_available_data` | **Find what structured data exists** on an entity or metric in one call — the exact metric name to search on, an `id` for graph traversal, and a ready-to-run `next_call`. Ambiguous names come back as candidates with a `kind`; `metric` doubles as the substring browse filter; `limit` widens the candidate list. |
-| `tako_contents` | Fetch what's behind result URLs (1-10 per call): a card's rows or a web page's text — set `query` to a question to get only the passages that answer it. To analyze rows in code, set `delivery: "link"` for a CSV that expires after 5 minutes; `format: "card"` returns the card's own structure. `/mcp/chatgpt` returns rows inline only. Requires a signed-in connection. |
+| `tako_contents` | Fetch what's behind result URLs (1-10 per call): a card's rows or a web page's text — set `query` to a question to get only the passages that answer it. To analyze rows in code, set `delivery: "link"` for a CSV that expires after 5 minutes; `format: "card"` returns the card's own structure. On a people card, `premium: true` returns the withheld emails and phones, billed per row, and `offset` with `max_rows` fetches one slice. `/mcp/chatgpt` returns rows inline only. Requires a signed-in connection. |
 | `tako_graph_related` | Explore a graph node: a map (each relation's key, total, first three names) or one paged relation — metrics, the entities a metric covers, competitors (`rel:competes_with`), memberships, sources. `q` is a substring filter. |
 
 **Anonymous connections (no credentials):** the tool list is the same — it never changes with auth state. `tako_search` runs anonymously (rate-limited, on shared capacity); the others answer with sign-in instructions.
@@ -303,8 +303,8 @@ On connect, the server also advertises [MCP server instructions](https://modelco
 | Tool | Token | What it's for |
 | ---- | ----- | ------------- |
 | `tako_search_advanced` | `search_advanced` | The whole v3 search request body: per-source `count`, inline rows and `max_rows`, graph pins (`node_ids` + `strict`), web `include_domains` / `exclude_domains` / `category` / `snippet_max_chars` / `published_after` / `published_before`, `location`, `timezone`, `include_related`, and `effort: deep`. Set `include_answer: true` for one synthesized, citation-backed answer (and `output_schema` to fill a JSON Schema from the same evidence). Same structured payload as `tako_search`, minus the auto-rendered inline chart — `embed_url` is still there to click through. |
-| `tako_agent` | `agent` | Tako's **Answer Agent**: multi-step research across many retrievals, returning a synthesized answer plus chart cards. A call waits up to 45 s. If the run is still going, it returns `status: "running"` and an `answer_run_…` `run_id`; call again with that `run_id` instead of `query`. On `/mcp/chatgpt`, every card renders inline in the chart widget. |
-| `tako_company_agent` | `company_agent` | Tako's **Company Agent**: which companies or people match registry facts (status, incorporation date, location, industry), plus officers and directors. Same start-or-resume contract with a `company_run_…` `run_id`. On by default on `/mcp/chatgpt`, like `tako_agent`. On `/mcp/chatgpt`, every card renders inline in the chart widget. |
+| `tako_agent` | `agent` | Tako's **Answer Agent**: multi-step research across many retrievals, returning a synthesized answer plus chart cards. Its description tells the model to start a run only when the user asks for an agent. A call waits up to 45 s. If the run is still going, it returns `status: "running"` and an `answer_run_…` `run_id`; call again with that `run_id` instead of `query`. On `/mcp/chatgpt`, every card renders inline in the chart widget. |
+| `tako_company_agent` | `company_agent` | Tako's **Company Agent**: lists of companies or people, such as companies by location, industry, status, founding date, funding stage, or size, and the officers, directors, owners, or employees of those companies. Same explicit-ask rule and start-or-resume contract with a `company_run_…` `run_id`. On by default on `/mcp/chatgpt`, like `tako_agent`. On `/mcp/chatgpt`, every card renders inline in the chart widget. |
 | `tako_visualize` | `visualize` | Author a Tako card from your own typed `components` (timeseries, bar, table, financial boxes…). It PUBLISHES: the card is public, permanent, and readable by anyone with the link. On by default on `/mcp/chatgpt`, the host that renders the widget inline. |
 
 **`?tools=` is an allowlist that replaces the defaults.** `?tools=search,contents` lists exactly those two; `?tools=agent` lists only `tako_agent`. Tokens are tool names with the `tako_` prefix optional. Unknown tokens are ignored, and a param that names nothing yields the defaults, so a typo never breaks the connection. Include the defaults you rely on:
@@ -377,7 +377,7 @@ description: >-
 
 # Tako
 
-Tako searches the live web and a knowledge graph of licensed and public data in one call. The graph covers companies, markets, economies, sports, weather, prediction markets, websites, and more, and refreshes much of it during the day. When the graph has the answer, the result leads with a card: a headline value, its source, and a chart. Every search also returns web results. All tools below live on the Tako MCP server installed in Step 1.
+Tako searches the live web and a knowledge graph of licensed and public data in one call. The graph covers companies, people, markets, economies, sports, weather, prediction markets, websites, and more, and refreshes much of it during the day. When the graph has the answer, the result leads with a card: a headline value, its source, and a chart. Every search also returns web results. All tools below live on the Tako MCP server installed in Step 1.
 
 ## Look something up
 
@@ -388,6 +388,34 @@ Tako searches the live web and a knowledge graph of licensed and public data in 
 5. If a name is ambiguous, such as "Costco" or "Coca-Cola", and the question doesn't settle which entity, ask before quoting a number.
 
 If the user asks for Tako's agent and the `tako-agent` skill is installed, follow `tako-agent` instead.
+
+## Find people and companies
+
+`tako_search` finds people and company records and returns them as a list card. Each row is one person or company, with their title, employer, location, LinkedIn, and a `tako_url` to their own page. Use it when the user wants people or companies themselves: a list of prospects, or the record of someone they name.
+
+**People by attributes.** Name who and where.
+
+- Who: a role or title ("engineers", "CFO", "VPs of sales", "head of marketing", "founders", "interns"), or a word for a company's people ("employees", "staff", "leadership team"). "Executives", "leadership", and "management" return C-suite and VP-level people.
+- Where: an employer, a place, or both: "engineers at Stripe", "CFOs in Austin", "engineers at Google in London". A place needs a role, so "people in Austin" returns no list. A role alone ("CFOs") and an employer alone ("Stripe") also return no list.
+- To find who holds a role at one company, search the role and the company: "Airbnb CFO" or "who is the CFO of Airbnb".
+- Give a city its state or country: "engineers in Portland, OR". A bare city name matches every place with that name.
+
+**People by name.** Search the full name alone, such as "Jane Doe". The list holds everyone with that name.
+
+- Leave out everything else the user told you, such as the employer or title. Search reads every word as part of the name, so "Jane Doe Stripe" returns no list. Use those details to pick the person from the rows.
+- Search doesn't match nicknames: "Tim Cook" and "Timothy Cook" return different people. If no row fits, try the other form of the name.
+- A common name can match hundreds of people, and the rows can't be filtered by employer. If the person isn't in the first rows, fetch more and match on employer, title, and location.
+
+**Companies by industry or type**, plus a place, a size, a funding stage, public or private, or a founding year: "fintechs in London", "SaaS companies with 50–500 employees", "Series B startups in Berlin", "AI startups founded since 2020".
+
+Then read the list:
+
+1. The card's `description` doesn't name the matches. To see them, pass the card's url to `tako_contents` with `max_rows` set to the rows the answer needs, such as 25. Fetch the full list, up to 1,000 rows, only when the user asks for it.
+2. Check each row before you use it. A name list holds everyone with that name, and a company name can match more than one company. If more than one row fits the person the user means, ask which one.
+3. Each row's `tako_url` opens that one person or company in Tako. Link it.
+4. Tako withholds contact fields such as `work_email` and `phone`, and the result's `note` names the ones it withheld. Don't tell the user that a person has no email or phone. When the user asks for contact details, call `tako_contents` again with `premium: true`, and set `offset` and `max_rows` to only the rows they want, because Tako bills each of those rows. The row order can change between calls, so check the name on each row you get. After a `premium: true` call, the card's page shows those details to anyone who opens it, so don't link that card unless the user wants to share them. If `tako_contents` has no `premium` input, tell the user that contact details aren't available on this connection.
+5. A list can't filter on revenue, investors, registry status, or a company's officers and directors. If the question needs one of those, say so. If the `tako-agent` skill is installed, offer Tako's company agent.
+6. If no list card comes back, tell the user that Tako found no list. If the `tako-agent` skill is installed, offer Tako's company agent.
 
 ## Compute over a series
 
@@ -434,7 +462,7 @@ Step 2: Add this Claude skill
 ---
 name: tako-agent
 description: >-
-  Use when the user explicitly asks for Tako's research agent or for deep, multi-step research with Tako, such as "use the Tako agent to…", "have Tako research…", or "use Tako to build a list of companies that…". Tako's agents plan the steps, search the web and licensed data, and return a cited answer with charts or lists. For any other question, use tako-search, even one that needs a ranking or a calculation.
+  Use when the user explicitly asks for Tako's research agent or for deep, multi-step research with Tako, such as "use the Tako agent to…", "have Tako research…", or "use Tako's company agent to…". Tako's agents plan the steps, search the web and licensed data, and return a cited answer with charts or lists. For any other question, use tako-search, even one that needs a ranking or a calculation.
 ---
 
 # Tako agents
@@ -443,12 +471,12 @@ Tako's agents run multi-step research. An agent plans its own steps, searches th
 
 ## When to use an agent
 
-Start an agent only when the user asks for one: they name Tako's agent, ask for deep or multi-step research with Tako, or ask Tako to build a list of companies or people. Otherwise, use `tako-search`, even when the question needs a ranking, a trend, or a calculation. Don't start an agent for a task that needs no data, such as writing, editing, or explaining a concept.
+Start an agent only when the user asks for one: they name Tako's agent or ask for deep or multi-step research with Tako. Otherwise, use `tako-search`, even when the question needs a ranking, a trend, a calculation, or a list of people or companies. Don't start an agent for a task that needs no data, such as writing, editing, or explaining a concept.
 
 ## Choose the agent
 
-- Use `tako_company_agent` to find which companies or people match a set of facts: a screen by location, industry, status, founding date, funding, or size; officers, directors, or owners; or companies filtered by a financial metric, such as "UK software companies with more than £10 million in revenue".
-- Use `tako_agent` for a ranking, trend, total, or calculation, including companies ranked by a metric: "the 10 largest UK software companies by revenue", countries ranked by GDP, a growth rate across several periods, or a figure computed from several metrics.
+- Use `tako_company_agent` when the user names the Company Agent or wants a list of companies or people: companies by location, industry, status, founding date, funding, or size, or the officers, directors, owners, or employees of those companies.
+- Use `tako_agent` for anything else, such as a chart, a written finding, or a ranking of companies by a metric.
 
 ## Run an agent
 
@@ -497,7 +525,7 @@ The Worker extracts the Bearer (or OAuth-derived) token, validates the MCP reque
 - **`?tools=` now replaces the default listing instead of adding to it** (tokens are tool names, e.g. `?tools=search,contents,agent`). `tako_graph_search`, `tako_graph_node`, `tako_agent_start`, `tako_agent_wait`, `get_credit_balance`, and `tako_credit_balance` were removed; `tako_graph_related` is listed by default. See [`docs/TOOLS.md`](docs/TOOLS.md).
 - **`?tools=agent` no longer changes the ChatGPT app surface.** `https://mcp.tako.com/mcp/chatgpt?tools=agent` was the documented way to reach the Answer Agent there. `?tools=` is now ignored on `/mcp/chatgpt`, and its fixed listing includes `tako_agent` and `tako_company_agent`. A call returns within 45 s, inside ChatGPT's ~60 s per-call ceiling, and a run that's still going returns a `run_id` to resume with.
 - **`tako_search` takes four parameters** — `query`, `sources`, `country_code`, `locale`. `include_contents`, `preview_rows`, `effort`, `count`, `node_ids` and `strict` are gone, and it declares no defaults of its own, so an omitted field takes the v3 API's. Rows come from `tako_contents` on an `exportable: true` card's url. Every removed option, plus `effort: deep`, `include_domains`, `exclude_domains`, `category`, `max_rows` and `content_format`, lives on the new opt-in **`tako_search_advanced`** (`?tools=search_advanced`).
-- **`tako_contents` takes four parameters** — `urls` (now required), `max_rows`, `max_chars`, `query`. The deprecated single `url`, plus `content_format` and `mode`, are gone: every call is delivered inline, and a card's rows come back as one projected `rows` shape (`{columns, rows, total_rows}`, positional cells, `null` for a missing value) rather than CSV or a choice of JSON. `download_url`, `expires_at`, `data`, `records`, `dataset` and `format` left the output with them. Its `max_rows` documentation said "20-row default"; the real default is the whole card, up to 2,000 rows. `/mcp` later added `delivery` and `format` as optional inputs. `/mcp/chatgpt` still takes these four, and its calls are still delivered inline.
+- **`tako_contents` takes four parameters** — `urls` (now required), `max_rows`, `max_chars`, `query`. The deprecated single `url`, plus `content_format` and `mode`, are gone: every call is delivered inline, and a card's rows come back as one projected `rows` shape (`{columns, rows, total_rows}`, positional cells, `null` for a missing value) rather than CSV or a choice of JSON. `download_url`, `expires_at`, `data`, `records`, `dataset` and `format` left the output with them. Its `max_rows` documentation said "20-row default"; the real default is the whole card, up to 2,000 rows. `/mcp` later added `delivery`, `format`, `offset` and `premium` as optional inputs. `/mcp/chatgpt` still takes these four, and its calls are still delivered inline.
 - **`tako_agent` returns the answer itself instead of a run envelope.** Its `structuredContent` used to carry `{run_id, status, timed_out, thread_id}` and nothing else — the answer, the citations and the cards existed in the markdown text only, so a host that reads `structuredContent` and drops `content` saw a uuid and the word `completed`. Both channels now carry `status`, `run_id`, `answer`, `cards`, `citations`, `definitions`, `assumptions`, `methodology`, `thread_id`, `usage`, `guidance` and `error`, plus a `message` while a run is still going. `timed_out` left the output. `usage` is new. Per card, `methodologies`, `metric_definitions`, `content`, `card_id`, `card_type`, `semantic_description`, `source_indexes`, `nodes`, `relevance` and `relevance_score` are gone; per citation, `source_name`, `excerpt` and `content` are gone, and `publish_date` arrives as a date-only `published`.
 - **`sources: "tako"`** — a synonym for `"data"` — was removed from `tako_search`, `tako_answer` and `tako_agent`.
 - **`tako_available_data`'s `next_call`** carries only `tool` and `query` now, and `tool` names whichever search tool the connection registers rather than always `tako_search`. The query names both halves by their canonical graph names, because `tako_search` matches the graph's own names; the pin is gone because `tako_search` no longer accepts one.
