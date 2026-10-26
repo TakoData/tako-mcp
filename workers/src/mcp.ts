@@ -1789,17 +1789,17 @@ const STREAMING_TOOL_NAMES: ReadonlySet<string> = new Set(
   TOOL_REGISTRY.filter((tool) => tool.streamsProgress === true).map((tool) => tool.name),
 );
 
-/**
- * The tool name of a single JSON-RPC `tools/call` whose tool declares
- * `streamsProgress`. `undefined` for a batch, for every other method, and for
- * every other tool.
- */
 function jsonRpcMethodForLog(body: unknown): string {
   if (typeof body !== "object" || body === null || Array.isArray(body)) return "n/a";
   const { method } = body as { method?: unknown };
   return typeof method === "string" ? JSON.stringify(method.slice(0, 200)) : "n/a";
 }
 
+/**
+ * The tool name of a single JSON-RPC `tools/call` whose tool declares
+ * `streamsProgress`. `undefined` for a batch, for every other method, and for
+ * every other tool.
+ */
 export function streamingToolCallName(body: unknown): string | undefined {
   if (typeof body !== "object" || body === null || Array.isArray(body)) {
     return undefined;
