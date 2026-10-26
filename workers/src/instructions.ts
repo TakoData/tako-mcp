@@ -207,7 +207,7 @@ const TOOL_SENTENCES: readonly ToolSentence[] = [
   },
   {
     tools: ["tako_agent", "tako_company_agent"],
-    text: "Use `tako_company_agent` for a list of companies or people, such as a registry screen, and `tako_agent` for a ranking, trend, or aggregate of metrics.",
+    text: "When the user asks for Tako's agent, use `tako_company_agent` for a list of companies or people and `tako_agent` for a ranking, trend, or calculation.",
   },
 ];
 

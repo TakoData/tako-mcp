@@ -95,6 +95,26 @@ descriptions, and no skill wording removes those calls. That run used
 `gpt-6-luna` on Codex 0.164.0. It didn't measure how often a research question
 reaches an agent.
 
+Codex runs on 2026-10-26 (TAKO-5275) moved the explicit-ask rule into both
+agent tool descriptions. A connection that lists `tako_agent` without
+`tako_company_agent` gets `tako-search` over `/mcp` but not `tako-agent`, so
+the descriptions are the only place it reads the rule. Each arm listed the four
+default tools plus `tako_agent`, and ran the same 83 prompts plus 10 explicit
+agent asks, twice each:
+
+| Arm | Lookups that start an agent first | Lookups that start with `tako_search` | No-lookup tasks that call Tako | Explicit asks that start `tako_agent` |
+|---|---|---|---|---|
+| Shape-triggered descriptions, `tako-search` | 3 of 136 | 45 of 136 | 1 of 30 | 19 of 20 |
+| Explicit-ask descriptions (shipped), `tako-search` | 0 of 136 | 52 of 136 | 2 of 30 | 17 of 20 |
+| Shape-triggered descriptions, no skill | 1 of 136 | 1 of 136 | 0 of 30 | 16 of 20 |
+| Explicit-ask descriptions (shipped), no skill | 0 of 136 | 1 of 136 | 0 of 30 | 18 of 20 |
+
+The rule in the descriptions removed the agent calls that the listing started
+on its own, and explicit asks reached `tako_agent` as often as before: 35 of
+40 in both. Without a skill, Codex called Tako on 1 lookup in 136, so those
+arms measure only the explicit asks. That run used the same model and Codex
+version.
+
 An earlier run on `gpt-6-astra` (Codex 0.155.1) tested the tool description
 instead. Rewriting the `tako_search` description to list its domains and
 sources left triggering unchanged (12 of 26 against 13 of 26), and so did adding

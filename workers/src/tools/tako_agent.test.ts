@@ -14,7 +14,7 @@ import tool, { buildAgentBody } from "./tako_agent.js";
 import { refusalGuidance } from "./_agent_run.js";
 import { AnswerAgentRunRequest } from "../generated/schemas.js";
 import { AGENT_CALL_WINDOW_MS } from "./_agent_wait.js";
-import { AGENT_CARD_LINK_SENTENCE } from "./_agent_call.js";
+import { AGENT_CARD_LINK_SENTENCE, AGENT_EXPLICIT_ASK_SENTENCE } from "./_agent_call.js";
 import type { ToolContext } from "./types.js";
 
 const encoder = new TextEncoder();
@@ -78,6 +78,10 @@ afterEach(() => {
 describe("tako_agent", () => {
   it("the description tells the model to link each card's url", () => {
     expect(tool.description).toContain(AGENT_CARD_LINK_SENTENCE);
+  });
+
+  it("the description starts a run only when the user asks for an agent", () => {
+    expect(tool.description).toContain(AGENT_EXPLICIT_ASK_SENTENCE);
   });
 
   it("starts a run and returns the finished answer with a prefixed run_id", async () => {
