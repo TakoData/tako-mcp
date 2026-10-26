@@ -1,6 +1,6 @@
 {
   "name": "Tako",
-  "description": "Premium data from authoritative providers and live web search in one call. Search returns cited charts and web results, and Tako also reports what data it holds on an entity or metric, fetches the rows or page text behind a result, and explores its data graph. Tako's Answer Agent, Company Agent, chart creation, and synthesized answers are opt-in; each skill below names the URL that turns it on.",
+  "description": "Premium live data from authoritative providers and web search in one call. Search returns cited charts and web results, and Tako also reports what data it holds on an entity or metric, fetches the rows or page text behind a result, and explores its data graph. Tako's Answer Agent, Company Agent, chart creation, and synthesized answers are opt-in; each skill below names the URL that turns it on.",
   "url": "https://mcp.tako.com/mcp",
   "version": "1.5.0",
   "capabilities": {
@@ -32,7 +32,7 @@
     {
       "id": "search-data",
       "name": "Search Charts & Pull Data",
-      "description": "Search premium data from authoritative providers and the live web in one call. Data cards carry a headline value, named sources, and a chart; web results cover everything else. Tako's data is live: it carries the latest reported quarter, same-day market prices, and official releases as they publish. Parallelize it: split a broad or multi-part request into several narrow searches, one entity and metric each, and run them at once.",
+      "description": "Search premium data from authoritative providers and the live web in one call. Data cards carry a headline value, named sources, and a chart; web results cover everything else. Tako's data is live: it carries the latest reported quarter, same-day market prices, and official releases as they publish. Parallelize it: split a broad or multi-part request into several narrow searches, one entity and metric each, and run them at once. For one synthesized answer instead of cards, call tako_search_advanced with `include_answer: true`. It's opt-in on /mcp via ?tools=search,available_data,contents,search_advanced (an allowlist that replaces the default listing, so name the defaults you rely on too).",
       "tags": [
         "search",
         "charts",
@@ -137,22 +137,6 @@
         "Chart this monthly revenue: Jan 50k, Feb 62k, Mar 71k",
         "Make a bar chart of sales by region from my data",
         "Turn this income statement into a financial card"
-      ]
-    },
-    {
-      "id": "answer-question",
-      "name": "Answer a Specific Data Question",
-      "description": "Get THE answer to one specific, self-contained data question — a single grounded, citation-backed prose answer, already synthesized for you (relay it directly). Best for a known value, statistic, price, rate, or a direct comparison of two named entities. Tako's data is proprietary and continuously updated (latest reported quarter, same-day market prices, official releases as they publish), so it's the right source for latest/official figures, not just history. For broad or multi-part needs, or when you want the raw data to work with yourself, use Search instead. Opt-in on /mcp: it is `include_answer: true` on tako_search_advanced, named by the `search_advanced` token, and ?tools= is an allowlist that REPLACES the default listing, so name the other tools you want too (?tools=search,available_data,contents,search_advanced). Search is the default retrieval tool, and most hosts synthesize the answer themselves from its results.",
-      "tags": [
-        "answer",
-        "grounded",
-        "citations"
-      ],
-      "examples": [
-        "What was US GDP in 2024?",
-        "What was the US core CPI inflation rate in June 2026?",
-        "What was Nvidia's revenue in its most recent quarter?",
-        "What is the current US 30-year fixed mortgage rate?"
       ]
     }
   ]

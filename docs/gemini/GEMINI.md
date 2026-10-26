@@ -1,13 +1,13 @@
 # Tako
 
-Tako MCP grounds your agent in two kinds of knowledge at once: proprietary structured data
-from trusted providers, and full web search. One tool call returns typed values with named
-sources when curated data exists, and agent-ready web results and page text for everything
+Tako MCP gives your agent premium live data from licensed, authoritative providers and web
+search in one call. One tool call returns typed values with named sources when curated data
+exists, and agent-ready web results and page text for everything
 else. That combination is the point. A pure data API misses most questions, and a pure web
 search API makes your agent do the reading.
 
-The curated side covers company financials, macroeconomic indicators, website traffic,
-sports, prediction markets, US government spending, demographics, energy, and real estate.
+The curated side covers finance, markets, company KPIs, economics, website traffic, sports,
+prediction markets, demographics, energy, real estate, and more.
 It carries the latest reported quarter, same-day market prices, and official releases as
 they publish.
 

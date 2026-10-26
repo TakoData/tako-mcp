@@ -4,7 +4,7 @@
   "version": "1.5.0",
   "author": "Tako",
   "authorUrl": "https://github.com/TakoData",
-  "description": "Tako MCP gives your agent premium data from authoritative providers, such as S&P Global, FRED, OECD, and BIS, and live web search in one call. Search returns cited cards that render inline as charts, alongside web results. The data covers finance, markets, company KPIs, economics, website traffic, sports, prediction markets, demographics, energy, real estate, and more. Hosted at https://mcp.tako.com/mcp: authenticate with a Tako API key (Bearer) or OAuth on web hosts.",
+  "description": "Tako MCP gives your agent premium live data from authoritative providers and web search in one call. Its providers include S&P Global, FRED, OECD, and BIS. Search returns cited cards that render inline as charts, alongside web results. The data covers finance, markets, company KPIs, economics, website traffic, sports, prediction markets, demographics, energy, real estate, and more. Hosted at https://mcp.tako.com/mcp: authenticate with a Tako API key (Bearer) or OAuth on web hosts.",
   "homepage": "https://github.com/TakoData/tako-mcp",
   "cloudEndpoint": "https://mcp.tako.com/mcp",
   "tags": [

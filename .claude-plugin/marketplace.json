@@ -5,13 +5,13 @@
     "url": "https://tako.com"
   },
   "metadata": {
-    "description": "Official Tako plugins: premium data from authoritative providers and live web search for Claude Code."
+    "description": "Official Tako plugins: premium live data from authoritative providers and web search for Claude Code."
   },
   "plugins": [
     {
       "name": "tako",
       "source": "./",
-      "description": "Premium data from authoritative providers and live web search as MCP tools, returned as cited, interactive charts, plus the tako-search and tako-agent skills.",
+      "description": "Premium live data from authoritative providers and web search as MCP tools, returned as cited charts and web results, plus the tako-search and tako-agent skills.",
       "author": {
         "name": "Tako"
       },
