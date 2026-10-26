@@ -14,8 +14,8 @@ Start an agent only when the user asks for one: they name Tako's agent, ask for 
 
 ## Choose the agent
 
-- Use `tako_company_agent` to find which companies or people match a set of facts: a screen by location, industry, status, founding date, funding, or size; officers, directors, or owners; or companies filtered by a financial metric, such as "UK software companies with more than £10 million in revenue".
-- Use `tako_agent` for a ranking, trend, total, or calculation, including companies ranked by a metric: "the 10 largest UK software companies by revenue", countries ranked by GDP, a growth rate across several periods, or a figure computed from several metrics.
+- Use `tako_company_agent` when the user names the Company Agent or wants a list of companies or people: companies by location, industry, status, founding date, funding, or size, or the officers, directors, owners, or employees of those companies.
+- Use `tako_agent` for anything else, such as a chart, a written finding, or a ranking of companies by a metric.
 
 ## Run an agent
 

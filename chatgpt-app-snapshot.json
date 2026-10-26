@@ -2,7 +2,7 @@
   "note": "The description, input schema and chatgpt-surface output schema of every tool on the fixed /mcp/chatgpt surface, as last ACCEPTED here. OpenAI rescans /mcp/chatgpt daily and updates each tool after its automated checks pass, so an accepted change reaches ChatGPT users with the next production deploy. registry:check fails on any drift. Accept a deliberate change with: npm run registry:gen -- --accept-chatgpt-snapshot",
   "tools": {
     "tako_agent": {
-      "description_sha256": "aeb9deea1082ef92ca783bd5bbc6ee8c637022699d9c998ad7c928a8114adb8b",
+      "description_sha256": "7e82515c73816a3310be6bcf111833fa840ad94578146482474c83969bf8c9e3",
       "input_schema_sha256": "6509b9e32bca1d09c5ea2caec726568fcb2539f356381869df15d20fc5a66e47",
       "output_schema_sha256": "f57b2820d75a252937566d66fd201e5d7a6f5a11103f4cd8e9cdc1035b413e6b"
     },
@@ -12,7 +12,7 @@
       "output_schema_sha256": "c99944f017b8b94928982d9ac00ed9cd33680441d1d6d60bd50d1e9ec1303270"
     },
     "tako_company_agent": {
-      "description_sha256": "70ba54c768ac2db812eb033434d734aec3e7efe605071d47a0448197e0c74cbd",
+      "description_sha256": "62bd2be5eae61b9083360cd1fd1af8230812b8046d40c019133a78dcd1cde38b",
       "input_schema_sha256": "fc57f6b733bf892d631cf40c35243bf1fe50150dc4e0ae2b3c15081a6b84a977",
       "output_schema_sha256": "f57b2820d75a252937566d66fd201e5d7a6f5a11103f4cd8e9cdc1035b413e6b"
     },

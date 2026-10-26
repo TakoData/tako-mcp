@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 
 import { SKILLS, type GeneratedSkill } from "./generated/skills.js";
-import { registerSkills, skillsForTools } from "./skills.js";
+import { registerSkills, skillsForSurface, skillsForTools } from "./skills.js";
 import { CHATGPT_TOOL_NAMES, GENERIC_DEFAULT_TOOL_NAMES } from "./tools/_surface.js";
 import { PLUGIN_TOOL_NAMES } from "../scripts/plugin-tool-url.js";
 
@@ -79,6 +79,16 @@ describe("skillsForTools", () => {
 
   it("serves no skill when a connection registers only some of its tools", () => {
     expect(skillsForTools(new Set(["tako_search", "tako_contents"]))).toEqual([]);
+  });
+});
+
+describe("skillsForSurface", () => {
+  it("serves the generic surface the skills its registered tools cover", () => {
+    expect(namesOf(skillsForSurface("generic", CLAUDE_PLUGIN_TOOLS))).toEqual(["tako-agent", "tako-search"]);
+  });
+
+  it("serves no skill on the chatgpt surface, which gets its skills from the plugin zip", () => {
+    expect(skillsForSurface("chatgpt", CHATGPT_TOOL_NAMES)).toEqual([]);
   });
 });
 

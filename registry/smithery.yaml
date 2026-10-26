@@ -74,18 +74,20 @@ tools:
       https://mcp.tako.com/mcp/chatgpt, which serves the chart widget.
   - name: tako_agent
     description: >-
-      Run Tako's Answer Agent — multi-step research for complex questions;
-      returns a cited answer plus chart cards. Opt-in — add the `agent` token to
-      the server URL's ?tools= allowlist, which replaces the default listing, so
-      name the other tools you want too (?tools=search,available_data,agent).
+      Run Tako's Answer Agent — multi-step research with Tako's data and the
+      web; returns a cited answer plus chart cards. Opt-in — add the `agent`
+      token to the server URL's ?tools= allowlist, which replaces the default
+      listing, so name the other tools you want too
+      (?tools=search,available_data,agent).
   - name: tako_company_agent
     description: >-
-      Run Tako's Company Agent to screen companies by registry facts, such as
-      status, incorporation date, location, and industry, or to find a
-      company's officers and directors. It returns a cited answer plus list
-      cards. Opt-in: add the `company_agent` token to the server URL's ?tools=
-      allowlist. The allowlist replaces the default listing, so name the other
-      tools you want too (?tools=search,available_data,company_agent).
+      Run Tako's Company Agent to build a list of companies or people, such as
+      companies by location, industry, status, founding date, funding stage,
+      or size, or the officers, directors, owners, or employees of those
+      companies. It returns a cited answer plus list cards. Opt-in: add the
+      `company_agent` token to the server URL's ?tools= allowlist. The
+      allowlist replaces the default listing, so name the other tools you want
+      too (?tools=search,available_data,company_agent).
   - name: tako_graph_related
     description: >-
       Explore what a Tako graph node connects to — its metrics, the entities a

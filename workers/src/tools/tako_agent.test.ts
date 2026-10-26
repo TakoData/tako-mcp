@@ -80,6 +80,13 @@ describe("tako_agent", () => {
     expect(tool.description).toContain(AGENT_CARD_LINK_SENTENCE);
   });
 
+  it("the description starts a run only on an explicit ask and sends other questions to tako_search", () => {
+    expect(tool.description).toContain("Start a run only when the user asks for one: they name Tako's agent or ask for deep or multi-step research with Tako.");
+    expect(tool.description).toContain("Otherwise, use `tako_search`.");
+    expect(tool.description).toContain("not a list of companies or people");
+    expect(tool.description).not.toContain("fallback");
+  });
+
   it("starts a run and returns the finished answer with a prefixed run_id", async () => {
     vi.mocked(djangoPost).mockResolvedValue({ run_id: RUN, thread_id: "t1" });
     stubStream(

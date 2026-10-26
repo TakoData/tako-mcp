@@ -25,6 +25,7 @@ import { AnswerAgentRunRequest } from "../generated/schemas.js";
 import {
   AGENT_CALL_WINDOW_FIXED_INPUT,
   AGENT_DESCRIPTION_LAST_LINE,
+  AGENT_EXPLICIT_ASK_SENTENCE,
   agentChartsMeta,
   agentQueryInput,
   agentThreadIdInput,
@@ -39,9 +40,9 @@ import { AGENT_SOURCES_THREAD_RULE, SOURCES_DESCRIBE } from "./_shared_prose.js"
 import type { AppUiResource, ToolModule } from "./types.js";
 
 const DESCRIPTION = [
-  "Run Tako's Answer Agent on a question that needs research rather than a lookup. It plans, queries the data graph and the web over several steps, and returns a written `answer` with numbered citations plus the chart `cards` it built.",
+  `Run Tako's Answer Agent. It plans, queries the data graph and the web over several steps, and returns a written \`answer\` with numbered citations plus the chart \`cards\` it built. ${AGENT_EXPLICIT_ASK_SENTENCE} Otherwise, use \`tako_search\`.`,
   "",
-  "Best for metric-driven research: ranking or screening by financial or economic metrics, multi-step aggregation, multi-hop reasoning. Also the fallback when `tako_search` finds nothing. Not for a known value or a two-entity comparison — `tako_search` answers those in one round trip.",
+  "Best for: an ask for Tako's agent whose answer is a chart or a written finding, not a list of companies or people.",
   "",
   AGENT_DESCRIPTION_LAST_LINE,
 ].join("\n");

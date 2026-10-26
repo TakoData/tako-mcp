@@ -426,7 +426,8 @@ describe("buildToolsDoc", () => {
     fixedInputs: [],
     handler: async () => ({}),
   };
-  const modules = [search, agent] as unknown as ToolModule[];
+  const companyAgent = { ...agent, name: "tako_company_agent", description: "Run the company agent." };
+  const modules = [search, agent, companyAgent] as unknown as ToolModule[];
   const doc = buildToolsDoc({
     modules,
     registryTools: modules.map((m) => ({
@@ -438,7 +439,13 @@ describe("buildToolsDoc", () => {
       annotations: m.annotations,
     })),
     instructionsFor: (registered) => `INSTRUCTIONS FOR ${[...registered].sort().join(",")}`,
+    skillsFor: (surface, registered) =>
+      surface === "chatgpt" ? [] : [
+        ...(registered.has("tako_search") ? ["tako-search"] : []),
+        ...(registered.has("tako_agent") && registered.has("tako_company_agent") ? ["tako-agent"] : []),
+      ],
     freeTierToolNames: new Set(["tako_search"]),
+    pluginToolNames: new Set(["tako_search", "tako_agent", "tako_company_agent"]),
   });
 
   // No version in the banner, deliberately: release-please bumps
@@ -483,6 +490,18 @@ describe("buildToolsDoc", () => {
     const chatgpt = doc.slice(doc.indexOf("## `/mcp/chatgpt`"), doc.indexOf("## Tools"));
     expect(generic).toContain(`INSTRUCTIONS FOR ${[...GENERIC_DEFAULT_TOOL_NAMES].sort().join(",")}`);
     expect(chatgpt).toContain(`INSTRUCTIONS FOR ${[...CHATGPT_TOOL_NAMES].sort().join(",")}`);
+  });
+
+  it("renders the skills each surface and each opt-in allowlist serves", () => {
+    const generic = doc.slice(doc.indexOf("## `/mcp` "), doc.indexOf("## `/mcp/chatgpt`"));
+    const chatgpt = doc.slice(doc.indexOf("## `/mcp/chatgpt`"), doc.indexOf("## Tools"));
+    expect(generic).toContain("Skills served through the MCP Skills extension: `tako-search`\n");
+    expect(generic).toContain("`?tools=search,agent` (skills: `tako-search`)");
+    expect(generic).toContain("`?tools=search,company_agent` (skills: `tako-search`)");
+    expect(generic).toContain(
+      "The Claude Code plugin and Gemini CLI extension — `?tools=agent,company_agent,search` (skills: `tako-search`, `tako-agent`)",
+    );
+    expect(chatgpt).toContain("Skills served through the MCP Skills extension: none\n");
   });
 });
 
