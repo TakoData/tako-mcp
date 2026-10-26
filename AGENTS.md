@@ -38,7 +38,8 @@ SMOKE_BASE_URL=https://mcp.staging.tako.com TAKO_SMOKE_API_TOKEN=... npm run smo
 - **Runtime**: Cloudflare Workers (TypeScript, `nodejs_compat` flag)
 - **Endpoints**: two path-selected MCP surfaces — `POST /mcp` (generic, anonymous tier allowed) and `POST /mcp/chatgpt` (OAuth-only, the surface submitted to OpenAI) — plus `GET /health`. The request path picks the surface; nothing reads the client User-Agent (`workers/src/surface.ts`).
 - **Auth**: `Authorization: Bearer <TAKO_API_TOKEN>` extracted at request boundary, forwarded to Django as `X-API-Key`; OAuth 2.1 flow for Claude.ai / ChatGPT
-- **Tool registry**: auto-generated from `workers/src/tools/*.ts` via `workers/scripts/gen-registry.ts`; outputs `workers/src/tools/_registry.ts`, `registry/server.json`, `registry/lhm.plugin.json` and `docs/TOOLS.md` in lockstep (CI checks all four for drift)
+- **Tool registry**: auto-generated from `workers/src/tools/*.ts` via `workers/scripts/gen-registry.ts`; outputs `workers/src/tools/_registry.ts`, `registry/server.json`, `registry/lhm.plugin.json`, `docs/TOOLS.md` and `workers/src/generated/skills.ts` in lockstep (CI checks all five for drift)
+- **Skills**: `/mcp` serves the `skills/` directory through the MCP Skills extension (SEP-2640): `skills/list`, `skills/get` and `skill://<name>/SKILL.md` resources. A connection gets only the skills whose every named tool it registers, so a default `/mcp` gets `tako-search`, and a connection with no skills declares neither the extension nor `resources`. `/mcp/chatgpt` serves no skills; ChatGPT gets them from the plugin zip (`chatgpt-plugin/build.sh`).
 - **CI**: `.github/workflows/workers-ci.yml` (typecheck + tests on PRs), `workers-deploy.yml` (staging on push to `main`; production on published GitHub Release, gated by the `production` environment; manual `workflow_dispatch` for either env), `workers-smoke.yml` (auto-smoke after successful staging deploys)
 
 ### Key Files
@@ -53,7 +54,9 @@ SMOKE_BASE_URL=https://mcp.staging.tako.com TAKO_SMOKE_API_TOKEN=... npm run smo
 | `workers/src/auth.ts` | Bearer token extraction |
 | `workers/src/tools/*.ts` | One file per tool (`ToolModule` contract from `types.ts`) |
 | `workers/src/tools/_registry.ts` | Auto-generated barrel — DO NOT edit by hand; run `npm run registry:gen` |
-| `workers/scripts/gen-registry.ts` | Codegen for `_registry.ts` + `registry/server.json` |
+| `workers/src/skills.ts` | Skills extension on `/mcp`: `skillsForTools` filter, `skills/list`, `skills/get` and `skill://` resources |
+| `workers/src/generated/skills.ts` | Auto-generated skill records (text, frontmatter, digest, size, named tools) — DO NOT edit by hand; run `npm run registry:gen` after you change `skills/` |
+| `workers/scripts/gen-registry.ts` | Codegen for `_registry.ts`, `registry/server.json` and `src/generated/skills.ts` (through `gen-skills.ts`) |
 | `workers/scripts/smoke.ts` | Post-deploy MCP smoke test (TAKO-2611) |
 | `workers/wrangler.jsonc` | Cloudflare deploy config (per-env names, custom-domain routes, env vars) |
 | `registry/server.json` | Public MCP registry discovery card (auto-generated from Workers tools) |
@@ -81,7 +84,7 @@ On `/mcp`, items 5-8 are opt-in: name the tool in `?tools=` (an allowlist that r
 
 | Path | Method | Description |
 |------|--------|-------------|
-| `/mcp` | POST | MCP JSON-RPC over streamable HTTP — the generic surface every client shares |
+| `/mcp` | POST | MCP JSON-RPC over streamable HTTP — the generic surface every client shares. Also serves the skills its tools support through the Skills extension |
 | `/mcp/chatgpt` | POST | Same protocol, ChatGPT app surface. OAuth required: an anonymous request gets 401 + `WWW-Authenticate`, never the free tier |
 | `/health` | GET | Simple `200 ok` |
 

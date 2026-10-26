@@ -19,6 +19,8 @@
  *                                 (an allowlist that REPLACES the defaults);
  *                                 hard-asserts the canary tools and that
  *                                 `tako_agent` is present
+ *   3b. MCP `skills/list`      → every skill the listed tools allow; each `resources/read`
+ *                                 matches its listed size and sha256 digest
  *   4. MCP Apps widget assertion on `tako_search` (soft-warn on miss)
  *   5. Per-tool MCP `tools/call` canaries:
  *        a. `tako_search "US GDP"`        — non-empty results (read-only)
@@ -81,8 +83,11 @@
  * raw response bodies.
  */
 
+import { createHash } from "node:crypto";
+
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { z } from "zod";
 
 // Imported rather than spelled out, so the route this asserts against cannot
 // drift from the route the worker serves and the shim points at.
@@ -96,6 +101,7 @@ import { EMBED_DATA_PREFIX } from "../src/embed_proxy.js";
 import type { ProjectedCard } from "../src/tools/_search_results.js";
 import { TOOL_REGISTRY } from "../src/tools/_registry.js";
 import takoVisualize from "../src/tools/tako_visualize.js";
+import { skillsForTools } from "../src/skills.js";
 
 const CANARY_QUERY = "US GDP";
 
@@ -387,6 +393,37 @@ try {
   const hasAgent = toolNames.includes("tako_agent");
   assert(hasAgent, `expected an agent tool in tools/list (got: ${toolNames.join(", ")})`);
   ok("agent tool present");
+
+  const { skills } = await client.request(
+    { method: "skills/list", params: {} },
+    z.object({
+      skills: z.array(
+        z.object({
+          uri: z.string(),
+          resources: z.array(z.object({ uri: z.string(), digest: z.string(), size: z.number() })),
+        }),
+      ),
+    }),
+  );
+  const skillUris = skills.map((skill) => skill.uri).sort();
+  const expectedSkillUris = skillsForTools(new Set(toolNames)).map((skill) => skill.uri).sort();
+  assert(
+    skillUris.join(",") === expectedSkillUris.join(","),
+    `skills/list expected ${expectedSkillUris.join(", ")} (got: ${skillUris.join(", ")})`,
+  );
+  for (const resource of skills.flatMap((skill) => skill.resources)) {
+    const { contents } = await client.readResource({ uri: resource.uri });
+    const [item] = contents;
+    const text = contents.length === 1 && item !== undefined && "text" in item ? item.text : undefined;
+    assert(text !== undefined, `resources/read ${resource.uri} expected one text item`);
+    assert(
+      Buffer.byteLength(text, "utf8") === resource.size,
+      `resources/read ${resource.uri} size ${Buffer.byteLength(text, "utf8")} ≠ listed ${resource.size}`,
+    );
+    const digest = `sha256:${createHash("sha256").update(text, "utf8").digest("hex")}`;
+    assert(digest === resource.digest, `resources/read ${resource.uri} digest ${digest} ≠ listed ${resource.digest}`);
+  }
+  ok(`skills/list → ${skillUris.join(", ")}; resources/read sizes and digests match`);
 
   // ----- MCP Apps wiring per surface --------------------------------------
   // The generic surface (/mcp, this client) must NOT declare widget

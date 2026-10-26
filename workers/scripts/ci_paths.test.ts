@@ -12,7 +12,7 @@
  *      absent. The first is the ChatGPT drift digest, so the one edit you would
  *      most want CI to see — silencing the guard — ran nothing.
  *
- * This test is the rule as code. `GUARD_INPUT_PATHS` (exported from
+ * This test is the rule as code. `guardInputPaths()` (exported from
  * `gen-registry.ts`) is the generator's own read-set, so a new `readFileSync`
  * there surfaces here rather than in a post-mortem.
  *
@@ -29,7 +29,9 @@ import { fileURLToPath } from "node:url";
 import jsYaml from "js-yaml";
 import { describe, expect, it } from "vitest";
 
-import { GUARD_INPUT_PATHS } from "./gen-registry.js";
+import { guardInputPaths } from "./gen-registry.js";
+
+const GUARD_INPUT_PATHS = guardInputPaths();
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const WORKFLOW = resolve(REPO_ROOT, ".github", "workflows", "workers-ci.yml");

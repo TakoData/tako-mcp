@@ -8,7 +8,7 @@ on:
   #
   # This list is no longer maintained by hand alone: `scripts/ci_paths.test.ts`
   # parses the `paths:` blocks below and fails if any file a guard READS is not
-  # matched by some pattern. `GUARD_INPUT_PATHS` in `gen-registry.ts` is the
+  # matched by some pattern. `guardInputPaths()` in `gen-registry.ts` is the
   # read-set it checks against. Add a guard input there and CI tells you to add
   # the trigger path here.
   #

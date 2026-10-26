@@ -4,12 +4,55 @@ import type { Env } from "./env.js";
 import worker from "./index.js";
 import { SERVER_VERSION } from "./mcp.js";
 import { CHATGPT_CLOSED_WORLD_TOOLS } from "./tools/_surface.js";
+import { PLUGIN_TOOL_NAMES } from "../scripts/plugin-tool-url.js";
 
 // Valid RFC 6750 b64token — any non-empty ASCII token works for these tests
 // because `extractBearer` only validates shape, not value. Django's the one
 // that would reject a bogus token; we mock nothing here and never hit Django.
 const TEST_TOKEN = "test-token-abc123";
 const AUTH_HEADER = `Bearer ${TEST_TOKEN}`;
+
+interface RpcBody {
+  result?: Record<string, unknown>;
+  error?: { code: number };
+}
+
+async function postRpc(url: string, method: string, params: Record<string, unknown> = {}): Promise<RpcBody> {
+  const res = await SELF.fetch(url, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      accept: "application/json, text/event-stream",
+      authorization: AUTH_HEADER,
+    },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+  });
+  expect(res.status).toBe(200);
+  return (await res.json()) as RpcBody;
+}
+
+const INITIALIZE_PARAMS = {
+  protocolVersion: "2025-11-25",
+  capabilities: {},
+  clientInfo: { name: "test-client", version: "0.0.0" },
+};
+const SKILLS_EXTENSION = "io.modelcontextprotocol/skills";
+const CLAUDE_PLUGIN_MCP_URL = `https://example.com/mcp?tools=${PLUGIN_TOOL_NAMES.join(",")}`;
+
+interface SkillEntry {
+  uri: string;
+  resources: Array<{ uri: string; digest: string; size: number }>;
+}
+
+async function listSkills(url: string): Promise<SkillEntry[]> {
+  const body = await postRpc(url, "skills/list");
+  return (body.result as { skills: SkillEntry[] }).skills;
+}
+
+async function sha256Hex(bytes: Uint8Array): Promise<string> {
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+  return [...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
 
 /** `tools/list` names for one URL, sorted. */
 async function listToolNames(url: string): Promise<string[]> {
@@ -1065,13 +1108,15 @@ describe("worker routing", () => {
     expect(item.text).toContain("tako-embed");
   });
 
-  it("POST /mcp declares no resources capability — the generic surface has none to serve", async () => {
+  it("POST /mcp?tools=search declares no resources capability — a connection with no skills has none to serve", async () => {
     // The capability declaration is the contract, and it must match what the
-    // surface can answer. Only the chatgpt surface registers a resource (the
-    // chart widget, see `widgetSuppressed` in mcp.ts), and the SDK declares
+    // surface can answer. The chatgpt surface registers the chart widget (see
+    // `widgetSuppressed` in mcp.ts), a generic connection registers only the
+    // skills it serves (`skillsForTools` in skills.ts), and the SDK declares
     // `resources` lazily on the first `registerResource` call — so a generic
-    // instance declares nothing, and a spec-following client never asks.
-    const res = await SELF.fetch("https://example.com/mcp", {
+    // connection that gets no skills declares nothing, and a spec-following
+    // client never asks.
+    const res = await SELF.fetch("https://example.com/mcp?tools=search", {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -1131,13 +1176,13 @@ describe("worker routing", () => {
     expect(body.result.capabilities.resources).toBeDefined();
   });
 
-  it("POST /mcp resources/list answers -32601 on the generic surface", async () => {
+  it("POST /mcp?tools=search resources/list answers -32601 when the connection gets no skills", async () => {
     // Undeclared capability, so "method not found" is the honest answer. An
     // empty list used to stand here instead, to keep a capability-probing
     // scanner quiet; it made the server advertise `resources` on every
     // connection and never serve one, which an agent-readiness audit scored
     // as the broken capability it was.
-    const res = await SELF.fetch("https://example.com/mcp", {
+    const res = await SELF.fetch("https://example.com/mcp?tools=search", {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -1160,10 +1205,10 @@ describe("worker routing", () => {
     expect(body.error?.code).toBe(-32601);
   });
 
-  it("POST /mcp resources/list answers -32601 for claude UAs too — the UA changes nothing", async () => {
+  it("POST /mcp resources/list lists only the served skill for claude UAs too — the UA changes nothing", async () => {
     // The UA classifier is gone (spec D2): a claude UA on /mcp gets the
     // same generic surface as everyone else, so no widget resource is
-    // registered and no resources capability is declared. claude.ai's widget
+    // registered and the served skill is the only resource. claude.ai's widget
     // path is a fast-follow gated on anthropics/claude-ai-mcp#753 and #40.
     const res = await SELF.fetch("https://example.com/mcp", {
       method: "POST",
@@ -1181,12 +1226,77 @@ describe("worker routing", () => {
       }),
     });
     expect(res.status).toBe(200);
-    const body = (await res.json()) as {
-      result?: { resources: unknown[] };
-      error?: { code: number };
+    const body = (await res.json()) as { result?: { resources: Array<{ uri: string }> } };
+    const withoutUa = (await postRpc("https://example.com/mcp", "resources/list")).result?.resources;
+    expect(body.result?.resources.map((resource) => resource.uri)).toEqual(["skill://tako-search/SKILL.md"]);
+    expect(body.result?.resources).toEqual(withoutUa);
+  });
+
+  it("POST /mcp initialize declares the skills extension", async () => {
+    const body = await postRpc("https://example.com/mcp", "initialize", INITIALIZE_PARAMS);
+    const capabilities = body.result?.capabilities as {
+      extensions?: Record<string, unknown>;
+      resources?: unknown;
     };
-    expect(body.result).toBeUndefined();
-    expect(body.error?.code).toBe(-32601);
+    expect(capabilities.extensions?.[SKILLS_EXTENSION]).toEqual({});
+    expect(capabilities.resources).toBeDefined();
+  });
+
+  it("POST /mcp?tools=search initialize declares no skills extension", async () => {
+    const body = await postRpc("https://example.com/mcp?tools=search", "initialize", INITIALIZE_PARAMS);
+    const capabilities = body.result?.capabilities as { extensions?: Record<string, unknown> };
+    expect(capabilities.extensions?.[SKILLS_EXTENSION]).toBeUndefined();
+  });
+
+  it("POST /mcp?tools=search answers -32601 to the skills methods", async () => {
+    const url = "https://example.com/mcp?tools=search";
+    expect((await postRpc(url, "skills/list")).error?.code).toBe(-32601);
+    expect(
+      (await postRpc(url, "skills/get", { uri: "skill://tako-search/SKILL.md" })).error?.code,
+    ).toBe(-32601);
+  });
+
+  it("POST /mcp resources/list lists exactly the served skill", async () => {
+    const resources = (await postRpc("https://example.com/mcp", "resources/list")).result
+      ?.resources as Array<{ uri: string }>;
+    expect(resources.map((resource) => resource.uri)).toEqual(["skill://tako-search/SKILL.md"]);
+  });
+
+  it("POST /mcp/chatgpt does not serve skills", async () => {
+    const url = "https://example.com/mcp/chatgpt";
+    const initialized = await postRpc(url, "initialize", INITIALIZE_PARAMS);
+    const capabilities = initialized.result?.capabilities as { extensions?: Record<string, unknown> };
+    expect(capabilities.extensions?.[SKILLS_EXTENSION]).toBeUndefined();
+    expect((await postRpc(url, "skills/list")).error?.code).toBe(-32601);
+    expect(
+      (await postRpc(url, "skills/get", { uri: "skill://tako-search/SKILL.md" })).error?.code,
+    ).toBe(-32601);
+    const resources = (await postRpc(url, "resources/list")).result?.resources as Array<{ uri: string }>;
+    expect(resources.filter((resource) => resource.uri.startsWith("skill://"))).toEqual([]);
+  });
+
+  it("POST /mcp skills/list follows the tools allowlist", async () => {
+    const namesAt = async (url: string) =>
+      (await listSkills(url)).map((skill) => skill.uri);
+    expect(await namesAt("https://example.com/mcp")).toEqual(["skill://tako-search/SKILL.md"]);
+    expect(await namesAt(CLAUDE_PLUGIN_MCP_URL)).toEqual([
+      "skill://tako-agent/SKILL.md",
+      "skill://tako-search/SKILL.md",
+    ]);
+  });
+
+  it("POST /mcp resources/read matches each listed digest and size", async () => {
+    const listed = (await listSkills(CLAUDE_PLUGIN_MCP_URL)).flatMap((skill) => skill.resources);
+    expect(listed).toHaveLength(2);
+    for (const resource of listed) {
+      const body = await postRpc(CLAUDE_PLUGIN_MCP_URL, "resources/read", { uri: resource.uri });
+      const contents = body.result?.contents as Array<{ uri: string; text: string }>;
+      expect(contents).toHaveLength(1);
+      expect(contents[0]?.uri).toBe(resource.uri);
+      const bytes = new TextEncoder().encode(contents[0]?.text);
+      expect(bytes.byteLength).toBe(resource.size);
+      expect(`sha256:${await sha256Hex(bytes)}`).toBe(resource.digest);
+    }
   });
 
   it("POST /mcp prompts/list returns an empty list (not -32601) for capability-probing clients", async () => {
