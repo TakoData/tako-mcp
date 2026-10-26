@@ -40,6 +40,7 @@ import {
   resolvePublicCdnBase,
   resolveWidgetOrigin,
 } from "../env.js";
+import type { Surface } from "../surface.js";
 import type {
   AppUiResource,
   ToolContext,
@@ -123,14 +124,17 @@ export const APP_UI_RESOURCE_URI = "ui://tako/embed/chart";
  * SHIPPED bundle ever needs cache-busting, register a new URI ALONGSIDE the old
  * one, per the note above.
  */
-export function appUiResourceUri(env: Env): string {
+export function appUiResourceUri(env: Env, surface: Surface): string {
+  const baseUri =
+    surface === "chatgpt" ? APP_UI_RESOURCE_URI : LIVE_CARD_RESOURCE_URI;
   const suffix = env.WIDGET_URI_SUFFIX;
-  if (typeof suffix !== "string" || suffix === "") return APP_UI_RESOURCE_URI;
+  if (typeof suffix !== "string" || suffix === "") return baseUri;
   // Constrain the value: it becomes a URI the host stores and reads back, and
   // a stray `/` or space would make a URI that never resolves.
   const safe = suffix.replace(/[^A-Za-z0-9._-]/g, "");
-  return safe === "" ? APP_UI_RESOURCE_URI : `${APP_UI_RESOURCE_URI}-${safe}`;
+  return safe === "" ? baseUri : `${baseUri}-${safe}`;
 }
+export const LIVE_CARD_RESOURCE_URI = "ui://tako/embed/live-card";
 export const APP_UI_RESOURCE_NAME = "open_chart_ui_widget";
 export const CHART_WIDGET_DESCRIPTION =
   "Shows a Tako card inline: an interactive chart or a list, with its title, its source, and a link to its page on Tako.";
@@ -165,7 +169,7 @@ export const APP_UI_TEMPLATE_URI_PATTERN = "ui://tako/embed/chart/{pub_id}";
  * disagree about the string.
  */
 export function appUiTemplateUriPattern(env: Env): string {
-  const uri = appUiResourceUri(env);
+  const uri = appUiResourceUri(env, "chatgpt");
   return `${uri}/{pub_id}`;
 }
 export const APP_UI_TEMPLATE_NAME = "open_chart_ui_widget_baked";
@@ -3649,6 +3653,7 @@ export async function fetchPngContentBlock(
 export function buildChartAppUiResource(
   env: Env,
   requestOrigin: string | undefined,
+  surface: Surface,
   resolveUriFromInput: (input: unknown, output?: unknown) => string | undefined,
 ): AppUiResource {
   const webBase = resolvePublicBase(env);
@@ -3657,7 +3662,7 @@ export function buildChartAppUiResource(
     // the widget URI from `_meta["openai/outputTemplate"]`) for its
     // interactive iframe path. Also serves any host that doesn't honor
     // per-call URI overrides.
-    uri: appUiResourceUri(env),
+    uri: appUiResourceUri(env, surface),
     name: APP_UI_RESOURCE_NAME,
     widgetDescription: CHART_WIDGET_DESCRIPTION,
     // Pin the embed iframe to the env's public web origin — derived from the
@@ -3733,7 +3738,7 @@ export function buildChartAppUiResource(
     // instance, where the widget HTML has the chart's image and
     // dimensions baked in at fetch time. See `AppUiResource.dynamic`
     // and `buildBakedWidgetHtml` for the why.
-    dynamic: {
+    ...(surface === "chatgpt" ? { dynamic: {
       uriPattern: appUiTemplateUriPattern(env),
       templateName: APP_UI_TEMPLATE_NAME,
       async renderHtml(variables, ctx) {
@@ -3771,7 +3776,7 @@ export function buildChartAppUiResource(
         });
       },
       resolveUriFromInput,
-    },
+    } } : {}),
   };
 }
 
@@ -3792,9 +3797,10 @@ export function buildChartAppUiResource(
  */
 export function buildChartAppUiResourceFromOutputPubId(
   env: Env,
-  requestOrigin?: string,
+  requestOrigin: string | undefined,
+  surface: Surface,
 ): AppUiResource {
-  return buildChartAppUiResource(env, requestOrigin, (_input, output) => {
+  return buildChartAppUiResource(env, requestOrigin, surface, (_input, output) => {
     const pubId = topOutputPubId(output);
     if (pubId === undefined) return undefined;
     return appUiTemplateUriPattern(env).replace(

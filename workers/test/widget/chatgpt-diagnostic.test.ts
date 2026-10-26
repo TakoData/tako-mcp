@@ -121,7 +121,7 @@ function mountWidget(openai: object, columnWidth = 720): Mounted {
 
   const widgetDoc = widgetFrame.contentDocument!;
   widgetDoc.open();
-  widgetDoc.write(buildChartAppUiResourceFromOutputPubId(ENV).html);
+  widgetDoc.write(buildChartAppUiResourceFromOutputPubId(ENV, undefined, "chatgpt").html);
   widgetDoc.close();
 
   return { widgetWin: widgetFrame.contentWindow!, heights };

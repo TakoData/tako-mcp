@@ -224,7 +224,7 @@ function fireFrameSrcViolation(m: Mounted): void {
 }
 
 function staticWidgetHtml(): string {
-  return buildChartAppUiResourceFromOutputPubId(ENV).html;
+  return buildChartAppUiResourceFromOutputPubId(ENV, undefined, "chatgpt").html;
 }
 
 afterEach(() => {
@@ -1236,6 +1236,7 @@ describe("native card upgrade (executed)", () => {
     const html = buildChartAppUiResourceFromOutputPubId(
       ENV,
       "https://mcp.example.test",
+      "chatgpt",
     ).html;
     const m = mountWidget(html);
     const f = stubFetch(m, () => htmlResponse(NATIVE_HTML));
@@ -1251,6 +1252,7 @@ describe("native card upgrade (executed)", () => {
     const html = buildChartAppUiResourceFromOutputPubId(
       ENV,
       "https://mcp.example.test",
+      "chatgpt",
     ).html;
     const m = mountWidget(html);
     const f = stubFetch(m, () => htmlResponse(NATIVE_HTML));

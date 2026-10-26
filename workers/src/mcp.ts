@@ -549,7 +549,7 @@ function registerTool(
   // handler below.
   const ui =
     tool.appUiResource !== undefined
-      ? tool.appUiResource(ctx.env, options.origin)
+      ? tool.appUiResource(ctx.env, options.origin, options.surface)
       : undefined;
 
   if (ui !== undefined) {

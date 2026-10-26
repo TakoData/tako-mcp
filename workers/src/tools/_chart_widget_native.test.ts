@@ -34,7 +34,7 @@ const ARMED: Env = { ...BASE, PUBLIC_CDN_URL: CDN };
 
 describe("declared resourceDomains", () => {
   it("omits the CDN when the experiment is off", () => {
-    const ui = buildChartAppUiResourceFromOutputPubId(BASE);
+    const ui = buildChartAppUiResourceFromOutputPubId(BASE, undefined, "chatgpt");
     expect(ui.resourceDomains).toEqual(["https://tako.com"]);
     expect(ui.resourceDomains?.some((d) => d.includes("cloudfront"))).toBe(
       false,
@@ -49,6 +49,7 @@ describe("declared resourceDomains", () => {
     const ui = buildChartAppUiResourceFromOutputPubId(
       ARMED,
       "https://mcp.tako.com",
+      "chatgpt",
     );
     expect(ui.resourceDomains).toContain("https://tako.com");
     expect(ui.resourceDomains).toContain("https://mcp.tako.com");
@@ -56,7 +57,7 @@ describe("declared resourceDomains", () => {
   });
 
   it("does not declare our origin when the origin is unknown", () => {
-    const ui = buildChartAppUiResourceFromOutputPubId(ARMED, undefined);
+    const ui = buildChartAppUiResourceFromOutputPubId(ARMED, undefined, "chatgpt");
     expect(ui.resourceDomains).toEqual(["https://tako.com"]);
   });
 
@@ -64,7 +65,7 @@ describe("declared resourceDomains", () => {
     // The CDN serves scripts and fonts, never an iframe. Widening frameDomains
     // would be a different (and pointless) change — claude.ai hardcodes
     // frame-src regardless.
-    expect(buildChartAppUiResourceFromOutputPubId(ARMED).frameDomains).toEqual([
+    expect(buildChartAppUiResourceFromOutputPubId(ARMED, undefined, "chatgpt").frameDomains).toEqual([
       "https://tako.com",
     ]);
   });
@@ -178,7 +179,7 @@ describe("nativeCardUrl", () => {
 
 describe("declared connectDomains", () => {
   it("is absent when the experiment is off", () => {
-    const ui = buildChartAppUiResourceFromOutputPubId(BASE, "https://mcp.tako.com");
+    const ui = buildChartAppUiResourceFromOutputPubId(BASE, "https://mcp.tako.com", "chatgpt");
     expect(ui.connectDomains ?? []).toEqual([]);
   });
 
@@ -188,6 +189,7 @@ describe("declared connectDomains", () => {
     const ui = buildChartAppUiResourceFromOutputPubId(
       ARMED,
       "http://mcp.staging.tako.com",
+      "chatgpt",
     );
     expect(ui.connectDomains).toEqual(["https://mcp.staging.tako.com"]);
     expect(
@@ -199,7 +201,7 @@ describe("declared connectDomains", () => {
 
   it("is empty when the origin is unknown", () => {
     expect(
-      buildChartAppUiResourceFromOutputPubId(ARMED, undefined).connectDomains ?? [],
+      buildChartAppUiResourceFromOutputPubId(ARMED, undefined, "chatgpt").connectDomains ?? [],
     ).toEqual([]);
   });
 });

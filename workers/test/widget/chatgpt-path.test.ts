@@ -118,7 +118,7 @@ function fireSetGlobals(m: Mounted, globals: unknown, name: string): void {
 }
 
 function html(): string {
-  return buildChartAppUiResourceFromOutputPubId(ENV).html;
+  return buildChartAppUiResourceFromOutputPubId(ENV, undefined, "chatgpt").html;
 }
 
 /**

@@ -1433,6 +1433,36 @@ describe("MCP Apps session on /mcp", () => {
     expect(res.headers.get("mcp-session-id")).toBeNull();
   });
 
+  it("registers the /mcp widget under the live-card URI in tools/list and resources/list", async () => {
+    const tools = (await postMcp("https://example.com/mcp", { method: "tools/list" }).then((r) =>
+      r.json(),
+    )) as {
+      result: { tools: Array<{ name: string; _meta?: Record<string, unknown> }> };
+    };
+    const meta = tools.result.tools.find((t) => t.name === "tako_search")?._meta;
+    expect(meta).toMatchObject({
+      ui: { resourceUri: "ui://tako/embed/live-card" },
+      "ui/resourceUri": "ui://tako/embed/live-card",
+      "openai/outputTemplate": "ui://tako/embed/live-card",
+    });
+    const resources = (await postMcp("https://example.com/mcp", { method: "resources/list" }).then(
+      (r) => r.json(),
+    )) as { result: { resources: Array<{ uri: string }> } };
+    const uris = resources.result.resources.map((r) => r.uri);
+    expect(uris).toContain("ui://tako/embed/live-card");
+    expect(uris).not.toContain("ui://tako/embed/chart");
+  });
+
+  it("keeps the chart URI on /mcp/chatgpt in tools/list and resources/list", async () => {
+    expect(await toolSearchWidgetUri("https://example.com/mcp/chatgpt")).toBe(
+      "ui://tako/embed/chart",
+    );
+    const resources = (await postMcp("https://example.com/mcp/chatgpt", {
+      method: "resources/list",
+    }).then((r) => r.json())) as { result: { resources: Array<{ uri: string }> } };
+    expect(resources.result.resources.map((r) => r.uri)).toContain("ui://tako/embed/chart");
+  });
+
   it("lists the same tools whatever the session ID", async () => {
     const bodies = await Promise.all(
       ["ui-x", "noui-x", undefined].map(async (id) =>

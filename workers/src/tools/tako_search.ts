@@ -239,8 +239,8 @@ const tako_search = {
     if (o.image_url === undefined) return [];
     return fetchPngContentBlock(o.image_url);
   },
-  appUiResource(env, requestOrigin): AppUiResource {
-    return buildChartAppUiResourceFromOutputPubId(env, requestOrigin);
+  appUiResource(env, requestOrigin, surface): AppUiResource {
+    return buildChartAppUiResourceFromOutputPubId(env, requestOrigin, surface);
   },
 } satisfies ToolModule<typeof inputSchema, Output>;
 

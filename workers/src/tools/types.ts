@@ -526,7 +526,11 @@ export interface ToolModule<
    * depend on env (e.g. `frameDomains` from `PUBLIC_BASE_URL`) can be
    * baked in at registration time. See {@link AppUiResource}.
    */
-  appUiResource?: (env: Env, requestOrigin?: string) => AppUiResource;
+  appUiResource?: (
+    env: Env,
+    requestOrigin: string | undefined,
+    surface: Surface,
+  ) => AppUiResource;
 }
 
 /**
@@ -571,5 +575,9 @@ export interface AnyToolModule {
     output: unknown,
     ctx: ToolContext,
   ) => Promise<Record<string, unknown> | undefined>;
-  appUiResource?: (env: Env, requestOrigin?: string) => AppUiResource;
+  appUiResource?: (
+    env: Env,
+    requestOrigin: string | undefined,
+    surface: Surface,
+  ) => AppUiResource;
 }
