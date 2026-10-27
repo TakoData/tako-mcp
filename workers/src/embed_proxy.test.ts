@@ -40,6 +40,7 @@ import {
   parsePubId,
   rewriteCdnUrls,
   sanitizeEmbedHtml,
+  UPSTREAM_TIMEOUT_MS,
 } from "./embed_proxy.js";
 
 const OFF: Env = { DJANGO_BASE_URL: "https://tako.com" };
@@ -1667,5 +1668,77 @@ describe("handleEmbedDataProxy", () => {
       },
     } as unknown as Env;
     expect((await handleEmbedDataProxy(dataReq(), env))?.status).toBe(200);
+  });
+});
+
+describe("the upstream bound covers the body, not only the headers", () => {
+  const realSetTimeout = globalThis.setTimeout;
+  const STILL_WAITING = "still waiting" as const;
+
+  function stalledUpstream(contentType: string) {
+    return vi.fn().mockImplementation((_url: string, init: RequestInit) => {
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode("<html>partial"));
+          init.signal?.addEventListener("abort", () => {
+            controller.error(init.signal?.reason);
+          });
+        },
+      });
+      return Promise.resolve(
+        new Response(body, {
+          status: 200,
+          headers: { "content-type": contentType },
+        }),
+      );
+    });
+  }
+
+  async function outcomeAfterBound<T>(
+    pending: Promise<T>,
+  ): Promise<T | typeof STILL_WAITING> {
+    await vi.advanceTimersByTimeAsync(UPSTREAM_TIMEOUT_MS);
+    await new Promise((resolve) => realSetTimeout(resolve, 50));
+    return Promise.race([pending, Promise.resolve(STILL_WAITING)]);
+  }
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("answers 502 when a JavaScript asset stalls mid-body", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.stubGlobal("fetch", stalledUpstream("application/javascript"));
+    const outcome = await outcomeAfterBound(handleCdnAssetProxy(req(ASSET_PATH), ON));
+    expect(outcome).not.toBe(STILL_WAITING);
+    expect((outcome as Response | undefined)?.status).toBe(502);
+  });
+
+  it("errors a streamed asset's body when it stalls mid-body", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.stubGlobal("fetch", stalledUpstream("font/woff2"));
+    const res = await handleCdnAssetProxy(
+      req("/cdn-asset/archive/abc/fonts/google/geist/geist.woff2"),
+      ON,
+    );
+    expect(res?.status).toBe(200);
+    const read = res!.text().then(
+      () => "read whole",
+      () => "aborted",
+    );
+    expect(await outcomeAfterBound(read)).toBe("aborted");
+  });
+
+  it("answers 502 when the embed page stalls mid-body", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.stubGlobal("fetch", stalledUpstream("text/html; charset=utf-8"));
+    const outcome = await outcomeAfterBound(
+      handleEmbedProxy(req(`/embed-html/${PUB_ID}`), ON),
+    );
+    expect(outcome).not.toBe(STILL_WAITING);
+    expect((outcome as Response | undefined)?.status).toBe(502);
   });
 });
