@@ -18,12 +18,12 @@
  *     PNG-IHDR dimension parsing. Each tool's `extraMeta` /
  *     `extraContentBlocks` hook calls these directly.
  *
- *   - Widget bundle (`buildChartAppUiResource`) — the
- *     `ui://tako/embed/chart` resource: static `WIDGET_HTML` for ChatGPT's
- *     iframe path, plus the dynamic `ui://tako/embed/chart/{pub_id}`
- *     template for claude.ai's image-baked variant. `tako_search`
- *     registers this URI; `mcp.ts`'s registration loop dedupes repeat
- *     registrations of the same URI so the SDK doesn't throw on duplicate.
+ *   - Widget bundle (`buildChartAppUiResource`) — static `WIDGET_HTML`,
+ *     served as `ui://tako/embed/chart` on `/mcp/chatgpt` and as
+ *     `ui://tako/embed/live-card` on `/mcp`. The chatgpt surface also gets
+ *     the dynamic `ui://tako/embed/chart/{pub_id}` image-baked template.
+ *     `mcp.ts`'s registration loop dedupes repeat registrations of the same
+ *     URI so the SDK doesn't throw on duplicate.
  *
  *   - Default chart-output dimensions (`DEFAULT_DARK_MODE`, …) — the
  *     defaults applied when `tako_search` auto-chains the top card (the
@@ -40,6 +40,7 @@ import {
   resolvePublicCdnBase,
   resolveWidgetOrigin,
 } from "../env.js";
+import type { Surface } from "../surface.js";
 import type {
   AppUiResource,
   ToolContext,
@@ -123,14 +124,17 @@ export const APP_UI_RESOURCE_URI = "ui://tako/embed/chart";
  * SHIPPED bundle ever needs cache-busting, register a new URI ALONGSIDE the old
  * one, per the note above.
  */
-export function appUiResourceUri(env: Env): string {
+export function appUiResourceUri(env: Env, surface: Surface): string {
+  const baseUri =
+    surface === "chatgpt" ? APP_UI_RESOURCE_URI : LIVE_CARD_RESOURCE_URI;
   const suffix = env.WIDGET_URI_SUFFIX;
-  if (typeof suffix !== "string" || suffix === "") return APP_UI_RESOURCE_URI;
+  if (typeof suffix !== "string" || suffix === "") return baseUri;
   // Constrain the value: it becomes a URI the host stores and reads back, and
   // a stray `/` or space would make a URI that never resolves.
   const safe = suffix.replace(/[^A-Za-z0-9._-]/g, "");
-  return safe === "" ? APP_UI_RESOURCE_URI : `${APP_UI_RESOURCE_URI}-${safe}`;
+  return safe === "" ? baseUri : `${baseUri}-${safe}`;
 }
+export const LIVE_CARD_RESOURCE_URI = "ui://tako/embed/live-card";
 export const APP_UI_RESOURCE_NAME = "open_chart_ui_widget";
 export const CHART_WIDGET_DESCRIPTION =
   "Shows a Tako card inline: an interactive chart or a list, with its title, its source, and a link to its page on Tako.";
@@ -165,7 +169,7 @@ export const APP_UI_TEMPLATE_URI_PATTERN = "ui://tako/embed/chart/{pub_id}";
  * disagree about the string.
  */
 export function appUiTemplateUriPattern(env: Env): string {
-  const uri = appUiResourceUri(env);
+  const uri = appUiResourceUri(env, "chatgpt");
   return `${uri}/{pub_id}`;
 }
 export const APP_UI_TEMPLATE_NAME = "open_chart_ui_widget_baked";
@@ -175,35 +179,6 @@ export const APP_UI_TEMPLATE_NAME = "open_chart_ui_widget_baked";
 export const DEFAULT_DARK_MODE = true;
 export const DEFAULT_WIDTH = 900;
 export const DEFAULT_HEIGHT = 720;
-
-/**
- * Whether the widget may probe the interactive `embed_url` iframe behind the
- * PNG on hosts that render via the image branch (i.e. Claude).
- *
- * OFF, and this is the fix for a user-visible bug rather than a tuning knob.
- *
- * The probe navigates a hidden iframe to `https://tako.com/embed/...`. On
- * claude.ai that load is blocked by a hardcoded `frame-src 'self' blob: data:`
- * outer CSP which ignores our declared `frameDomains`
- * (anthropics/claude-ai-mcp#40) — so the probe fires a
- * `securitypolicyviolation` inside the widget document EVERY time a chart
- * renders. The bundle handles it fine (stays on the PNG), but the HOST sees a
- * blocked subresource in the widget frame and surfaces
- * "There was a problem displaying content from tako." to the user — on a chart
- * that rendered perfectly.
- *
- * So the probe's only audience is the one host where it always fails, and its
- * only observable effect there is an error message next to a working chart.
- * ChatGPT never runs it (it takes the committed-iframe branch), and non-widget
- * clients never load the bundle at all. Expected value: negative.
- *
- * Flipping this to `true` re-enables the auto-upgrade the probe was written
- * for — the day claude.ai honors `frameDomains`, Claude users get the live
- * interactive chart with no bundle change, just this constant and a deploy.
- * That was the original design goal (no redeploy); one deploy is a small price
- * for not shipping an error toast on every render.
- */
-export const INTERACTIVE_IFRAME_PROBE_ENABLED = false;
 
 /**
  * URL of the CORS-readable embed-page proxy for one chart, or `undefined` when
@@ -229,27 +204,32 @@ export function nativeCardUrl(
   origin: string | undefined,
   pubId: string | undefined,
 ): string | undefined {
-  if (resolvePublicCdnBase(env) === undefined) return undefined;
   if (pubId === undefined || pubId === "") return undefined;
-  const base = resolveWidgetOrigin(env, origin);
+  const base = nativeCardBase(env, origin);
   if (base === undefined) return undefined;
   return `${base}${EMBED_PROXY_PREFIX}${encodeURIComponent(pubId)}`;
 }
 
+export function liveCardsAvailable(env: Env, origin: string | undefined): boolean {
+  return nativeCardBase(env, origin) !== undefined;
+}
+
+function nativeCardBase(env: Env, origin: string | undefined): string | undefined {
+  if (resolvePublicCdnBase(env) === undefined) return undefined;
+  return resolveWidgetOrigin(env, origin);
+}
+
 /**
- * The `_meta` payload both chart tools ship for image-branch hosts: the baked
- * PNG plus the probe flag. Shared so `tako_search` and `tako_visualize` cannot
- * disagree about either — they had identical inline copies of the fetch, and
- * the flag would have been a second thing to keep in sync.
+ * The `_meta` payload the chart tools ship on `/mcp/chatgpt`: the native card
+ * url and the top chart's PNG dimensions. Shared so `tako_search`,
+ * `tako_visualize`, and the agent tools cannot disagree about either.
  *
- * Returns `undefined` when there is no image URL or the fetch failed, matching
- * the previous per-tool behavior (the hook is best-effort; the widget falls
- * back to the remote `image_url` from `structuredContent`).
+ * Returns `undefined` when it has neither field. The hook is best-effort: the
+ * widget then sizes the iframe from `structuredContent`.
  */
 export async function buildChartExtraMeta(
   imageUrl: string | undefined,
   opts: {
-    bakeImage: boolean;
     env?: Env | undefined;
     /** Request origin — needed to address this worker's embed proxy. */
     origin?: string | undefined;
@@ -261,39 +241,26 @@ export async function buildChartExtraMeta(
   // `PUBLIC_CDN_URL` is set — which both deployed envs now do, so this field is
   // present in staging and production alike, and absent only where the binding
   // is (local dev, and tests that don't supply it).
-  const probe: Record<string, unknown> = {};
+  const nativeMeta: Record<string, unknown> = {};
   const native =
     opts.env !== undefined
       ? nativeCardUrl(opts.env, opts.origin, opts.pubId)
       : undefined;
-  if (native !== undefined) probe.native_card_url = native;
+  if (native !== undefined) nativeMeta.native_card_url = native;
   if (imageUrl === undefined) {
-    return Object.keys(probe).length > 0 ? probe : undefined;
+    return Object.keys(nativeMeta).length > 0 ? nativeMeta : undefined;
   }
   // Iframe-branch clients (ChatGPT) never read the image bytes — but they DO
   // need the card's aspect ratio to size the cross-origin iframe, and two
   // integers cost a 64-byte ranged read instead of a ~170 KB render.
-  if (!opts.bakeImage) {
-    const dims = await fetchPngDimensions(imageUrl);
-    if (dims === undefined) {
-      return Object.keys(probe).length > 0 ? probe : undefined;
-    }
-    return {
-      ...probe,
-      image_natural_width: dims.naturalWidth,
-      image_natural_height: dims.naturalHeight,
-    };
-  }
-  const fetched = await fetchImageDataUrlAndDims(imageUrl);
-  if (fetched === undefined) {
-    return Object.keys(probe).length > 0 ? probe : undefined;
+  const dims = await fetchPngDimensions(imageUrl);
+  if (dims === undefined) {
+    return Object.keys(nativeMeta).length > 0 ? nativeMeta : undefined;
   }
   return {
-    ...probe,
-    image_data_url: fetched.dataUrl,
-    image_natural_width: fetched.naturalWidth,
-    image_natural_height: fetched.naturalHeight,
-    interactive_probe: INTERACTIVE_IFRAME_PROBE_ENABLED,
+    ...nativeMeta,
+    image_natural_width: dims.naturalWidth,
+    image_natural_height: dims.naturalHeight,
   };
 }
 
@@ -330,6 +297,8 @@ const ASSUMED_WIDGET_WIDTH_PX = 800;
 
 const CAROUSEL_GAP_PX = 8;
 const CAROUSEL_PEEK_PX = 32;
+const LIVE_CARD_FAILURE_HEIGHT_PX = 160;
+const PROXIED_CARD_FETCH_TIMEOUT_MS = 7000;
 
 /**
  * HTML-escape a string for safe interpolation into attribute values
@@ -488,30 +457,30 @@ function buildFallbackWidgetHtml(embedUrl: string, message: string): string {
 }
 
 /**
- * Height reporter injected into the proxied embed page during a native upgrade.
+ * Height reporter injected into a live card's `blob:` frame. It posts the
+ * measured height `h` to the widget as `tako-live-card-height`.
  *
- * Lives here, as its own constant, because it is a `<script>` body nested
+ * Lives here, outside the template, because it is a `<script>` body nested
  * inside the widget template which is itself a `<script>` body.
  *
  * The runtime value MUST contain a real `</script>`, since it is injected into
  * a fetched HTML document. So the escaping cannot live in this constant — it
- * happens where the value is interpolated into the widget template, which
- * rewrites `</script` to `<\/script`. The HTML parser then no longer sees a
- * closing tag, while JS still reads the string as `</script>`. Skipping that
- * step truncates the entire widget bundle at this line, which is how it was
- * found: every executing widget test failed at once.
+ * happens where the value is interpolated into the widget template
+ * (`inlineScriptString`), which rewrites `</script` to `<\/script`. The HTML
+ * parser then no longer sees a closing tag, while JS still reads the string as
+ * `</script>`. Skipping that step truncates the entire widget bundle at this
+ * line, which is how it was found: every executing widget test failed at once.
  *
- * `__FALLBACK_HEIGHT__` is substituted at upgrade time. It covers the window
- * where Card.js has mounted but not laid out, so `offsetHeight` reads 0 and the
- * host would otherwise collapse the card to nothing.
+ * A pass that measures 0 reports nothing. Card.js hasn't laid out yet, and the
+ * widget keeps the slide veiled until a real height arrives. A card that never
+ * lays out never reports, so the widget's watchdog fails it.
  *
  * It honors {@link MAX_INLINE_WIDGET_HEIGHT_PX} the same way the PNG path does,
  * and it has to: that ceiling is a host constraint, not a preference — Claude
  * crops past it rather than scrolling, so an over-tall card silently loses its
  * bottom edge. The native card carries strictly MORE than the PNG (range
  * selectors, the chart/table toggle, the source line), so it is the likelier of
- * the two to exceed it, and `document.open()` has already discarded the CSS that
- * enforced the ceiling for the image.
+ * the two to exceed it.
  *
  * The PNG scales down whole via `object-fit: contain`; a document cannot, so the
  * equivalent here is an explicit `transform: scale()`. Each pass clears the
@@ -539,7 +508,7 @@ function buildFallbackWidgetHtml(embedUrl: string, message: string): string {
  *     style. That is what terminates the sequence: correction, one confirming
  *     callback, quiet — instead of clear/measure/re-apply every frame forever.
  */
-const NATIVE_HEIGHT_REPORTER = [
+const LIVE_CARD_HEIGHT_REPORTER = [
   "<script>(function(){",
   "var CAP=" + String(MAX_INLINE_WIDGET_HEIGHT_PX) + ";",
   // Body's scrollHeight as of the end of the last pass that did work — the
@@ -557,7 +526,7 @@ const NATIVE_HEIGHT_REPORTER = [
   // reports the card's natural height rather than a previously scaled one.
   "d.style.transform='';d.style.transformOrigin='';d.style.width='';",
   "var h=d.offsetHeight||0;",
-  "if(h<=0)h=__FALLBACK_HEIGHT__;",
+  "if(h<=0)return;",
   // Over the host's inline ceiling: scale the whole document down to fit
   // instead of letting the host crop the axis and source line off the bottom.
   // Widening to `100/s`% first means the content still fills the frame after
@@ -568,10 +537,7 @@ const NATIVE_HEIGHT_REPORTER = [
   "d.style.transform='scale('+s+')';",
   "h=CAP;}",
   "last=raw();",
-  "try{if(window.openai&&typeof window.openai.notifyIntrinsicHeight==='function')",
-  "window.openai.notifyIntrinsicHeight(h);}catch(e){}",
-  "try{window.parent.postMessage({jsonrpc:'2.0',method:'ui/notifications/size-changed',",
-  "params:{width:(document.documentElement&&document.documentElement.clientWidth)||0,height:h}},'*');}catch(e){}",
+  "try{window.parent.postMessage({type:'tako-live-card-height',height:h},'*');}catch(e){}",
   "}",
   "function f(){n(true);}",
   "f();",
@@ -589,6 +555,10 @@ const NATIVE_HEIGHT_REPORTER = [
   "}}catch(e){}",
   "})();<\/script>",
 ].join("");
+
+function inlineScriptString(value: string): string {
+  return JSON.stringify(value).replace(/<\/script/gi, "<\\/script");
+}
 
 /**
  * Bundle the host loads into a sandboxed iframe. One thin `<iframe>`
@@ -679,6 +649,9 @@ const WIDGET_HTML = `<!doctype html>
   .tako-track { display: flex; gap: ${CAROUSEL_GAP_PX}px; align-items: flex-start; overflow-x: auto; scroll-snap-type: x mandatory; scrollbar-width: none; }
   .tako-track::-webkit-scrollbar { display: none; }
   .tako-slide { flex: 0 0 calc(100% - ${CAROUSEL_PEEK_PX}px); min-width: 0; scroll-snap-align: start; }
+  .tako-slide:only-child { flex-basis: 100%; }
+  .tako-slide-failed { height: ${LIVE_CARD_FAILURE_HEIGHT_PX}px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; text-align: center; }
+  .tako-slide-failed p { margin: 0; }
   .tako-slide iframe { width: 100%; border: 0; display: block; background: transparent; }
   .tako-slide a { display: block; cursor: pointer; text-decoration: none; color: #4aa9ff; }
   .tako-slide img { width: 100%; height: auto; max-height: ${MAX_INLINE_WIDGET_HEIGHT_PX}px; object-fit: contain; display: block; background: transparent; }
@@ -765,15 +738,14 @@ const WIDGET_HTML = `<!doctype html>
   var embedReportedHeight = false;
 
   // How long an embed iframe gets to fire \`load\` before we decide it never
-  // will. Shared by both directions — \`probeInteractiveIframe\` (does this
-  // host allow the iframe at all?) and \`watchCommittedIframe\` (did the
-  // iframe we already showed actually render?) — so the two can't drift.
+  // will. Shared by \`watchCommittedIframe\`, the carousel slides, and the live
+  // cards, so they can't drift.
   // A CSP block reports itself almost immediately via
   // \`securitypolicyviolation\`, so this bound only governs the slow cases:
   // suppressed violation events, network stalls, an endpoint that hangs.
   var IFRAME_SETTLE_MS = 8000;
 
-  // Pin the embed/probe iframe to an explicit pixel height. Hosts vary in
+  // Pin the embed iframe to an explicit pixel height. Hosts vary in
   // which of the three they read (inline \`style.height\`, the
   // \`min-height\` floor, and the \`height\` attribute), so set all three
   // together. One helper so the next height gotcha is a one-line fix
@@ -818,11 +790,7 @@ const WIDGET_HTML = `<!doctype html>
   }
 
   // Record the embed iframe's origin so the \`tako-embed-height\` resize
-  // handler will honor messages from it. Only arm this once the embed is
-  // the VISIBLE surface (an immediate iframe render, or a probe that has
-  // upgraded) — arming it while a probe frame is still hidden behind the
-  // PNG would let a background embed resize the widget under a chart the
-  // user is looking at.
+  // handler will honor messages from it.
   function armEmbedOrigin(url) {
     embedOrigin = originOf(url);
   }
@@ -1089,9 +1057,9 @@ const WIDGET_HTML = `<!doctype html>
     try {
       var root = document.documentElement;
       var backdrop = chartBackdrop();
-      // Behind the chart, on every path. \`frame\` is the committed/probed embed
-      // iframe, \`image\` the baked PNG — both rounded, both transparent at the
-      // corners.
+      // Behind the chart, on every path. \`frame\` is ChatGPT's committed embed
+      // iframe, \`image\` its PNG, and each carousel slide holds an iframe or a
+      // PNG — all rounded, all transparent at the corners.
       // Cleared, not just skipped, when nothing names a colour any more —
       // otherwise a theme flip that drops its surface leaves the previous
       // theme's backdrop painted behind the corners.
@@ -1230,10 +1198,10 @@ const WIDGET_HTML = `<!doctype html>
     return pinnedOriginOk(EXPECTED_EMBED_ORIGIN, url);
   }
 
-  // Same pin, for the native-card upgrade URL — a strictly WIDER grant than
-  // the iframe: \`upgradeToNativeCard\` fetches it and document.write()s the
-  // response into this document, where injected script runs in the widget
-  // origin. The host CSP (\`connectDomains\`) is the spec-level backstop; this
+  // Same pin, for the live card URL — a strictly WIDER grant than the
+  // iframe: \`mountLiveCard\` fetches it and runs the response in a \`blob:\`
+  // frame, where its script runs in the widget origin. The host CSP
+  // (\`connectDomains\`) is the spec-level backstop; this
   // is the same last-hop defense the embed pin provides. Substituted with the
   // worker's own origin (\`resolveWidgetOrigin\`) — the origin \`nativeCardUrl\`
   // on the server builds from — when that origin is known at resource-build
@@ -1245,19 +1213,6 @@ const WIDGET_HTML = `<!doctype html>
 
   // Rewrite \`dark_mode\` on a chart url to match the host. Leaves the url alone
   // when the host is silent, so \`auto\` survives rather than being guessed at.
-  //
-  // The \`!url\` bail is load-bearing, not defensive noise. \`nativeCardUrl\` is
-  // \`""\` whenever \`_meta.native_card_url\` is absent. No longer the deployed
-  // default, but still reachable three ways: an env without \`PUBLIC_CDN_URL\`, a
-  // resolve that fails, and any cached tool result from before the field
-  // existed. And \`""\` IS a string, so without this it fell past the
-  // \`typeof\` check into
-  // the append branch and returned \`"?dark_mode=true"\`. That cleared
-  // \`upgradeToNativeCard\`'s own \`nativeUrl === ""\` guard (it sees the
-  // transformed value, not the original) and reached
-  // \`fetch("?dark_mode=true")\`, resolved against the widget document — a
-  // request in nobody's \`connect-src\`, which is the same blocked-subresource
-  // class the retired iframe probe was costing us.
   function withHostTheme(url) {
     if (!url || typeof url !== "string") return url;
     var theme = hostTheme();
@@ -1275,21 +1230,10 @@ const WIDGET_HTML = `<!doctype html>
   // cross-origin \`<iframe src=https://staging.trytako.com/embed/...>\`
   // load fully interactive — commit to the iframe immediately there.
   //
-  // Every other host renders the static PNG first (the baseline that
-  // always works) and then PROBES the embed iframe in the background
-  // via \`probeInteractiveIframe\`, swapping it in only if the embed
-  // actually loads. Rationale: claude.ai today enforces a hardcoded
-  // \`frame-src 'self' blob: data:\` outer CSP that ignores declared
-  // \`csp.frameDomains\` (anthropics/claude-ai-mcp#40 — spec violation,
-  // acknowledged, pending their MCP Apps security review), so the
-  // iframe shows Chrome's "This content is blocked" placeholder
-  // (confirmed via DevTools 2026-04-29 on claude.ai web). But that's a
-  // host bug with a pending fix: keying the branch on "is this
-  // ChatGPT" would keep Claude on the static PNG even after Anthropic
-  // ships it. Probing means the interactive path lights up on any
-  // host the moment its CSP allows it, with no Tako redeploy — and the
-  // CSP violation event fires ~immediately on blocking hosts, so
-  // today's PNG experience is unchanged.
+  // Every other host renders live cards in \`blob:\` frames instead. claude.ai
+  // enforces a hardcoded \`frame-src 'self' blob: data:\` outer CSP that
+  // ignores declared \`csp.frameDomains\` (anthropics/claude-ai-mcp#40), so a
+  // nested cross-origin iframe never loads there.
   function hasOpenAiRuntime() {
     try {
       return typeof window.openai !== "undefined";
@@ -1298,122 +1242,9 @@ const WIDGET_HTML = `<!doctype html>
     }
   }
 
-  // One probe per widget lifetime. \`render()\` is one-shot via the
-  // \`rendered\` flag, but guard independently so a duplicate
-  // tool-result delivery racing the flag can't double-assign
-  // \`frame.src\`.
-  var probeStarted = false;
-  // Flips true once the probe has swapped the interactive iframe in over
-  // the PNG. The image \`load\`/\`error\` handlers check it and no-op after
-  // an upgrade so a stray duplicate image event can't re-reveal the PNG
-  // on top of the live iframe.
-  var probeUpgraded = false;
-
-  // Try to load \`url\` in the (still hidden) chart iframe and swap it
-  // in over the already-rendered PNG if it genuinely loads.
-  //
-  // Success signal: the iframe \`load\` event. A cross-origin frame's
-  // content is unreadable, but \`load\` only fires when a document
-  // actually loaded — CSP-blocked loads never make the request, so
-  // they never fire it.
-  //
-  // Failure signals, either of:
-  //  - \`securitypolicyviolation\` for \`frame-src\` on this document —
-  //    the definitive "host sandbox blocked it" signal.
-  //  - No \`load\` within the timeout — covers hosts that suppress
-  //    violation events and plain network stalls.
-  //
-  // On failure the widget stays on the PNG it already painted; the
-  // probe frame is unloaded so nothing can later surface a blocked
-  // tile.
-  function probeInteractiveIframe(url, fallbackHeight) {
-    if (probeStarted) return;
-    probeStarted = true;
-    // The url we actually navigate to: analytics-free, like every other iframe
-    // load this widget performs (see \`withoutTracking\`). \`url\` itself stays
-    // untouched so the click-through anchor keeps the plain shareable link.
-    var probeUrl = withoutTracking(url);
-    var settled = false;
-    var timer = null;
-    // Flips true the instant we navigate the probe frame to \`url\`, and
-    // back to false before \`fail()\` sends it to about:blank. \`onLoad\`
-    // gates on this rather than \`frame.src === url\`: \`frame.src\` reads
-    // back the browser-NORMALIZED URL (\`https://tako.com:443\` collapses
-    // to \`https://tako.com\`, the host lowercases), so a raw-string
-    // compare against \`url\` can silently never match — stranding every
-    // render on the 8 s timeout on any host whose \`embed_url\` origin
-    // isn't already normalized.
-    var probeNavigated = false;
-    function cleanup() {
-      settled = true;
-      if (timer !== null) clearTimeout(timer);
-      document.removeEventListener("securitypolicyviolation", onViolation);
-      frame.removeEventListener("load", onLoad);
-    }
-    function fail(reason) {
-      if (settled) return;
-      cleanup();
-      embedOrigin = null;
-      probeNavigated = false;
-      frame.src = "about:blank";
-      log("iframe probe failed, staying on image", { reason: reason });
-    }
-    function succeed() {
-      if (settled) return;
-      cleanup();
-      probeUpgraded = true;
-      // Swap at the image's CURRENT rendered height, not the tool's
-      // requested height: claude.ai sizes its outer container once
-      // (anthropics/claude-ai-mcp#69) from the PNG's footprint, so
-      // growing the frame past it would clip. The probe only starts
-      // AFTER the image has loaded (see the image \`load\` handler), so
-      // \`getBoundingClientRect().height\` here is the real laid-out
-      // height — not 0 falling through to \`fallbackHeight\`.
-      var rectH = image.getBoundingClientRect().height;
-      var offsetH = image.offsetHeight;
-      var h = Math.round(rectH || offsetH || 0) || fallbackHeight;
-      setFrameHeight(h);
-      // Arm the embed-height handshake only NOW: the embed has become the
-      // visible surface, so honoring its resize messages is finally safe.
-      armEmbedOrigin(probeUrl);
-      imageLink.classList.add("hidden");
-      placeholder.classList.add("hidden");
-      frame.classList.remove("hidden");
-      notifyHeight(h);
-      log("iframe probe succeeded, upgraded to interactive", { height: h });
-    }
-    function onViolation(event) {
-      if (isFrameSrcViolation(event)) {
-        fail("csp:" + (event.effectiveDirective || event.violatedDirective));
-      }
-    }
-    function onLoad() {
-      // \`fail()\` navigates the frame to about:blank, which fires its own
-      // \`load\`; \`probeNavigated\` is false by then so we don't count it.
-      //
-      // KNOWN GAP (bare-load success signal): \`load\` fires for ANY
-      // document the embed endpoint returns — including a Tako 404/5xx
-      // error page. On a host whose CSP allows \`frame-src\`, an embed-page
-      // outage would swap the known-good PNG for an error page. Accepted
-      // for now: the positive signal from the cross-origin embed is the
-      // \`tako-embed-height\` message, which the Tako web app DOES emit now
-      // (measured — see \`embedReportedHeight\`); gating \`succeed()\` on it
-      // instead of the bare \`load\` remains the follow-up.
-      if (probeNavigated) succeed();
-    }
-    document.addEventListener("securitypolicyviolation", onViolation);
-    frame.addEventListener("load", onLoad);
-    // Deliberately do NOT arm \`embedOrigin\` here — the probe frame is
-    // still hidden behind the PNG, so honoring its \`tako-embed-height\`
-    // messages would resize the widget under a chart the user is looking
-    // at. \`succeed()\` arms it after the swap.
-    frame.src = probeUrl;
-    probeNavigated = true;
-    timer = setTimeout(function () { fail("timeout"); }, IFRAME_SETTLE_MS);
-    log("iframe probe started", { src: probeUrl });
-  }
-
-  // One watchdog per widget lifetime, same reasoning as \`probeStarted\`.
+  // One watchdog per widget lifetime. \`render()\` is one-shot via the
+  // \`rendered\` flag, but guard independently so a duplicate delivery can't
+  // arm a second watchdog.
   var watchStarted = false;
 
   // Settles the live committed-iframe watchdog, when one is armed. Set by
@@ -1427,7 +1258,7 @@ const WIDGET_HTML = `<!doctype html>
 
   // Watch the committed (initially veiled) embed iframe and downgrade to
   // the PNG if it never loads. Used only on the \`window.openai\` path,
-  // which commits to the iframe up front instead of probing behind a PNG.
+  // which commits to the iframe up front.
   //
   // Settle signals:
   //  - \`load\` on the frame → the embed rendered; stand down AND reveal it
@@ -1439,12 +1270,11 @@ const WIDGET_HTML = `<!doctype html>
   //  - no \`load\` within the timeout → covers suppressed violation events,
   //    network stalls, and an embed endpoint that never finishes.
   //
-  // Same KNOWN GAP as the probe, in the opposite direction: \`load\` fires
-  // for any document the endpoint returns, so a Tako error page counts as
-  // a successful load and keeps the iframe. The \`tako-embed-height\`
-  // message (now measured live — see \`embedReportedHeight\`) is the
-  // positive signal that could close it; gating \`succeed()\`/\`onLoad\` on
-  // it remains the follow-up.
+  // KNOWN GAP: \`load\` fires for any document the endpoint returns, so a
+  // Tako error page counts as a successful load and keeps the iframe. The
+  // \`tako-embed-height\` message (now measured live — see
+  // \`embedReportedHeight\`) is the positive signal that could close it;
+  // gating \`onLoad\` on it remains the follow-up.
   function watchCommittedIframe(url, opts) {
     if (watchStarted) return;
     watchStarted = true;
@@ -1478,10 +1308,8 @@ const WIDGET_HTML = `<!doctype html>
       frame.classList.add("hidden");
       frame.src = "about:blank";
       log("iframe never loaded, falling back to image", { reason: reason });
-      // No image to fall back to (ChatGPT skips the server-side PNG prefetch,
-      // so \`image_data_url\` is absent there — but \`image_url\` is present in
-      // structuredContent, which is what makes this path work). Surface the
-      // click-through rather than a silent empty frame.
+      // No image to fall back to. Surface the click-through rather than a
+      // silent empty frame.
       if (opts.imageSrc === null) {
         placeholder.innerHTML = "";
         placeholder.classList.remove("hidden");
@@ -1504,11 +1332,6 @@ const WIDGET_HTML = `<!doctype html>
         embedUrl: url,
         imageSrc: opts.imageSrc,
         validEmbed: opts.validEmbed,
-        height: opts.height,
-        isDataUrl: opts.isDataUrl,
-        imageUrl: opts.imageUrl,
-        // The iframe just failed. Do not go looking for it again.
-        allowProbe: false,
       });
     }
     function onViolation(event) {
@@ -1564,127 +1387,54 @@ const WIDGET_HTML = `<!doctype html>
     return typeof directive === "string" && directive.indexOf("frame-src") === 0;
   }
 
-  // Native-card upgrade. Replace the PNG with Tako's REAL card — the same
-  // interactive document ChatGPT renders — by fetching the embed page through
-  // our CORS-enabled proxy and letting its own scripts run here.
+  var LIVE_CARD_REPORTER = ${inlineScriptString(LIVE_CARD_HEIGHT_REPORTER)};
+
+  function hostSchemeSnapshot() {
+    return {
+      backdrop: hasOpenAiRuntime() ? null : chartBackdrop(),
+      scheme: hostTheme(),
+    };
+  }
+
+  // The card paints its own surface with an 8px radius over a TRANSPARENT
+  // html/body, so its corners fall through to the document's backdrop —
+  // which behind claude.ai's widget frame is opaque WHITE. Those were the
+  // white triangles under the card's corners.
   //
-  // Shaped as an UPGRADE, never a first paint, and that is the whole safety
-  // story: the PNG is painted first and stays until this has the markup in
-  // hand. A slow proxy, a 502, a CSP surprise, or an upstream redesign all cost
-  // an upgrade and nothing else — the chart on screen is untouched. It is also
-  // why the fetch completes BEFORE \`document.open()\` is called: opening the
-  // document blanks it, so doing that speculatively would trade a working chart
-  // for a white box.
+  // Same backdrop \`applyHostSurface\` resolves, but it has to go on the
+  // CANVAS here: this path replaces the whole document with the card, so
+  // there is no chart element left to hang a background on. That also
+  // means the canvas is covered by the card everywhere except the corners
+  // and whatever the host reserved beyond it, which is what makes an
+  // approximate colour acceptable here too.
   //
-  // Why the whole page rather than mounting Card.js ourselves: the page carries
-  // its config and theme as inline JSON islands and bootstraps from them.
-  // Writing the document verbatim means Tako's own bootstrap runs, so there is
-  // no mount contract to reverse-engineer and no second copy to keep in sync.
-  // \`document.write\` executes inserted scripts, including the
-  // \`type="module"\` Card.js tag and the chunks it imports.
-  var nativeStarted = false;
-  function upgradeToNativeCard(nativeUrl, fallbackHeight) {
-    if (nativeStarted || typeof nativeUrl !== "string" || nativeUrl === "") return;
-    nativeStarted = true;
-    // Snapshot the theme HERE, next to the url whose \`dark_mode\` was already
-    // fixed from it by the caller's \`withHostTheme\`. Reading it again inside
-    // the \`.then()\` — up to 7 s later — let a \`host-context-changed\` arriving
-    // mid-fetch write a document whose CARD was rendered for the old theme
-    // wrapped in a \`:root{background;color-scheme}\` block for the new one. And
-    // \`nativeStarted\` means there is no second fetch to reconcile it, so the
-    // inconsistency would be permanent for that card.
-    var snapBackdrop = chartBackdrop();
-    var snapScheme = hostTheme();
-    var settled = false;
-    var timer = setTimeout(function () {
-      if (settled) return;
-      settled = true;
-      log("native card fetch timed out, staying on image", { url: nativeUrl });
-    }, 7000);
-    fetch(nativeUrl, { credentials: "omit" })
-      .then(function (r) {
-        if (!r.ok) throw new Error("HTTP " + r.status);
-        return r.text();
-      })
-      .then(function (html) {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        if (typeof html !== "string" || html.indexOf("<html") === -1) {
-          throw new Error("not an html document");
-        }
-        // Height reporting must survive the swap: \`document.open()\` discards
-        // this script's document, listeners included. Injecting a reporter into
-        // the markup keeps the host sized correctly — the same
-        // size-changed / notifyIntrinsicHeight pair the baked variant sends.
-        var reporter = ${JSON.stringify(NATIVE_HEIGHT_REPORTER).replace(/<\/script/gi, "<\\/script")}.replace(
-          "__FALLBACK_HEIGHT__",
-          String(fallbackHeight || 0),
-        );
-        // The card paints its own surface with an 8px radius over a TRANSPARENT
-        // html/body, so its corners fall through to the document's backdrop —
-        // which behind claude.ai's widget frame is opaque WHITE. Those were the
-        // white triangles under the card's corners.
-        //
-        // Same backdrop \`applyHostSurface\` resolves, but it has to go on the
-        // CANVAS here: this path replaces the whole document with the card, so
-        // there is no chart element left to hang a background on. That also
-        // means the canvas is covered by the card everywhere except the corners
-        // and whatever the host reserved beyond it, which is what makes an
-        // approximate colour acceptable here too.
-        //
-        // Injected LAST so it wins over the page's own rules.
-        var scheme = snapScheme;
-        var schemeStyle = "";
-        // \`color-scheme\` only — the backdrop is deliberately NOT painted here.
-        //
-        // This path replaces the whole document with the card, so
-        // \`:root,body{background:…}\` paints a FULL-BLEED rectangle behind a card
-        // that has 8px rounded corners: the same square-behind-rounded mismatch
-        // that drew a visible outline on the iframe path, in the one place
-        // claude.ai actually renders. And the colour is no more knowable here —
-        // it comes from the same \`hostContext\` claim, which the reporting host
-        // got wrong (declared \`#212121\`, rendered black).
-        //
-        // Leaving the canvas transparent lets the host's real background show
-        // through the card's corners, which is correct on every host without
-        // trusting anyone's colour. \`color-scheme\` stays: it themes the
-        // UA-drawn surfaces inside the card (scrollbars, form controls) and
-        // paints nothing itself.
-        // Same scoping as \`applyHostSurface\`: the backdrop still rides into the
-        // native document on every host EXCEPT ChatGPT, unchanged from what
-        // claude.ai renders correctly in production today. This path replaces
-        // the document with the card, so on ChatGPT the paint would be the same
-        // full-bleed rectangle under a rounded card that the canvas tier was
-        // suppressed for — and ChatGPT is the only host measured to declare a
-        // surface that does not match what it renders.
-        var backdrop = hasOpenAiRuntime() ? null : snapBackdrop;
-        if (backdrop) {
-          schemeStyle =
-            '<style id="tako-host-scheme">:root,body{background:' + backdrop + '}' +
-            (scheme ? ':root{color-scheme:' + scheme + '}' : "") + '</style>';
-        } else if (scheme) {
-          schemeStyle =
-            '<style id="tako-host-scheme">:root{color-scheme:' + scheme + '}</style>';
-        }
-        var injected = schemeStyle + reporter;
-        var patched =
-          html.indexOf("</body>") !== -1
-            ? html.replace("</body>", injected + "</body>")
-            : html + injected;
-        log("native card upgrading", { bytes: patched.length, scheme: scheme || "(host silent)", backdrop: backdrop || "(none)" });
-        document.open();
-        document.write(patched);
-        document.close();
-      })
-      .catch(function (err) {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        log("native card fetch failed, staying on image", {
-          error: String(err && err.message ? err.message : err),
-        });
-      });
+  // Injected LAST so it wins over the page's own rules.
+  function hostSchemeStyle(hostScheme) {
+    var scheme = hostScheme.scheme;
+    // On ChatGPT, \`color-scheme\` only: \`hostSchemeSnapshot\` drops the
+    // backdrop there. This path replaces the whole document with the card, so
+    // \`:root,body{background:…}\` paints a FULL-BLEED rectangle behind a card
+    // that has 8px rounded corners, and ChatGPT is the one host measured to
+    // declare a surface it doesn't render (declared \`#212121\`, rendered
+    // black). There the rectangle draws a visible outline.
+    //
+    // Every other host gets the backdrop as well, the same scoping as
+    // \`applyHostSurface\`. \`color-scheme\` themes the UA-drawn surfaces
+    // inside the card (scrollbars, form controls) and paints nothing itself.
+    if (hostScheme.backdrop) {
+      return '<style id="tako-host-scheme">:root,body{background:' + hostScheme.backdrop + '}' +
+        (scheme ? ':root{color-scheme:' + scheme + '}' : "") + '</style>';
+    }
+    if (scheme) {
+      return '<style id="tako-host-scheme">:root{color-scheme:' + scheme + '}</style>';
+    }
+    return "";
+  }
+
+  function injectIntoCard(html, injected) {
+    return html.indexOf("</body>") !== -1
+      ? html.replace("</body>", injected + "</body>")
+      : html + injected;
   }
 
   function log(label, payload) {
@@ -1737,31 +1487,14 @@ const WIDGET_HTML = `<!doctype html>
     } catch (e) { /* host gone — nothing to do */ }
   }
 
-  // Paint the static PNG baseline (and, when allowed, probe for an
-  // interactive upgrade behind it). Extracted verbatim from render()'s image
-  // branch so the ChatGPT iframe watchdog can fall BACK to it after render()
-  // has already committed — render() is one-shot via the \`rendered\` flag, so
-  // calling render() a second time could not do this.
-  //
-  // \`allowProbe\` is false on that downgrade path: the iframe has just been
-  // proven not to load, so probing it again would either fail twice or, worse,
-  // "succeed" on a Tako error page and swap the working PNG back out.
+  // Paint the static PNG. Extracted verbatim from render()'s image branch so
+  // the ChatGPT iframe watchdog can fall BACK to it after render() has already
+  // committed — render() is one-shot via the \`rendered\` flag, so calling
+  // render() a second time could not do this.
   function paintImage(opts) {
     var url = opts.embedUrl;
     var imageSrc = opts.imageSrc;
     var validEmbed = opts.validEmbed;
-    var h = opts.height;
-    var validDataImage = opts.isDataUrl;
-    var imgUrl = opts.imageUrl;
-    // Two independent permissions, both required. \`opts.allowProbe\` is the
-    // caller's (false on an iframe downgrade); \`probeEnabled\` is the SERVER's
-    // — \`interactive_probe\` in \`_meta\`, default false. See
-    // \`INTERACTIVE_IFRAME_PROBE_ENABLED\`: on claude.ai the probe is
-    // guaranteed to trip \`frame-src\` CSP, and the host reports that blocked
-    // subresource to the user as "There was a problem displaying content from
-    // tako." next to a chart that rendered fine. Off until claude.ai honors
-    // \`frameDomains\`.
-    var allowProbe = opts.allowProbe !== false && opts.probeEnabled === true;
       // Per anthropics/claude-ai-mcp#69 workaround:
       //   "After the MCP App renders content, explicitly measure the
       //    content and set it on <html>."
@@ -1792,10 +1525,6 @@ const WIDGET_HTML = `<!doctype html>
       }
 
       image.addEventListener("load", function () {
-        // No-op after an upgrade: if the probe already swapped the
-        // interactive iframe in, a stray duplicate \`load\` must not
-        // re-reveal the PNG on top of it.
-        if (probeUpgraded) return;
         imageLink.classList.remove("hidden");
         placeholder.classList.add("hidden");
         // Defer measurement one frame so layout settles after the
@@ -1826,25 +1555,8 @@ const WIDGET_HTML = `<!doctype html>
             log("img resized after load", { height: renderedH });
           }
         });
-        // Capability probe, sequenced AFTER the PNG baseline has loaded.
-        // Starting it here rather than at render() time guarantees the
-        // image is laid out before the probe can \`succeed()\`, so the swap
-        // measures the image's real rendered height (not 0 falling through
-        // to the requested height), and this \`load\` handler has already
-        // run so it can't re-reveal the PNG over the swapped-in iframe.
-        // The PNG is the guaranteed baseline; if this host's CSP lets the
-        // embed iframe load (it doesn't on claude.ai until
-        // anthropics/claude-ai-mcp#40 is fixed), the probe upgrades to the
-        // interactive chart once it does.
-        if (validEmbed && allowProbe) probeInteractiveIframe(url, h);
-        upgradeToNativeCard(withHostTheme(opts.nativeCardUrl), h);
       });
-      // CSP / network error fallback. The most common trigger is
-      // claude.ai's outer-document CSP (\`img-src 'self' blob: data:\`)
-      // blocking the cross-origin \`image_url\` when we couldn't inline
-      // a \`data:\` URI — \`fetchImageDataUrlAndDims\` returns undefined
-      // for PNG > 250 KB, fetch timeout, or non-PNG content type, and
-      // the widget falls through to \`validHttpImage\`. Without this
+      // CSP / network error fallback. Without this
       // listener the \`load\` event never fires, leaving the placeholder
       // stuck at "Loading chart…" with no path to the chart. Repurpose
       // the placeholder into a click-through link so the user can
@@ -1866,12 +1578,6 @@ const WIDGET_HTML = `<!doctype html>
           placeholder.textContent = "Couldn't load chart.";
         }
         log("img errored, showing click-through fallback");
-        // Even with no visible PNG, still probe: a host that blocks
-        // cross-origin \`img-src\` but allows \`frame-src\` can upgrade to
-        // the interactive embed. \`probeStarted\` dedupes against the load
-        // path — only one of load/error fires per image.
-        if (validEmbed && allowProbe) probeInteractiveIframe(url, h);
-        upgradeToNativeCard(withHostTheme(opts.nativeCardUrl), h);
       });
       // Mark rendered BEFORE assigning src so the \`if (rendered) return\`
       // guard at the top of \`render()\` blocks any re-entry from a
@@ -1879,13 +1585,12 @@ const WIDGET_HTML = `<!doctype html>
       // synchronously (data: URIs can do that in some browsers).
       rendered = true;
       // Triggers the load event above. Set last so the listener is
-      // attached first. The capability probe is kicked off from inside the
-      // load/error handlers (above) so it's sequenced after the image.
+      // attached first.
       image.src = imageSrc;
       // Skip the synchronous hide-placeholder / show-anchor / notifyHeight
       // tail below — image.load handles those atomically once the
       // content has actually rendered.
-      log("img path queued", { src: validDataImage ? "<data:image>" : imgUrl });
+      log("img path queued", { src: imageSrc });
       return true;
   }
 
@@ -1913,7 +1618,6 @@ const WIDGET_HTML = `<!doctype html>
   // (\`requestHostClose\`). The label is what's left when the host ignores the
   // request or doesn't support it.
   function collapse(labelled) {
-    placeholder.classList.add("hidden");
     // \`labelled\` is only true where the emptiness is a FACT: structured content
     // arrived and carried no chart. The watchdog path passes false, because
     // "nothing arrived within 10 s" is not the same claim — a failed call and a
@@ -1947,11 +1651,21 @@ const WIDGET_HTML = `<!doctype html>
       }
       empty.classList.remove("hidden");
     }
+    shrinkToZero();
+    rendered = true;
+    if (labelled) requestHostClose();
+  }
+
+  function shrinkToZero() {
+    placeholder.classList.add("hidden");
     document.documentElement.style.height = "0px";
     document.body.style.height = "0px";
     notifyHeight(0);
-    rendered = true;
-    if (labelled) requestHostClose();
+  }
+
+  function regrowAfterShrink() {
+    document.documentElement.style.height = "";
+    document.body.style.height = "";
   }
 
   function requestHostClose() {
@@ -1984,6 +1698,17 @@ const WIDGET_HTML = `<!doctype html>
     return null;
   }
 
+  function isLiveCardPayload(structuredContent, meta) {
+    if (hasChart(structuredContent)) return false;
+    var charts = pickChartList(structuredContent, meta);
+    return (
+      !!charts &&
+      charts.some(function (chart) {
+        return !!chart && typeof chart === "object" && typeof chart.native_card_url === "string";
+      })
+    );
+  }
+
   function carouselCharts(charts) {
     if (!charts) return [];
     return charts.filter(function (chart) {
@@ -2010,16 +1735,159 @@ const WIDGET_HTML = `<!doctype html>
     charts.forEach(function (chart, i) {
       carouselSlides.push(mountSlide(chart, i, charts.length, fallbackHeight));
     });
+    return openCarousel("carousel", scrollCarousel);
+  }
+
+  function renderLiveCards(charts) {
+    if (carouselSlides.length > 0) return true;
+    regrowAfterShrink();
+    carousel.classList.remove("hidden");
+    charts.forEach(function (chart, i) {
+      carouselSlides.push(liveCardSlide(chart, i, charts.length));
+    });
+    document.addEventListener("securitypolicyviolation", onLiveCardViolation);
+    showLiveCard(0);
+    carouselTrack.addEventListener("scroll", followLiveCardScroll);
+    return openCarousel("live-cards", stepLiveCard);
+  }
+
+  function openCarousel(mode, step) {
     carouselTrack.addEventListener("scroll", updateCarouselNav);
     window.addEventListener("resize", updateCarouselNav);
-    carouselPrev.addEventListener("click", function () { scrollCarousel(-1); });
-    carouselNext.addEventListener("click", function () { scrollCarousel(1); });
+    carouselPrev.addEventListener("click", function () { step(-1); });
+    carouselNext.addEventListener("click", function () { step(1); });
     applyHostSurface();
     placeholder.classList.add("hidden");
     rendered = true;
     updateCarouselNav();
-    log("rendered", { mode: "carousel", slides: charts.length });
+    log("rendered", { mode: mode, slides: carouselSlides.length });
     return true;
+  }
+
+  function liveCardSlide(chart, index, total) {
+    var el = document.createElement("div");
+    el.className = "tako-slide";
+    carouselTrack.appendChild(el);
+    return {
+      chart: chart,
+      title: "Tako chart " + (index + 1) + " of " + total,
+      el: el,
+      iframe: null,
+      img: null,
+      origin: null,
+      height: 0,
+      revealed: false,
+      settled: false,
+      timer: null,
+      onLoad: null,
+      live: true,
+      mounted: false,
+      objectUrl: null,
+    };
+  }
+
+  var liveCardIndex = 0;
+  function showLiveCard(index) {
+    liveCardIndex = Math.max(0, Math.min(index, carouselSlides.length - 1));
+    var last = Math.min(liveCardIndex + 1, carouselSlides.length - 1);
+    for (var i = 0; i <= last; i++) mountLiveCard(carouselSlides[i]);
+  }
+
+  function stepLiveCard(direction) {
+    showLiveCard(liveCardIndex + direction);
+    scrollCarousel(direction);
+  }
+
+  function followLiveCardScroll() {
+    var width = slideWidth();
+    if (width > 0) showLiveCard(Math.round(carouselTrack.scrollLeft / (width + ${CAROUSEL_GAP_PX})));
+  }
+
+  function mountLiveCard(slide) {
+    if (slide.mounted) return;
+    slide.mounted = true;
+    var url = slide.chart.native_card_url;
+    if (!isHttpUrl(url) || !nativeOriginOk(url)) {
+      failLiveCard(slide, "no native card url on the pinned origin");
+      return;
+    }
+    var hostScheme = hostSchemeSnapshot();
+    var settled = false;
+    var timer = setTimeout(function () {
+      if (settled) return;
+      settled = true;
+      failLiveCard(slide, "timeout");
+    }, ${PROXIED_CARD_FETCH_TIMEOUT_MS});
+    fetch(withHostTheme(url), { credentials: "omit" })
+      .then(function (r) {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.text();
+      })
+      .then(function (html) {
+        if (settled) return;
+        if (typeof html !== "string" || html.indexOf("<html") === -1) {
+          throw new Error("not an html document");
+        }
+        var patched = injectIntoCard(html, hostSchemeStyle(hostScheme) + LIVE_CARD_REPORTER);
+        var iframe = document.createElement("iframe");
+        iframe.className = "veiled";
+        iframe.setAttribute("scrolling", "no");
+        iframe.setAttribute("frameborder", "0");
+        iframe.setAttribute("allow", "fullscreen; clipboard-write");
+        iframe.setAttribute("sandbox", "allow-scripts allow-popups allow-popups-to-escape-sandbox");
+        iframe.setAttribute("title", slide.title);
+        var objectUrl = URL.createObjectURL(new Blob([patched], { type: "text/html" }));
+        iframe.src = objectUrl;
+        settled = true;
+        clearTimeout(timer);
+        slide.iframe = iframe;
+        slide.objectUrl = objectUrl;
+        slide.el.appendChild(iframe);
+        slide.timer = setTimeout(function () {
+          dropLiveCardFrame(slide, "no height report");
+        }, IFRAME_SETTLE_MS);
+        applyHostSurface();
+        log("live card mounted", { bytes: patched.length, src: url });
+      })
+      .catch(function (err) {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        failLiveCard(slide, String(err && err.message ? err.message : err));
+      });
+  }
+
+  function dropLiveCardFrame(slide, reason) {
+    if (slide.settled || !slide.iframe) return;
+    slide.el.removeChild(slide.iframe);
+    slide.iframe = null;
+    try { URL.revokeObjectURL(slide.objectUrl); } catch (e) {}
+    slide.objectUrl = null;
+    failLiveCard(slide, reason);
+  }
+
+  function onLiveCardViolation(event) {
+    if (!isFrameSrcViolation(event)) return;
+    var reason = "csp:" + (event.effectiveDirective || event.violatedDirective);
+    carouselSlides.forEach(function (s) { dropLiveCardFrame(s, reason); });
+  }
+
+  function failLiveCard(slide, reason) {
+    var box = document.createElement("div");
+    box.className = "tako-slide-failed";
+    var message = document.createElement("p");
+    message.textContent = "Couldn't load this chart.";
+    var link = document.createElement("a");
+    link.href = slide.chart.embed_url;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    link.textContent = "Open in Tako";
+    box.appendChild(message);
+    box.appendChild(link);
+    slide.el.appendChild(box);
+    settleSlide(slide);
+    revealSlide(slide, ${LIVE_CARD_FAILURE_HEIGHT_PX});
+    log("live card failed", { reason: reason, src: slide.chart.native_card_url });
   }
 
   function mountSlide(chart, index, total, fallbackHeight) {
@@ -2095,6 +1963,7 @@ const WIDGET_HTML = `<!doctype html>
     var unsettled = carouselSlides.filter(function (s) { return !s.settled; });
     if (unsettled.length === 0) {
       document.removeEventListener("securitypolicyviolation", onCarouselViolation);
+      document.removeEventListener("securitypolicyviolation", onLiveCardViolation);
     }
   }
 
@@ -2178,8 +2047,18 @@ const WIDGET_HTML = `<!doctype html>
 
   function onCarouselEmbedHeight(event, height) {
     var slide = carouselSlideFor(event.source);
-    if (!slide || event.origin !== slide.origin) return;
+    if (!slide || slide.live || event.origin !== slide.origin) return;
+    resizeSlide(slide, acceptedEmbedHeight(height));
+  }
+
+  function onLiveCardHeight(event, height) {
+    var slide = carouselSlideFor(event.source);
+    if (!slide || !slide.live) return;
     var n = acceptedEmbedHeight(height);
+    resizeSlide(slide, n === null ? null : Math.min(n, ${MAX_INLINE_WIDGET_HEIGHT_PX}));
+  }
+
+  function resizeSlide(slide, n) {
     if (n === null) return;
     settleSlide(slide);
     revealSlide(slide, n);
@@ -2218,15 +2097,19 @@ const WIDGET_HTML = `<!doctype html>
   }
 
   function updateCarouselNav() {
-    var shown = anySlideRevealed();
+    var shown = carouselSlides.length > 1 && anySlideRevealed();
     var maxScroll = carouselTrack.scrollWidth - carouselTrack.clientWidth;
     carouselPrev.classList.toggle("hidden", !shown || carouselTrack.scrollLeft <= 1);
     carouselNext.classList.toggle("hidden", !shown || carouselTrack.scrollLeft >= maxScroll - 1);
   }
 
-  function scrollCarousel(direction) {
+  function slideWidth() {
     var first = carouselSlides.length > 0 ? carouselSlides[0].el : null;
-    var step = (first ? first.getBoundingClientRect().width : 0) + ${CAROUSEL_GAP_PX};
+    return first ? first.getBoundingClientRect().width : 0;
+  }
+
+  function scrollCarousel(direction) {
+    var step = slideWidth() + ${CAROUSEL_GAP_PX};
     if (typeof carouselTrack.scrollBy === "function") {
       carouselTrack.scrollBy({ left: direction * step, behavior: "smooth" });
     } else {
@@ -2251,6 +2134,15 @@ const WIDGET_HTML = `<!doctype html>
     if (isAgentResult(structuredContent) && structuredContent.status === "running") {
       collapseAndClose();
       log("running agent result, closed widget");
+      return true;
+    }
+    if (!hasOpenAiRuntime() || isLiveCardPayload(structuredContent, meta)) {
+      var liveCards = carouselCharts(pickChartList(structuredContent, meta));
+      if (liveCards.length > 0) {
+        return renderLiveCards(liveCards);
+      }
+      collapse(looksComplete(structuredContent) && !chartSentAsContent(structuredContent, meta));
+      log("no live card in the result, collapsed widget");
       return true;
     }
     structuredContent = promoteAgentChart(structuredContent, meta);
@@ -2278,10 +2170,8 @@ const WIDGET_HTML = `<!doctype html>
     // forever and stacks a 240-px-tall empty widget box in the chat.
     // Detect the empty shape by the absence of any chart URL:
     // \`embed_url\` and \`image_url\` are mutually present-or-absent on the
-    // handler side (see \`buildSearchOutput\` in \`_search_results.ts\`),
-    // and \`image_data_url\` is derived from \`image_url\` server-side
-    // (\`extraMeta\` only runs when \`image_url\` is present), so the
-    // \`!image_url && !embed_url\` check covers all three.
+    // handler side (see \`buildSearchOutput\` in \`_search_results.ts\`), so
+    // the \`!image_url && !embed_url\` check covers both.
     if (
       typeof structuredContent.embed_url !== "string" &&
       typeof structuredContent.image_url !== "string"
@@ -2297,31 +2187,11 @@ const WIDGET_HTML = `<!doctype html>
     var chartList = pickChartList(structuredContent, meta);
     persistWidgetState(structuredContent, chartList);
     var slideCharts = carouselCharts(chartList);
-    if (hasOpenAiRuntime() && slideCharts.length >= 2) {
+    if (slideCharts.length >= 2) {
       return renderCarousel(slideCharts, requestedHeight(structuredContent));
     }
     var url = structuredContent.embed_url;
     var imgUrl = structuredContent.image_url;
-    // \`image_data_url\` and PNG natural dimensions live on \`_meta\`
-    // (not on \`structuredContent\`) so the ~250 KB data URI doesn't
-    // get tokenized into the LLM's context window — claude.ai
-    // otherwise rejects the tool result as too large. Hosts using the
-    // \`window.openai\` path (ChatGPT) ignore \`_meta\` entirely; they
-    // don't need the data URI because their CSP allows cross-origin
-    // \`<img src>\`.
-    var imgDataUrl = meta && typeof meta === "object" ? meta.image_data_url : undefined;
-    // Server-controlled probe opt-in. Absent/false → never probe.
-    var probeEnabled =
-      meta && typeof meta === "object" && meta.interactive_probe === true;
-    // Proxied embed-page URL for the native upgrade. Absent → PNG only.
-    // Origin-pinned like the embed url, and for a stronger reason: this url
-    // gets fetched and document.write()n — see EXPECTED_NATIVE_ORIGIN.
-    var nativeCardUrl =
-      meta && typeof meta === "object" &&
-      typeof meta.native_card_url === "string" &&
-      nativeOriginOk(meta.native_card_url)
-        ? meta.native_card_url
-        : "";
     var imgNaturalW = meta && typeof meta === "object" && typeof meta.image_natural_width === "number"
       ? meta.image_natural_width : 0;
     var imgNaturalH = meta && typeof meta === "object" && typeof meta.image_natural_height === "number"
@@ -2330,7 +2200,7 @@ const WIDGET_HTML = `<!doctype html>
     // as the requested height and is replaced by the aspect-derived one when
     // the card's PNG dimensions are known.
     var committedHeight = null;
-    // Defense-in-depth: re-validate URL/DataURL schemes before
+    // Defense-in-depth: re-validate URL schemes before
     // assigning to \`iframe.src\` / \`img.src\`. The handler validates
     // server-side too, but the widget is the last hop before the DOM,
     // so a hostile MCP server shipping \`javascript:\` would otherwise
@@ -2339,20 +2209,10 @@ const WIDGET_HTML = `<!doctype html>
       typeof url === "string" &&
       /^https?:\\/\\//.test(url) &&
       embedOriginOk(url);
-    var validDataImage = typeof imgDataUrl === "string" && imgDataUrl.indexOf("data:image/") === 0;
-    var validHttpImage = typeof imgUrl === "string" && /^https?:\\/\\//.test(imgUrl);
-    // Prefer the inlined \`data:\` URI over the cross-origin URL — the
-    // data URI works under restrictive \`img-src\` CSPs (claude.ai for
-    // custom connectors), while the http URL only renders on hosts
-    // with permissive img-src (ChatGPT and most others). Fall back to
-    // the http URL when the worker couldn't inline (size cap or fetch
-    // failure).
-    var imageSrc = validDataImage ? imgDataUrl : validHttpImage ? imgUrl : null;
-    var validImage = imageSrc !== null;
+    var imageSrc = typeof imgUrl === "string" && /^https?:\\/\\//.test(imgUrl) ? imgUrl : null;
     var h = requestedHeight(structuredContent);
-    var useIframe = hasOpenAiRuntime() && validEmbed;
 
-    if (useIframe) {
+    if (validEmbed) {
       // Tracking-free, then themed. This is the ChatGPT path: a committed
       // cross-origin iframe of the embed page, and the surface OpenAI's iframe
       // policy reviews — so it must not load a third-party beacon. See
@@ -2444,10 +2304,8 @@ const WIDGET_HTML = `<!doctype html>
       window.addEventListener("resize", refitCommittedFrame);
       singleFramePayload = structuredContent;
       singleFrameAwaitingMeta = !hasWidgetMeta(meta);
-      // Watchdog on the committed iframe — the mirror image of
-      // \`probeInteractiveIframe\`. That one starts from the PNG and upgrades
-      // to the iframe if the host allows it; this one starts from the iframe
-      // and falls back to the PNG if it never loads.
+      // Watchdog on the committed iframe: it starts from the iframe and falls
+      // back to the PNG if it never loads.
       //
       // Only this path lacked a fallback, and it is the path ChatGPT takes.
       // \`hasOpenAiRuntime()\` says the host's CSP is *expected* to permit
@@ -2461,67 +2319,33 @@ const WIDGET_HTML = `<!doctype html>
       watchCommittedIframe(url, {
         imageSrc: imageSrc,
         validEmbed: validEmbed,
-        height: h,
-        isDataUrl: validDataImage,
-        imageUrl: imgUrl,
         onLoaded: revealCommittedFrame,
       });
-    } else if (validImage) {
+    } else if (imageSrc !== null) {
       return paintImage({
         embedUrl: url,
         imageSrc: imageSrc,
         validEmbed: validEmbed,
-        height: h,
-        isDataUrl: validDataImage,
-        imageUrl: imgUrl,
-        allowProbe: true,
-        probeEnabled: probeEnabled,
-        nativeCardUrl: nativeCardUrl,
       });
-    } else if (validEmbed) {
-      // No image at all but we have an embed_url — try the iframe even
-      // on hosts we'd normally treat as restricted. Worst case the
-      // host CSP-blocks it and the user sees the same "blocked" tile
-      // they'd otherwise have seen; best case some host without
-      // \`window.openai\` actually allows the iframe.
-      //
-      // Stripped of tracking like every other iframe load — see
-      // \`withoutTracking\`. This branch needs a non-http(s) \`image_url\`
-      // alongside a valid \`embed_url\`, which the server does not currently
-      // emit, so it is unreachable today. It is cleaned anyway: the invariant
-      // the widget promises the ChatGPT app review is "every iframe load
-      // the widget performs", and holding that by construction beats holding
-      // it because two fields happen to always ship together. \`withoutTracking\`
-      // is idempotent and allocation-cheap, so there is nothing to trade off.
-      var untrackedUrl = withoutTracking(url);
-      if (frame.src !== untrackedUrl) frame.src = untrackedUrl;
-      armEmbedOrigin(untrackedUrl);
-      setFrameHeight(h);
-      frame.classList.remove("hidden");
     } else {
       // Nothing usable; leave the placeholder visible.
       return false;
     }
 
-    // Reached only by the iframe paths (\`useIframe\` or the no-image
-    // \`validEmbed\` fallback) — the \`validImage\` branch returns early
-    // above so its load/error listeners can manage placeholder/height
-    // atomically. \`h\` matches the height we just pinned on the iframe.
+    // Reached only by the committed-iframe branch — the image branch returns
+    // early above so its load/error listeners can manage placeholder/height
+    // atomically.
     placeholder.classList.add("hidden");
     rendered = true;
-    var finalHeight = committedHeight !== null ? committedHeight : h;
     // The committed-iframe branch defers the host height notification to
     // \`revealCommittedFrame\` — announcing the full chart height here is
-    // what used to expand the card around a still-loading embed. The
-    // no-image \`validEmbed\` fallback keeps the immediate notify: it has
-    // no watchdog wired to reveal it later.
-    if (!useIframe) notifyHeight(finalHeight);
+    // what used to expand the card around a still-loading embed.
     log("rendered", {
-      mode: useIframe ? "iframe" : "iframe-fallback",
+      mode: "iframe",
       src: url,
-      height: finalHeight,
-      fitted: committedHeight !== null,
-      revealDeferred: useIframe,
+      height: committedHeight,
+      fitted: true,
+      revealDeferred: true,
     });
     return true;
   }
@@ -2540,9 +2364,9 @@ const WIDGET_HTML = `<!doctype html>
   // emits its six widget fields all-or-nothing, so no server path produces
   // that pair alone.
   //
-  // Claude does not have this failure mode — it gets a per-call dynamic
-  // \`ui/resourceUri\` carrying the \`pub_id\`, so the URI itself identifies the
-  // card. ChatGPT reads its template URI from static \`tools/list\` registration
+  // Claude does not have this failure mode — an MCP Apps host hands the widget
+  // the whole tool result, \`_meta\` included, in
+  // \`ui/notifications/tool-result\`. ChatGPT reads its template URI from static \`tools/list\` registration
   // metadata (see the \`ui?.dynamic\` block in mcp.ts, which deliberately does
   // NOT override \`openai/outputTemplate\`), so the widget has no identity of
   // its own and \`toolOutput\` is its only source. Widget state is the Apps
@@ -2550,12 +2374,9 @@ const WIDGET_HTML = `<!doctype html>
   // \`window.openai.widgetState\` is restored on reload.
   //
   // The structuredContent half is mirrored, plus the small \`charts\` list from
-  // \`_meta\`. The big \`_meta\` fields (the baked \`image_data_url\`) are
-  // deliberately NOT persisted: \`image_data_url\` is up to 400 KB
-  // against a store the SDK documents as ephemeral and widget-scoped, and the
-  // ChatGPT path never reads it anyway — that host's permissive \`img-src\`
-  // renders the cross-origin \`image_url\` directly. A restored render on
-  // ChatGPT therefore takes the same branch it took the first time.
+  // \`_meta\`. Nothing else is needed: that host's permissive \`img-src\`
+  // renders the cross-origin \`image_url\` directly, so a restored render on
+  // ChatGPT takes the same branch it took the first time.
   var lastPersistedKey = null;
   function persistWidgetState(structuredContent, charts) {
     var w = window;
@@ -2612,7 +2433,6 @@ const WIDGET_HTML = `<!doctype html>
     return (
       typeof o.image_natural_width === "number" ||
       Array.isArray(o.charts) ||
-      typeof o.image_data_url === "string" ||
       typeof o.native_card_url === "string"
     );
   }
@@ -2711,10 +2531,18 @@ const WIDGET_HTML = `<!doctype html>
     return (
       isAgentResult(structuredContent) &&
       !hasChart(structuredContent) &&
-      Array.isArray(structuredContent.cards) &&
-      structuredContent.cards.length > 0 &&
+      hasCards(structuredContent) &&
       !(meta && typeof meta === "object" && Array.isArray(meta.charts))
     );
+  }
+
+  function hasCards(o) {
+    return Array.isArray(o.cards) && o.cards.length > 0;
+  }
+
+  function chartSentAsContent(structuredContent, meta) {
+    if (pickChartList(structuredContent, meta)) return false;
+    return hasChart(structuredContent) || hasCards(structuredContent);
   }
 
   function widgetStateMirror() {
@@ -2955,8 +2783,7 @@ const WIDGET_HTML = `<!doctype html>
   // Collapsing is the same thing the no-chart guard in \`render()\` already
   // does for a SUCCESSFUL zero-card result; a failed call deserves the same
   // treatment rather than a different one. \`rendered\` makes this a no-op once
-  // any chart has painted, and the 10 s bound matches the polling window so it
-  // cannot race a slow-but-arriving delivery.
+  // any chart has painted.
   //
   // Labelled or blank, decided HERE and only here for the ChatGPT
   // channels: when an error signal was sighted during the window
@@ -2975,6 +2802,11 @@ const WIDGET_HTML = `<!doctype html>
     if (agentChartsPending) {
       collapseAndClose();
       log("agent charts never arrived, closed widget");
+      return;
+    }
+    if (!hasOpenAiRuntime()) {
+      shrinkToZero();
+      log("no data arrived, collapsed widget until a tool-result lands");
       return;
     }
     collapse(false);
@@ -3064,8 +2896,8 @@ const WIDGET_HTML = `<!doctype html>
   // \`initialized\` at 200, it posts \`tool-result\` at 210, its response arrives
   // at 350. postMessage preserves per-source order, so the tool-result is
   // dispatched first and \`render()\` latches with \`mcpHostTheme === null\` — the
-  // card themed from the OS, unrecoverably (\`rendered\` latches, and
-  // \`nativeStarted\` blocks the retry). That is the bug this file exists to fix,
+  // card themed from the OS, unrecoverably (\`rendered\` latches, so nothing
+  // retries). That is the bug this file exists to fix,
   // reappearing on exactly the first-mount timing the 200 ms window was chosen
   // for.
   //
@@ -3210,10 +3042,8 @@ const WIDGET_HTML = `<!doctype html>
     // Theme (or display mode) changed after initialize. Merging keeps the
     // next chart correct.
     //
-    // What this does NOT do: re-theme a chart already on screen. The native
-    // upgrade replaces this document via \`document.open()\`, which discards
-    // this script and its listeners, and the baked PNG is a single
-    // pre-rendered \`data:\` URI with no light twin to swap to. So a mid-
+    // What this does NOT do: re-theme a chart already on screen. A live card's
+    // \`blob:\` frame keeps the document it was fetched with. So a mid-
     // conversation toggle re-themes from the next tool call onward, and
     // already-rendered cards keep the theme they were drawn with.
     if (
@@ -3254,7 +3084,7 @@ const WIDGET_HTML = `<!doctype html>
         return;
       }
       // Forward both \`structuredContent\` (LLM-visible payload) and
-      // \`_meta\` (metadata-only payload, where \`image_data_url\` lives).
+      // \`_meta\` (metadata-only payload, where \`charts\` lives).
       // Per the MCP Apps spec §"Wire protocol — Host → View
       // notification", \`params._meta\` is part of the tool-result
       // notification.
@@ -3264,6 +3094,10 @@ const WIDGET_HTML = `<!doctype html>
         // Label now instead of leaving the box to the silent watchdog.
         collapseFailed();
       }
+      return;
+    }
+    if (msg.type === "tako-live-card-height") {
+      onLiveCardHeight(event, msg.height);
       return;
     }
     if (msg.type === "tako-embed-height" && carouselSlideFor(event.source)) {
@@ -3561,10 +3395,10 @@ export async function fetchImageDataUrlAndDims(
 
 /**
  * Fetch the chart PNG and return it as a single MCP `image` content
- * block. Used by both tools' `extraContentBlocks` hook on unknown
- * clients — the one bucket where the widget bundle is suppressed
- * entirely (ChatGPT and Claude both get the widget; see
- * `widgetSuppressed` in mcp.ts).
+ * block. Used by the `extraContentBlocks` hook of `tako_search` and
+ * `tako_visualize`, which mcp.ts runs whenever no widget is live for the
+ * call (`widgetLive`): every `/mcp` client that doesn't declare MCP Apps
+ * support, and a `ui-` session when live cards can't be served.
  *
  * All failure modes (timeout, !ok, wrong content-type, 0-byte body,
  * oversize, network error) return `[]` so the tool call still resolves
@@ -3625,20 +3459,17 @@ export async function fetchPngContentBlock(
 }
 
 /**
- * Build the chart widget's `AppUiResource`. `tako_search` registers the
- * `ui://tako/embed/chart` URI; `mcp.ts`'s registration loop dedupes
- * repeat registrations of the same URI so the SDK doesn't throw
+ * Build the chart widget's `AppUiResource` for one surface. Every chart tool
+ * registers the same URI; `mcp.ts`'s registration loop dedupes repeat
+ * registrations of the same URI so the SDK doesn't throw
  * `Resource ui://... is already registered`.
  *
- * The static URI loads the iframe widget (used by ChatGPT, and by
- * claude.ai today — see the "Conclusion" comment in `mcp.ts` near the
- * dynamic ResourceTemplate registration). The dynamic per-pub_id URI
- * bakes the chart image into the resource HTML instead; it's retained
- * for a future host that honors per-call `resourceUri` overrides (the
- * host would snapshot `documentElement.offsetHeight` once on widget
- * mount, so baking the image in up front avoids a missed resize), but
- * claude.ai currently ignores per-call overrides and stays on the
- * static URI + baked `_meta.image_data_url` from `extraMeta`.
+ * Both surfaces serve the same static bundle under their own URI (see
+ * `appUiResourceUri`). The chatgpt surface also registers the dynamic
+ * per-pub_id template, which bakes the chart image into the resource HTML;
+ * it's retained for a host that honors per-call `resourceUri` overrides (the
+ * host would snapshot `documentElement.offsetHeight` once on widget mount,
+ * so baking the image in up front avoids a missed resize).
  *
  * `resolveUriFromInput` reads the top card's `pub_id` from the tool
  * output (the search input is a query, not a pub_id) and returns
@@ -3649,15 +3480,15 @@ export async function fetchPngContentBlock(
 export function buildChartAppUiResource(
   env: Env,
   requestOrigin: string | undefined,
+  surface: Surface,
   resolveUriFromInput: (input: unknown, output?: unknown) => string | undefined,
 ): AppUiResource {
   const webBase = resolvePublicBase(env);
   return {
-    // Static URI — registered as before, used by ChatGPT (which reads
-    // the widget URI from `_meta["openai/outputTemplate"]`) for its
-    // interactive iframe path. Also serves any host that doesn't honor
-    // per-call URI overrides.
-    uri: appUiResourceUri(env),
+    // Static URI for this surface: `ui://tako/embed/chart` on the chatgpt
+    // surface, which ChatGPT reads from `_meta["openai/outputTemplate"]`,
+    // and `ui://tako/embed/live-card` on `/mcp`.
+    uri: appUiResourceUri(env, surface),
     name: APP_UI_RESOURCE_NAME,
     widgetDescription: CHART_WIDGET_DESCRIPTION,
     // Pin the embed iframe to the env's public web origin — derived from the
@@ -3691,13 +3522,6 @@ export function buildChartAppUiResource(
     // base; the primary data-URI path needs no CSP. webBase covers any
     // future web-hosted asset. Deduped — staging/prod use one host for
     // both.
-    // Plus, when the `PUBLIC_CDN_URL` experiment is armed, the front-end
-    // asset CDN — the origin that serves Tako's real `Card.js`, its lazily
-    // imported chunks, and the Geist/Inter fonts. Declaring it is what the
-    // `script-src` capability probe below actually measures: per the MCP Apps
-    // spec `resourceDomains` must reach script-src/style-src/font-src, and
-    // whether claude.ai honors that is the single unknown gating native
-    // interactive cards there. Unset in production → this array is unchanged.
     // Runtime fetches the widget makes — just this worker's own origin, for the
     // native-card proxy. Empty when the experiment is off or the origin is
     // unknown, and `mcp.ts` omits the key entirely then. Never tako.com: the
@@ -3727,13 +3551,12 @@ export function buildChartAppUiResource(
         ].filter((origin): origin is string => origin !== undefined),
       ),
     ],
-    // Dynamic-resource variant — registered as a `ResourceTemplate`,
-    // one URI per pub_id. Per-call tool result overrides
-    // `_meta.ui.resourceUri` to point claude.ai at a specific
-    // instance, where the widget HTML has the chart's image and
-    // dimensions baked in at fetch time. See `AppUiResource.dynamic`
-    // and `buildBakedWidgetHtml` for the why.
-    dynamic: {
+    // Dynamic-resource variant, on the chatgpt surface only — registered as
+    // a `ResourceTemplate`, one URI per pub_id. Per-call tool results override
+    // `_meta.ui.resourceUri` with a specific instance, where the widget HTML
+    // has the chart's image and dimensions baked in at fetch time. See
+    // `AppUiResource.dynamic` and `buildBakedWidgetHtml` for the why.
+    ...(surface === "chatgpt" ? { dynamic: {
       uriPattern: appUiTemplateUriPattern(env),
       templateName: APP_UI_TEMPLATE_NAME,
       async renderHtml(variables, ctx) {
@@ -3771,7 +3594,7 @@ export function buildChartAppUiResource(
         });
       },
       resolveUriFromInput,
-    },
+    } } : {}),
   };
 }
 
@@ -3792,9 +3615,10 @@ export function buildChartAppUiResource(
  */
 export function buildChartAppUiResourceFromOutputPubId(
   env: Env,
-  requestOrigin?: string,
+  requestOrigin: string | undefined,
+  surface: Surface,
 ): AppUiResource {
-  return buildChartAppUiResource(env, requestOrigin, (_input, output) => {
+  return buildChartAppUiResource(env, requestOrigin, surface, (_input, output) => {
     const pubId = topOutputPubId(output);
     if (pubId === undefined) return undefined;
     return appUiTemplateUriPattern(env).replace(

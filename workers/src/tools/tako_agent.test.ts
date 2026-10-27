@@ -248,8 +248,8 @@ describe("tako_agent over MCP", () => {
     const server = createMcpServer(
       { ...ctx, surface },
       surface === "chatgpt"
-        ? { surface }
-        : { surface, requestedToolNames: new Set(["tako_agent"]) },
+        ? { surface, clientRendersUi: true }
+        : { surface, clientRendersUi: false, requestedToolNames: new Set(["tako_agent"]) },
     );
     const client = new Client(
       { name: "agent-test", version: "0.0.0" },
@@ -333,6 +333,45 @@ describe("tako_agent over MCP", () => {
     const result = await callAgent({ run_id: "answer_run_x" }, "chatgpt");
 
     expect((result._meta?.charts as { pub_id: string }[]).map((c) => c.pub_id)).toEqual(["c1", "c2"]);
+  });
+});
+
+describe("tako_agent extraMeta on generic", () => {
+  const liveCtx = {
+    ...ctx,
+    env: { DJANGO_BASE_URL: "https://trytako.com", PUBLIC_CDN_URL: "https://cdn.trytako.com" } as Env,
+    origin: "https://mcp.tako.com",
+  } as ToolContext;
+  const finished = (cards: Record<string, unknown>[]) => ({
+    ...cardsOutput(cards),
+  });
+  function cardsOutput(cards: Record<string, unknown>[]) {
+    return {
+      status: "completed",
+      charts: cards.map((c) => ({
+        pub_id: c.card_id,
+        embed_url: `e/${String(c.card_id)}`,
+        image_url: `i/${String(c.card_id)}`,
+      })),
+    };
+  }
+
+  it("returns two live-card charts and fetches nothing", async () => {
+    const fetchSpy = vi.fn<typeof fetch>();
+    vi.stubGlobal("fetch", fetchSpy);
+    const meta = await tool.extraMeta!(finished([{ card_id: "c1" }, { card_id: "c2" }]) as never, liveCtx);
+    expect(Object.keys(meta ?? {})).toEqual(["charts"]);
+    const entries = (meta as { charts: Record<string, unknown>[] }).charts;
+    expect(entries.map((c) => c.pub_id)).toEqual(["c1", "c2"]);
+    for (const entry of entries) {
+      expect(entry.native_card_url).toEqual(expect.stringContaining(String(entry.pub_id)));
+    }
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("returns undefined for a running run", async () => {
+    const meta = await tool.extraMeta!({ status: "running", run_id: "answer_run_x" } as never, liveCtx);
+    expect(meta).toBeUndefined();
   });
 });
 

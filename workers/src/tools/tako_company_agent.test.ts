@@ -175,7 +175,7 @@ describe("tako_company_agent over MCP", () => {
     });
     vi.stubGlobal("fetch", vi.fn<typeof fetch>(async () => Promise.reject(new Error("offline"))));
     vi.spyOn(console, "error").mockImplementation(() => {});
-    const server = createMcpServer({ ...ctx, surface: "chatgpt" }, { surface: "chatgpt" });
+    const server = createMcpServer({ ...ctx, surface: "chatgpt" }, { surface: "chatgpt", clientRendersUi: true });
     const client = new Client(
       { name: "company-agent-test", version: "0.0.0" },
       { jsonSchemaValidator: new CfWorkerJsonSchemaValidator() },

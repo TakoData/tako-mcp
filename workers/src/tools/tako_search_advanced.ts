@@ -48,9 +48,9 @@
  *
  * NO WIDGET HOOKS, and the reason is a COST choice, not a surface rule. The
  * earlier comment here said the inline PNG "belongs to the default surface, and
- * this tool is never on it" — that is wrong twice over: mcp.ts gates the widget
- * on the SURFACE (`widgetSuppressed = options.surface !== "chatgpt"`) and runs
- * `extraContentBlocks` whenever `ui === undefined`, which on `/mcp` is always;
+ * this tool is never on it" — that is wrong twice over: mcp.ts decides per
+ * call (`widgetLive`) and runs `extraContentBlocks` whenever no widget is live,
+ * which on `/mcp` is every client that doesn't declare MCP Apps support;
  * and a tool may declare both hooks while opt-in on `/mcp` — `tako_answer` did,
  * before the answer fold deleted it, and `tako_search` declares them today.
  * Listing membership has nothing to do with it, so a future reader must not

@@ -17,7 +17,7 @@ describe("appUiResourceUri (dev cache-bust)", () => {
   // remove/re-add, so a stale bundle is invisible unless the URI changes. This
   // is the dev-only lever for that; it must be inert unless explicitly set.
   it("is the stable URI when the suffix is unset", () => {
-    expect(appUiResourceUri({ DJANGO_BASE_URL: "https://x.test" } as never)).toBe(
+    expect(appUiResourceUri({ DJANGO_BASE_URL: "https://x.test" } as never, "chatgpt")).toBe(
       APP_UI_RESOURCE_URI,
     );
   });
@@ -27,7 +27,7 @@ describe("appUiResourceUri (dev cache-bust)", () => {
       appUiResourceUri({
         DJANGO_BASE_URL: "https://x.test",
         WIDGET_URI_SUFFIX: "",
-      } as never),
+      } as never, "chatgpt"),
     ).toBe(APP_UI_RESOURCE_URI);
   });
 
@@ -36,7 +36,7 @@ describe("appUiResourceUri (dev cache-bust)", () => {
       appUiResourceUri({
         DJANGO_BASE_URL: "https://x.test",
         WIDGET_URI_SUFFIX: "dev42",
-      } as never),
+      } as never, "chatgpt"),
     ).toBe(APP_UI_RESOURCE_URI + "-dev42");
   });
 
@@ -47,7 +47,7 @@ describe("appUiResourceUri (dev cache-bust)", () => {
       appUiResourceUri({
         DJANGO_BASE_URL: "https://x.test",
         WIDGET_URI_SUFFIX: "a b/c?d",
-      } as never),
+      } as never, "chatgpt"),
     ).toBe(APP_UI_RESOURCE_URI + "-abcd");
   });
 
@@ -56,14 +56,55 @@ describe("appUiResourceUri (dev cache-bust)", () => {
       appUiResourceUri({
         DJANGO_BASE_URL: "https://x.test",
         WIDGET_URI_SUFFIX: "///",
-      } as never),
+      } as never, "chatgpt"),
     ).toBe(APP_UI_RESOURCE_URI);
+  });
+});
+
+describe("appUiResourceUri by surface", () => {
+  const base = { DJANGO_BASE_URL: "https://x.test" } as never;
+
+  it("gives the generic surface the live-card URI", () => {
+    expect(appUiResourceUri(base, "generic")).toBe("ui://tako/embed/live-card");
+  });
+
+  it("applies the suffix to the generic URI", () => {
+    expect(
+      appUiResourceUri(
+        { DJANGO_BASE_URL: "https://x.test", WIDGET_URI_SUFFIX: "v2" } as never,
+        "generic",
+      ),
+    ).toBe("ui://tako/embed/live-card-v2");
+  });
+
+  it("keeps the chatgpt surface on the chart URI", () => {
+    expect(appUiResourceUri(base, "chatgpt")).toBe("ui://tako/embed/chart");
+  });
+});
+
+describe("buildChartAppUiResourceFromOutputPubId by surface", () => {
+  it("omits the baked-PNG template on generic", () => {
+    const ui = buildChartAppUiResourceFromOutputPubId(ENV, undefined, "generic");
+    expect(ui.dynamic).toBeUndefined();
+  });
+
+  it("keeps the baked-PNG template on chatgpt", () => {
+    const ui = buildChartAppUiResourceFromOutputPubId(ENV, undefined, "chatgpt");
+    expect(ui.dynamic?.uriPattern).toBe("ui://tako/embed/chart/{pub_id}");
+  });
+
+  it("serves the same bundle and domains on both surfaces", () => {
+    const generic = buildChartAppUiResourceFromOutputPubId(ENV, "https://mcp.example.test", "generic");
+    const chatgpt = buildChartAppUiResourceFromOutputPubId(ENV, "https://mcp.example.test", "chatgpt");
+    expect(generic.html).toBe(chatgpt.html);
+    expect(generic.connectDomains).toEqual(chatgpt.connectDomains);
+    expect(generic.resourceDomains).toEqual(chatgpt.resourceDomains);
   });
 });
 
 describe("chart widget HTML", () => {
   it("notifies height via the MCP Apps size-changed notification", () => {
-    const ui = buildChartAppUiResourceFromOutputPubId(ENV);
+    const ui = buildChartAppUiResourceFromOutputPubId(ENV, undefined, "chatgpt");
     // claude.ai tracks widget height via the open-spec JSON-RPC
     // notification over postMessage; window.openai.notifyIntrinsicHeight
     // covers ChatGPT only.
@@ -103,7 +144,7 @@ describe("chart widget HTML", () => {
     // Long-hand offsets vs the `inset` shorthand is NOT asserted: both have
     // shipped everywhere since 2021, so pinning the spelling would only fail a
     // future cleanup.
-    const ui = buildChartAppUiResourceFromOutputPubId(ENV);
+    const ui = buildChartAppUiResourceFromOutputPubId(ENV, undefined, "chatgpt");
     expect(ui.html).toContain("#tako-empty");
     expect(ui.html).toMatch(/#tako-empty\s*\{[^}]*position:\s*fixed/);
     expect(ui.html).toMatch(/#tako-empty\s*\{[^}]*height:\s*100vh/);
@@ -115,7 +156,7 @@ describe("chart widget HTML", () => {
     // `prefers-color-scheme` dark override. A single compromise grey was worse
     // in BOTH directions — 3.25:1 against 4.83:1 on white — and 13px normal
     // text needs 4.5:1, not the 3:1 large-text threshold.
-    const ui = buildChartAppUiResourceFromOutputPubId(ENV);
+    const ui = buildChartAppUiResourceFromOutputPubId(ENV, undefined, "chatgpt");
     expect(ui.html).toMatch(/#tako-empty\s*\{[^}]*color:\s*#6b7280/);
     expect(ui.html).toMatch(
       /@media\s*\(prefers-color-scheme:\s*dark\)\s*\{\s*#tako-empty\s*\{\s*color:\s*#b4b8bd/,
@@ -123,7 +164,7 @@ describe("chart widget HTML", () => {
   });
 
   it("declares resourceDomains so the remote image fallback loads on claude.ai", () => {
-    const ui = buildChartAppUiResourceFromOutputPubId(ENV);
+    const ui = buildChartAppUiResourceFromOutputPubId(ENV, undefined, "chatgpt");
     // image_url is served from the public API base; the embed page from
     // the web base. Both must be CSP-allowed for the <img> fallback.
     expect(ui.resourceDomains).toBeDefined();
@@ -171,7 +212,7 @@ describe("embed origin pin (clipboard-write scope)", () => {
   // served bundle must pin the frame to the env's own web origin, the same
   // value buildChartUrls writes into embed_url.
   it("substitutes the placeholder with the env's public web origin", () => {
-    const ui = buildChartAppUiResourceFromOutputPubId(ENV);
+    const ui = buildChartAppUiResourceFromOutputPubId(ENV, undefined, "chatgpt");
     expect(ui.html).not.toContain("__EXPECTED_EMBED_ORIGIN__");
     expect(ui.html).toContain(
       'var EXPECTED_EMBED_ORIGIN = "https://staging.trytako.com"',
@@ -205,7 +246,7 @@ describe("pin substitution edge cases", () => {
     const ui = buildChartAppUiResourceFromOutputPubId({
       DJANGO_BASE_URL: "https://staging.trytako.com",
       PUBLIC_BASE_URL: "https://staging.trytako.com/app",
-    } as Env);
+    } as Env, undefined, "chatgpt");
     expect(ui.html).toContain(
       'var EXPECTED_EMBED_ORIGIN = "https://staging.trytako.com"',
     );
@@ -215,6 +256,7 @@ describe("pin substitution edge cases", () => {
     const ui = buildChartAppUiResourceFromOutputPubId(
       ENV,
       "https://mcp.example.test",
+      "chatgpt",
     );
     expect(ui.html).toContain(
       'var EXPECTED_NATIVE_ORIGIN = "https://mcp.example.test"',
@@ -225,7 +267,7 @@ describe("pin substitution edge cases", () => {
     // No requestOrigin and no PUBLIC_MCP_URL: the native path is off in this
     // configuration (nativeCardUrl resolves to undefined server-side), so the
     // widget keeps the scheme-only behavior rather than refusing everything.
-    const ui = buildChartAppUiResourceFromOutputPubId(ENV);
+    const ui = buildChartAppUiResourceFromOutputPubId(ENV, undefined, "chatgpt");
     expect(ui.html).toContain(
       'var EXPECTED_NATIVE_ORIGIN = "__EXPECTED_NATIVE_ORIGIN__"',
     );

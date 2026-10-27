@@ -48,7 +48,7 @@ const STRIPPED = { width: 900, height: 720 };
  * synchronous path, and the one `pickPayload` is written against.
  */
 function page(title: string, note: string, openaiLiteral: string): string {
-  const bundle = buildChartAppUiResourceFromOutputPubId(ENV).html;
+  const bundle = buildChartAppUiResourceFromOutputPubId(ENV, undefined, "chatgpt").html;
   const boot = `<script>
     window.__takoLog = [];
     window.openai = ${openaiLiteral};

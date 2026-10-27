@@ -71,6 +71,46 @@ async function listToolNames(url: string): Promise<string[]> {
   return body.result.tools.map((t) => t.name).sort();
 }
 
+function postMcp(
+  url: string,
+  message: { method: string; params?: unknown },
+  sessionId?: string,
+): Promise<Response> {
+  return SELF.fetch(url, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      accept: "application/json, text/event-stream",
+      authorization: AUTH_HEADER,
+      ...(sessionId !== undefined ? { "mcp-session-id": sessionId } : {}),
+    },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 2, params: {}, ...message }),
+  });
+}
+
+function initializeMessage(declaresUi: boolean) {
+  return {
+    method: "initialize",
+    params: {
+      protocolVersion: "2025-11-25",
+      capabilities: declaresUi
+        ? { extensions: { "io.modelcontextprotocol/ui": { mimeTypes: ["text/html;profile=mcp-app"] } } }
+        : {},
+      clientInfo: { name: "test-client", version: "0.0.0" },
+    },
+  };
+}
+
+async function toolSearchWidgetUri(url: string): Promise<string> {
+  const res = await postMcp(url, { method: "tools/list" });
+  const body = (await res.json()) as {
+    result: { tools: Array<{ name: string; _meta?: { ui?: { resourceUri?: string } } }> };
+  };
+  const uri = body.result.tools.find((t) => t.name === "tako_search")?._meta?.ui?.resourceUri;
+  expect(uri).toBeTruthy();
+  return uri as string;
+}
+
 describe("worker routing", () => {
   it("GET /health returns 200 with text/plain body 'ok'", async () => {
     const res = await SELF.fetch("https://example.com/health");
@@ -466,21 +506,15 @@ describe("worker routing", () => {
       expect(t.annotations.openWorldHint, t.name).toBe(true);
     }
 
-    // MCP Apps: the generic surface never declares widget metadata
-    // (spec D14/D15) — charts ship as inline PNG `image` content blocks
-    // on tool results instead. The chatgpt-surface widget metadata is
-    // asserted in the /mcp/chatgpt tests below.
+    // MCP Apps: `/mcp` declares the widget on every connection, so the
+    // listing doesn't vary by client. Only the tools that own a widget carry it.
     for (const t of body.result.tools) {
-      const meta = t._meta as
-        | {
-            ui?: unknown;
-            "ui/resourceUri"?: unknown;
-            "openai/outputTemplate"?: unknown;
-          }
-        | undefined;
-      expect(meta?.ui).toBeUndefined();
-      expect(meta?.["ui/resourceUri"]).toBeUndefined();
-      expect(meta?.["openai/outputTemplate"]).toBeUndefined();
+      const meta = t._meta as { ui?: { resourceUri?: string } } | undefined;
+      if (t.name === "tako_search") {
+        expect(meta?.ui?.resourceUri).toBeTruthy();
+      } else {
+        expect(meta?.ui, t.name).toBeUndefined();
+      }
     }
   });
 
@@ -837,12 +871,7 @@ describe("worker routing", () => {
     expect(body.result.tools).toHaveLength(4);
   });
 
-  it("POST /mcp with visualize in the allowlist omits widget metadata (non-ChatGPT)", async () => {
-    // No User-Agent → client "unknown", the one bucket still denied the
-    // widget (see `widgetSuppressed` in mcp.ts — ChatGPT and Claude both
-    // get it). Unknown clients render the chart via the inline PNG image
-    // content block on tool results instead, so the listing must NOT
-    // declare widget metadata.
+  it("POST /mcp with visualize in the allowlist declares the widget on tako_visualize", async () => {
     const res = await SELF.fetch(
       "https://example.com/mcp?tools=search,available_data,contents,visualize",
       {
@@ -875,23 +904,13 @@ describe("worker routing", () => {
     expect(names.has("tako_agent")).toBe(false);
     expect(body.result.tools).toHaveLength(4);
 
-    // Widget metadata ships for ChatGPT and Claude only — the
-    // unknown-client listing carries none of the three widget keys (the
-    // ChatGPT default-surface and claude tools/list tests assert their
-    // presence there).
     const visualizeTool = body.result.tools.find(
       (t) => t.name === "tako_visualize",
     );
     const meta = visualizeTool?._meta as
-      | {
-          ui?: unknown;
-          "ui/resourceUri"?: unknown;
-          "openai/outputTemplate"?: unknown;
-        }
+      | { ui?: { resourceUri?: string } }
       | undefined;
-    expect(meta?.ui).toBeUndefined();
-    expect(meta?.["ui/resourceUri"]).toBeUndefined();
-    expect(meta?.["openai/outputTemplate"]).toBeUndefined();
+    expect(meta?.ui?.resourceUri).toBeTruthy();
   });
 
   it("POST /mcp tools/list actually SERVES the web-snippet contract to the client", async () => {
@@ -1005,9 +1024,7 @@ describe("worker routing", () => {
   });
 
   it("POST /mcp/chatgpt resources/list includes the chart widget bundle", async () => {
-    // The widget resource registers on the chatgpt surface only (see
-    // `widgetSuppressed` in mcp.ts — the generic surface ships the
-    // inline PNG instead).
+    // ChatGPT always gets the widget; `/mcp` gets it per connection.
     const res = await SELF.fetch("https://example.com/mcp/chatgpt", {
       method: "POST",
       headers: {
@@ -1139,15 +1156,14 @@ describe("worker routing", () => {
     expect(template?._meta).not.toHaveProperty("openai/widgetDescription");
   });
 
-  it("POST /mcp?tools=search declares no resources capability — a connection with no skills has none to serve", async () => {
+  it("POST /mcp?tools=contents declares no resources capability — a connection with no skill and no widget tool has none to serve", async () => {
     // The capability declaration is the contract, and it must match what the
-    // surface can answer. The chatgpt surface registers the chart widget (see
-    // `widgetSuppressed` in mcp.ts), a generic connection registers only the
-    // skills it serves (`skillsForTools` in skills.ts), and the SDK declares
-    // `resources` lazily on the first `registerResource` call — so a generic
-    // connection that gets no skills declares nothing, and a spec-following
-    // client never asks.
-    const res = await SELF.fetch("https://example.com/mcp?tools=search", {
+    // surface can answer. A connection registers the chart widget when it
+    // serves a widget tool, and the skills it serves (`skillsForTools` in
+    // skills.ts), and the SDK declares `resources` lazily on the first
+    // `registerResource` call — so a generic connection that gets neither
+    // declares nothing, and a spec-following client never asks.
+    const res = await SELF.fetch("https://example.com/mcp?tools=contents", {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -1173,6 +1189,34 @@ describe("worker routing", () => {
     // The neighbouring empty-list capability is deliberately NOT symmetric:
     // `prompts` is still declared and still answers `[]`. If that changes,
     // it changes in its own commit.
+    expect(body.result.capabilities.prompts).toBeDefined();
+    expect(body.result.capabilities.tools).toBeDefined();
+  });
+
+  it("POST /mcp declares the resources capability — the widget bundle is a real resource", async () => {
+    const res = await SELF.fetch("https://example.com/mcp", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        authorization: AUTH_HEADER,
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 12,
+        method: "initialize",
+        params: {
+          protocolVersion: "2025-11-25",
+          capabilities: {},
+          clientInfo: { name: "test-client", version: "0.0.0" },
+        },
+      }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      result: { capabilities: Record<string, unknown> };
+    };
+    expect(body.result.capabilities.resources).toBeDefined();
     expect(body.result.capabilities.prompts).toBeDefined();
     expect(body.result.capabilities.tools).toBeDefined();
   });
@@ -1207,13 +1251,13 @@ describe("worker routing", () => {
     expect(body.result.capabilities.resources).toBeDefined();
   });
 
-  it("POST /mcp?tools=search resources/list answers -32601 when the connection gets no skills", async () => {
+  it("POST /mcp?tools=contents resources/list answers -32601 when the connection gets no skill and no widget tool", async () => {
     // Undeclared capability, so "method not found" is the honest answer. An
     // empty list used to stand here instead, to keep a capability-probing
     // scanner quiet; it made the server advertise `resources` on every
     // connection and never serve one, which an agent-readiness audit scored
     // as the broken capability it was.
-    const res = await SELF.fetch("https://example.com/mcp?tools=search", {
+    const res = await SELF.fetch("https://example.com/mcp?tools=contents", {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -1236,11 +1280,11 @@ describe("worker routing", () => {
     expect(body.error?.code).toBe(-32601);
   });
 
-  it("POST /mcp resources/list lists only the served skill for claude UAs too — the UA changes nothing", async () => {
+  it("POST /mcp resources/list lists the same resources for claude UAs — the UA changes nothing", async () => {
     // The UA classifier is gone (spec D2): a claude UA on /mcp gets the
-    // same generic surface as everyone else, so no widget resource is
-    // registered and the served skill is the only resource. claude.ai's widget
-    // path is a fast-follow gated on anthropics/claude-ai-mcp#753 and #40.
+    // same generic surface as everyone else, so it lists the same widget
+    // bundle and served skill.
+    const widgetUri = await toolSearchWidgetUri("https://example.com/mcp");
     const res = await SELF.fetch("https://example.com/mcp", {
       method: "POST",
       headers: {
@@ -1259,7 +1303,10 @@ describe("worker routing", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { result?: { resources: Array<{ uri: string }> } };
     const withoutUa = (await postRpc("https://example.com/mcp", "resources/list")).result?.resources;
-    expect(body.result?.resources.map((resource) => resource.uri)).toEqual(["skill://tako-search/SKILL.md"]);
+    expect(body.result?.resources.map((resource) => resource.uri)).toEqual([
+      widgetUri,
+      "skill://tako-search/SKILL.md",
+    ]);
     expect(body.result?.resources).toEqual(withoutUa);
   });
 
@@ -1287,10 +1334,14 @@ describe("worker routing", () => {
     ).toBe(-32601);
   });
 
-  it("POST /mcp resources/list lists exactly the served skill", async () => {
+  it("POST /mcp resources/list lists exactly the widget bundle and the served skill", async () => {
+    const widgetUri = await toolSearchWidgetUri("https://example.com/mcp");
     const resources = (await postRpc("https://example.com/mcp", "resources/list")).result
       ?.resources as Array<{ uri: string }>;
-    expect(resources.map((resource) => resource.uri)).toEqual(["skill://tako-search/SKILL.md"]);
+    expect(resources.map((resource) => resource.uri)).toEqual([
+      widgetUri,
+      "skill://tako-search/SKILL.md",
+    ]);
   });
 
   it("POST /mcp/chatgpt does not serve skills", async () => {
@@ -1330,6 +1381,19 @@ describe("worker routing", () => {
     }
   });
 
+  it("POST /mcp resources/list returns the chart widget bundle regardless of the session", async () => {
+    const widgetUri = await toolSearchWidgetUri("https://example.com/mcp");
+    const withUi = await postMcp("https://example.com/mcp", { method: "resources/list" }, "ui-x");
+    const withoutHeader = await postMcp("https://example.com/mcp", { method: "resources/list" });
+
+    expect(await withUi.text()).toBe(await withoutHeader.text());
+    const body = (await postMcp("https://example.com/mcp", { method: "resources/list" }, "ui-x").then(
+      (r) => r.json(),
+    )) as { result: { resources: Array<{ uri: string; mimeType: string }> } };
+    const widget = body.result.resources.find((r) => r.uri === widgetUri);
+    expect(widget?.mimeType).toBe("text/html;profile=mcp-app");
+  });
+
   it("POST /mcp prompts/list returns an empty list (not -32601) for capability-probing clients", async () => {
     const res = await SELF.fetch("https://example.com/mcp", {
       method: "POST",
@@ -1348,5 +1412,65 @@ describe("worker routing", () => {
     // list is the friendly, spec-clean response.
     expect(body.error).toBeUndefined();
     expect(body.result?.prompts).toEqual([]);
+  });
+});
+
+describe("MCP Apps session on /mcp", () => {
+  it("issues a ui- session ID to an initialize that declares MCP Apps support", async () => {
+    const res = await postMcp("https://example.com/mcp", initializeMessage(true));
+    expect(res.headers.get("mcp-session-id")).toMatch(/^ui-/);
+    expect(res.status).toBe(200);
+  });
+
+  it("issues a noui- session ID to an initialize that declares nothing", async () => {
+    const res = await postMcp("https://example.com/mcp", initializeMessage(false));
+    expect(res.headers.get("mcp-session-id")).toMatch(/^noui-/);
+  });
+
+  it("issues no session ID on /mcp/chatgpt", async () => {
+    const res = await postMcp("https://example.com/mcp/chatgpt", initializeMessage(true));
+    expect(res.status).toBe(200);
+    expect(res.headers.get("mcp-session-id")).toBeNull();
+  });
+
+  it("registers the /mcp widget under the live-card URI in tools/list and resources/list", async () => {
+    const tools = (await postMcp("https://example.com/mcp", { method: "tools/list" }).then((r) =>
+      r.json(),
+    )) as {
+      result: { tools: Array<{ name: string; _meta?: Record<string, unknown> }> };
+    };
+    const meta = tools.result.tools.find((t) => t.name === "tako_search")?._meta;
+    expect(meta).toMatchObject({
+      ui: { resourceUri: "ui://tako/embed/live-card" },
+      "ui/resourceUri": "ui://tako/embed/live-card",
+      "openai/outputTemplate": "ui://tako/embed/live-card",
+    });
+    const resources = (await postMcp("https://example.com/mcp", { method: "resources/list" }).then(
+      (r) => r.json(),
+    )) as { result: { resources: Array<{ uri: string }> } };
+    const uris = resources.result.resources.map((r) => r.uri);
+    expect(uris).toContain("ui://tako/embed/live-card");
+    expect(uris).not.toContain("ui://tako/embed/chart");
+  });
+
+  it("keeps the chart URI on /mcp/chatgpt in tools/list and resources/list", async () => {
+    expect(await toolSearchWidgetUri("https://example.com/mcp/chatgpt")).toBe(
+      "ui://tako/embed/chart",
+    );
+    const resources = (await postMcp("https://example.com/mcp/chatgpt", {
+      method: "resources/list",
+    }).then((r) => r.json())) as { result: { resources: Array<{ uri: string }> } };
+    expect(resources.result.resources.map((r) => r.uri)).toContain("ui://tako/embed/chart");
+  });
+
+  it("lists the same tools whatever the session ID", async () => {
+    const bodies = await Promise.all(
+      ["ui-x", "noui-x", undefined].map(async (id) =>
+        (await postMcp("https://example.com/mcp", { method: "tools/list" }, id)).text(),
+      ),
+    );
+    expect(bodies[1]).toBe(bodies[0]);
+    expect(bodies[2]).toBe(bodies[0]);
+    expect(await toolSearchWidgetUri("https://example.com/mcp")).toBeTruthy();
   });
 });

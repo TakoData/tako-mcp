@@ -57,7 +57,7 @@ interface Mounted {
 
 const mounted: JSDOM[] = [];
 
-function mountWidget(html: string): Mounted {
+function mountWidget(html: string, openai?: object): Mounted {
   const virtualConsole = new VirtualConsole();
   const warnings: string[] = [];
   virtualConsole.on("warn", (...args: unknown[]) => {
@@ -98,6 +98,9 @@ function mountWidget(html: string): Mounted {
       toParent.push(msg);
     };
 
+  if (openai !== undefined) {
+    (widgetFrame.contentWindow as unknown as { openai: object }).openai = openai;
+  }
   const widgetDoc = widgetFrame.contentDocument!;
   widgetDoc.open();
   widgetDoc.write(html);
@@ -192,7 +195,7 @@ function sizeChangesOf(m: Mounted): Array<{ params: { height: number } }> {
   ) as Array<{ params: { height: number } }>;
 }
 
-/** Fire the probe iframe's `load` event as if the embed page loaded. */
+/** Fire the embed iframe's `load` event as if the embed page loaded. */
 function fireFrameLoad(m: Mounted): void {
   const WidgetEvent = (m.widgetWin as unknown as { Event: typeof Event })
     .Event;
@@ -210,7 +213,7 @@ function fireImageLoad(m: Mounted): void {
   widgetImg(m).dispatchEvent(new WidgetEvent("load"));
 }
 
-/** Fire a `frame-src` CSP violation as if the host sandbox blocked the probe. */
+/** Fire a `frame-src` CSP violation as if the host sandbox blocked the iframe. */
 function fireFrameSrcViolation(m: Mounted): void {
   const WidgetEvent = (m.widgetWin as unknown as { Event: typeof Event })
     .Event;
@@ -224,7 +227,151 @@ function fireFrameSrcViolation(m: Mounted): void {
 }
 
 function staticWidgetHtml(): string {
-  return buildChartAppUiResourceFromOutputPubId(ENV).html;
+  return buildChartAppUiResourceFromOutputPubId(ENV, undefined, "chatgpt").html;
+}
+
+const WORKER_ORIGIN = "https://mcp.example.test";
+
+interface LiveChart {
+  pub_id: string;
+  embed_url: string;
+  image_url: string;
+  native_card_url?: string;
+}
+
+interface FetchCall {
+  url: string;
+  init: { credentials?: string } | undefined;
+}
+
+interface LiveStubs {
+  fetches: FetchCall[];
+  blobs: Map<string, Blob>;
+}
+
+const SEARCH_CONTENT = {
+  cards: [{ title: "Card", url: "https://tako.com/card/x" }],
+  web_results: [],
+  usage: null,
+};
+
+function liveChart(i: number): LiveChart {
+  const pubId = `live${i}`;
+  return {
+    pub_id: pubId,
+    embed_url: `https://staging.trytako.com/embed/${pubId}/?dark_mode=auto&showShare=true`,
+    image_url: `https://staging.trytako.com/api/v1/image/${pubId}/?dark_mode=true`,
+    native_card_url: `${WORKER_ORIGIN}/embed-html/${pubId}`,
+  };
+}
+
+function liveCharts(count: number): LiveChart[] {
+  return Array.from({ length: count }, (_, i) => liveChart(i));
+}
+
+function liveHtml(): string {
+  return buildChartAppUiResourceFromOutputPubId(ENV, WORKER_ORIGIN, "generic").html;
+}
+
+function cardHtml(url: string): string {
+  return `<!doctype html><html><body><div id="app">CARD ${url}</div></body></html>`;
+}
+
+function okResponse(body: string): Promise<unknown> {
+  return Promise.resolve({
+    ok: true,
+    status: 200,
+    text: () => Promise.resolve(body),
+  });
+}
+
+function stubLive(
+  m: Mounted,
+  respond: (url: string) => Promise<unknown> = (url) => okResponse(cardHtml(url)),
+): LiveStubs {
+  const stubs: LiveStubs = { fetches: [], blobs: new Map() };
+  const win = m.widgetWin as unknown as {
+    fetch: unknown;
+    URL: { createObjectURL: unknown };
+  };
+  win.fetch = (url: string, init?: { credentials?: string }) => {
+    stubs.fetches.push({ url: String(url), init });
+    return respond(String(url));
+  };
+  win.URL.createObjectURL = (blob: Blob) => {
+    const url = `blob:https://host.example/${stubs.blobs.size}`;
+    stubs.blobs.set(url, blob);
+    return url;
+  };
+  return stubs;
+}
+
+function fetchedUrls(stubs: LiveStubs): string[] {
+  return stubs.fetches.map((f) => f.url);
+}
+
+function nativeUrls(charts: LiveChart[]): string[] {
+  return charts.map((c) => c.native_card_url ?? "");
+}
+
+function liveSlides(m: Mounted): HTMLElement[] {
+  return Array.from(
+    m.widgetWin.document.querySelectorAll<HTMLElement>("#tako-carousel .tako-slide"),
+  );
+}
+
+function slideFrame(m: Mounted, i: number): HTMLIFrameElement | null {
+  const slide = liveSlides(m)[i];
+  if (slide === undefined) throw new Error(`no slide at index ${i}`);
+  return slide.querySelector("iframe");
+}
+
+function mountedFrame(m: Mounted, i: number): HTMLIFrameElement {
+  const frame = slideFrame(m, i);
+  if (frame === null) throw new Error(`slide ${i} has no frame`);
+  return frame;
+}
+
+function navButton(m: Mounted, id: "tako-prev" | "tako-next"): HTMLButtonElement {
+  return m.widgetWin.document.getElementById(id) as HTMLButtonElement;
+}
+
+function deliverLive(m: Mounted, charts: LiveChart[], content: unknown = SEARCH_CONTENT): void {
+  deliver(m, toolResult(content, { charts }), m.wrapperWin);
+}
+
+async function settle(): Promise<void> {
+  for (let i = 0; i < 5; i++) await Promise.resolve();
+}
+
+function postSlideHeight(
+  m: Mounted,
+  source: Window,
+  height: number,
+  type = "tako-live-card-height",
+): void {
+  const WidgetMessageEvent = (
+    m.widgetWin as unknown as { MessageEvent: typeof MessageEvent }
+  ).MessageEvent;
+  m.widgetWin.dispatchEvent(
+    new WidgetMessageEvent("message", {
+      data: { type, height },
+      origin: "null",
+      source: source as unknown as MessageEventSource,
+    }),
+  );
+}
+
+function expectFailureCopy(m: Mounted, i: number, chart: LiveChart): void {
+  const slide = liveSlides(m)[i] as HTMLElement;
+  expect(slide.textContent).toContain("Couldn't load this chart.");
+  const link = Array.from(slide.querySelectorAll("a")).find(
+    (a) => a.textContent === "Open in Tako",
+  );
+  expect(link?.getAttribute("href")).toBe(chart.embed_url);
+  expect(link?.getAttribute("target")).toBe("_blank");
+  expect(link?.getAttribute("rel")).toBe("noopener noreferrer");
+  expect(slide.querySelector("iframe")).toBeNull();
 }
 
 afterEach(() => {
@@ -253,46 +400,22 @@ describe("static widget bundle (executed)", () => {
     expect(methodsSent(m)).toContain("ui/notifications/initialized");
   });
 
-  it("renders the chart image from a parent-delivered tool-result", () => {
-    const m = mountWidget(staticWidgetHtml());
-    deliver(
-      m,
-      toolResult(
-        { embed_url: EMBED_URL, image_url: IMAGE_URL },
-        {
-          image_data_url: DATA_URL,
-          image_natural_width: 800,
-          image_natural_height: 600,
-        },
-      ),
-      m.wrapperWin,
-    );
-    // Data URI preferred over the cross-origin image_url (claude.ai's
-    // outer CSP blocks the latter), click-through wired to the embed.
-    expect(widgetImg(m).getAttribute("src")).toBe(DATA_URL);
-    expect(widgetLink(m).getAttribute("href")).toBe(EMBED_URL);
-  });
-
   it("accepts a tool-result delivered from window.top (nested-wrapper hosts)", () => {
-    const m = mountWidget(staticWidgetHtml());
-    deliver(m, toolResult({ embed_url: EMBED_URL }, { image_data_url: DATA_URL }), m.outerWin);
-    expect(widgetImg(m).getAttribute("src")).toBe(DATA_URL);
+    const m = mountWidget(liveHtml());
+    const stubs = stubLive(m);
+    const charts = liveCharts(1);
+    deliver(m, toolResult(SEARCH_CONTENT, { charts }), m.outerWin);
+    expect(fetchedUrls(stubs)).toEqual(nativeUrls(charts));
   });
 
   it("drops a forged tool-result from a sibling frame — and warns about it", () => {
-    const m = mountWidget(staticWidgetHtml());
-    deliver(
-      m,
-      toolResult(
-        { embed_url: "https://evil.example/phish" },
-        { image_data_url: DATA_URL },
-      ),
-      m.siblingWin,
-    );
+    const m = mountWidget(liveHtml());
+    const stubs = stubLive(m);
+    deliver(m, toolResult(SEARCH_CONTENT, { charts: liveCharts(1) }), m.siblingWin);
     // No render: a sibling connector must not be able to inject a chart
     // or a click-through URL.
-    expect(widgetImg(m).getAttribute("src")).toBeNull();
-    expect(widgetLink(m).getAttribute("href")).toBeNull();
+    expect(stubs.fetches).toEqual([]);
+    expect(liveSlides(m)).toHaveLength(0);
     // ...but the drop is observable, not silent — this gate guards
     // Claude's only chart data path.
     expect(
@@ -312,18 +435,18 @@ describe("static widget bundle (executed)", () => {
 
   it("refuses a javascript: embed_url as the click-through", () => {
     const m = mountWidget(staticWidgetHtml());
+    (m.widgetWin as unknown as { openai: object }).openai = {};
     deliver(
       m,
       toolResult(
         // eslint-disable-next-line no-script-url
         { embed_url: "javascript:alert(1)", image_url: IMAGE_URL },
-        { image_data_url: DATA_URL },
       ),
       m.wrapperWin,
     );
-    // Image still renders (the data URI is independently validated) but
+    // Image still renders (the image url is independently validated) but
     // the hostile scheme never lands in href.
-    expect(widgetImg(m).getAttribute("src")).toBe(DATA_URL);
+    expect(widgetImg(m).getAttribute("src")).toBe(IMAGE_URL);
     expect(widgetLink(m).getAttribute("href")).toBeNull();
   });
 
@@ -406,16 +529,10 @@ describe("static widget bundle (executed)", () => {
   });
 
   it("leaves the empty state hidden when a chart renders", () => {
-    const m = mountWidget(staticWidgetHtml());
-    deliver(
-      m,
-      toolResult(
-        { embed_url: EMBED_URL, image_url: IMAGE_URL, height: 600 },
-        { image_data_url: DATA_URL },
-      ),
-      m.wrapperWin,
-    );
-    fireImageLoad(m);
+    const m = mountWidget(liveHtml());
+    stubLive(m);
+    deliverLive(m, liveCharts(1));
+    expect(liveSlides(m)).toHaveLength(1);
     expect(widgetEmpty(m).classList.contains("hidden")).toBe(true);
   });
 
@@ -440,12 +557,54 @@ describe("static widget bundle (executed)", () => {
       ) as Array<{ params: { height: number } }>;
       expect(sizeChanges.at(-1)?.params.height).toBe(0);
       // Collapsed but NOT labelled. "Nothing arrived in 10 s" covers a failed
-      // call and a merely slow delivery alike, and this path discards whatever
-      // lands afterwards — so "No chart for this result" would be an
+      // call and a merely slow delivery alike — so "No chart for this result" would be an
       // affirmative claim that is wrong exactly when the chart was late. The
       // label is reserved for the case the widget actually knows about:
       // structured content arrived and carried no chart.
       expect(widgetEmpty(m).classList.contains("hidden")).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("renders a live-card result that lands after the no-data watchdog collapsed", async () => {
+    vi.useFakeTimers();
+    try {
+      const m = mountWidget(liveHtml());
+      const stubs = stubLive(m);
+      deliver(m, { jsonrpc: "2.0", id: "tako-ui-init", result: {} }, m.wrapperWin);
+      await vi.advanceTimersByTimeAsync(11_000);
+      expect(m.widgetWin.document.documentElement.style.height).toBe("0px");
+
+      const charts = liveCharts(2);
+      deliverLive(m, charts);
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(fetchedUrls(stubs)).toEqual(nativeUrls(charts));
+      expect(liveSlides(m)).toHaveLength(2);
+      expect(m.widgetWin.document.documentElement.style.height).not.toBe("0px");
+      expect(m.widgetWin.document.body.style.height).not.toBe("0px");
+      expect(widgetEmpty(m).classList.contains("hidden")).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("drops a chart that lands after the no-data watchdog collapsed, with window.openai", () => {
+    vi.useFakeTimers();
+    try {
+      const m = mountWidget(staticWidgetHtml(), {});
+      vi.advanceTimersByTime(11_000);
+      expect(m.widgetWin.document.documentElement.style.height).toBe("0px");
+
+      deliver(
+        m,
+        toolResult({ cards: [], embed_url: EMBED_URL, image_url: IMAGE_URL, height: 600 }),
+        m.wrapperWin,
+      );
+
+      expect(widgetFrame(m).getAttribute("src")).toBeNull();
+      expect(m.widgetWin.document.documentElement.style.height).toBe("0px");
     } finally {
       vi.useRealTimers();
     }
@@ -482,23 +641,18 @@ describe("static widget bundle (executed)", () => {
     expect(sizeChanges.at(-1)?.params.height).toBe(0);
   });
 
-  it("does not collapse a chart that already rendered", () => {
+  it("does not collapse a chart that already rendered", async () => {
     // The watchdog must be a no-op once anything painted, or a slow host
     // would have its working chart yanked at the 10 s mark.
     vi.useFakeTimers();
     try {
-      const m = mountWidget(staticWidgetHtml());
-      deliver(
-        m,
-        toolResult(
-          { embed_url: EMBED_URL, image_url: IMAGE_URL, height: 600 },
-          { image_data_url: DATA_URL },
-        ),
-        m.wrapperWin,
-      );
-      fireImageLoad(m);
-      vi.advanceTimersByTime(20_000);
-      expect(widgetImg(m).getAttribute("src")).toBe(DATA_URL);
+      const m = mountWidget(liveHtml());
+      stubLive(m);
+      deliverLive(m, liveCharts(1));
+      await vi.advanceTimersByTimeAsync(0);
+      postSlideHeight(m, mountedFrame(m, 0).contentWindow as Window, 300);
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(mountedFrame(m, 0).getAttribute("src")?.startsWith("blob:")).toBe(true);
       expect(m.widgetWin.document.documentElement.style.height).not.toBe("0px");
     } finally {
       vi.useRealTimers();
@@ -506,180 +660,14 @@ describe("static widget bundle (executed)", () => {
   });
 });
 
-describe("interactive iframe capability probe (executed)", () => {
-  // `interactive_probe: true` is REQUIRED for any of this to run. The server
-  // ships it false (`INTERACTIVE_IFRAME_PROBE_ENABLED`) because on claude.ai
-  // the probe is guaranteed to trip `frame-src` CSP and the host surfaces that
-  // blocked subresource to the user as "There was a problem displaying content
-  // from tako." — next to a chart that rendered perfectly. These tests
-  // therefore describe the behavior that resumes when claude.ai honors
-  // `frameDomains` and the flag is flipped back on, NOT today's default.
-  const CHART_RESULT = toolResult(
-    { embed_url: EMBED_URL, image_url: IMAGE_URL },
-    {
-      image_data_url: DATA_URL,
-      image_natural_width: 800,
-      image_natural_height: 600,
-      interactive_probe: true,
-    },
-  );
-
-  it("does NOT probe by default — the server flag is off", () => {
-    // The fix, pinned. Same payload minus `interactive_probe`: the PNG must
-    // render and the iframe must never be navigated, so no CSP violation is
-    // ever raised inside the widget document.
-    const m = mountWidget(staticWidgetHtml());
-    deliver(
-      m,
-      toolResult(
-        { embed_url: EMBED_URL, image_url: IMAGE_URL },
-        { image_data_url: DATA_URL },
-      ),
-      m.wrapperWin,
-    );
-    fireImageLoad(m);
-    expect(widgetImg(m).getAttribute("src")).toBe(DATA_URL);
-    expect(widgetLink(m).classList.contains("hidden")).toBe(false);
-    // The load handler is exactly where the probe would have been armed.
-    expect(widgetFrame(m).getAttribute("src")).toBeNull();
-  });
-
-  it("does not probe when the flag is present but false", () => {
-    const m = mountWidget(staticWidgetHtml());
-    deliver(
-      m,
-      toolResult(
-        { embed_url: EMBED_URL, image_url: IMAGE_URL },
-        { image_data_url: DATA_URL, interactive_probe: false },
-      ),
-      m.wrapperWin,
-    );
-    fireImageLoad(m);
-    expect(widgetFrame(m).getAttribute("src")).toBeNull();
-  });
-
-  it("probes the embed iframe in the background while showing the image", () => {
-    const m = mountWidget(staticWidgetHtml());
-    deliver(m, CHART_RESULT, m.wrapperWin);
-    fireImageLoad(m);
-    // Image is the visible baseline...
-    expect(widgetImg(m).getAttribute("src")).toBe(DATA_URL);
-    expect(widgetLink(m).classList.contains("hidden")).toBe(false);
-    // ...while the probe iframe loads the embed hidden.
-    expect(widgetFrame(m).getAttribute("src")).toBe(EMBED_IFRAME_SRC);
-    expect(widgetFrame(m).classList.contains("hidden")).toBe(true);
-  });
-
-  it("upgrades to the interactive iframe when the probe loads", () => {
-    const m = mountWidget(staticWidgetHtml());
-    deliver(m, CHART_RESULT, m.wrapperWin);
-    // The probe only arms once the PNG baseline has loaded, so the swap
-    // measures the image's real rendered height rather than the requested
-    // fallback.
-    fireImageLoad(m);
-    fireFrameLoad(m);
-    // Iframe swapped in over the PNG.
-    expect(widgetFrame(m).classList.contains("hidden")).toBe(false);
-    expect(widgetLink(m).classList.contains("hidden")).toBe(true);
-  });
-
-  it("does not arm the probe until the PNG baseline has loaded", () => {
-    const m = mountWidget(staticWidgetHtml());
-    deliver(m, CHART_RESULT, m.wrapperWin);
-    // No probe in flight yet: the frame has no src and a stray `load`
-    // (there is no listener bound) can't swap a not-yet-measured iframe
-    // over the PNG.
-    expect(widgetFrame(m).getAttribute("src")).toBeNull();
-    fireFrameLoad(m);
-    expect(widgetFrame(m).classList.contains("hidden")).toBe(true);
-    expect(widgetLink(m).classList.contains("hidden")).toBe(true);
-    // Image loads → probe arms and starts loading the embed, hidden.
-    fireImageLoad(m);
-    expect(widgetFrame(m).getAttribute("src")).toBe(EMBED_IFRAME_SRC);
-    expect(widgetFrame(m).classList.contains("hidden")).toBe(true);
-    expect(widgetLink(m).classList.contains("hidden")).toBe(false);
-  });
-
-  it("does not re-reveal the PNG when a duplicate image load fires after upgrade", () => {
-    const m = mountWidget(staticWidgetHtml());
-    deliver(m, CHART_RESULT, m.wrapperWin);
-    fireImageLoad(m);
-    fireFrameLoad(m); // upgrade to the interactive iframe
-    expect(widgetFrame(m).classList.contains("hidden")).toBe(false);
-    expect(widgetLink(m).classList.contains("hidden")).toBe(true);
-    // A stray second image load must not un-hide the PNG on top of the
-    // live iframe.
-    fireImageLoad(m);
-    expect(widgetLink(m).classList.contains("hidden")).toBe(true);
-    expect(widgetFrame(m).classList.contains("hidden")).toBe(false);
-  });
-
-  it("ignores embed-height messages while the probe is hidden, honors them after upgrade", () => {
-    const m = mountWidget(staticWidgetHtml());
-    deliver(m, CHART_RESULT, m.wrapperWin);
-    fireImageLoad(m); // probe armed, embed loading hidden behind the PNG
-    const frame = widgetFrame(m);
-    frame.removeAttribute("height");
-    // During the probe window `embedOrigin` is unarmed, so a resize
-    // message from the (hidden) embed must not size the widget under the
-    // visible PNG.
-    deliverEmbedHeight(m, 1234);
-    expect(frame.getAttribute("height")).toBeNull();
-    // After the swap, `embedOrigin` is armed and the same message resizes.
-    fireFrameLoad(m);
-    deliverEmbedHeight(m, 1234);
-    expect(frame.getAttribute("height")).toBe("1234");
-  });
-
-  it("stays on the image when the host CSP blocks the probe", () => {
-    const m = mountWidget(staticWidgetHtml());
-    deliver(m, CHART_RESULT, m.wrapperWin);
-    fireImageLoad(m);
-    fireFrameSrcViolation(m);
-    // Probe cancelled: frame unloaded and still hidden, image untouched.
-    expect(widgetFrame(m).getAttribute("src")).toBe("about:blank");
-    expect(widgetFrame(m).classList.contains("hidden")).toBe(true);
-    expect(widgetLink(m).classList.contains("hidden")).toBe(false);
-    // A late load (e.g. the about:blank unload settling) must not swap.
-    fireFrameLoad(m);
-    expect(widgetFrame(m).classList.contains("hidden")).toBe(true);
-    expect(widgetLink(m).classList.contains("hidden")).toBe(false);
-  });
-
-  it("commits to the iframe immediately when window.openai is present", () => {
-    const m = mountWidget(staticWidgetHtml());
-    (m.widgetWin as unknown as { openai: object }).openai = {};
-    deliver(m, CHART_RESULT, m.wrapperWin);
-    // ChatGPT path: no PNG detour, no probe — straight to the iframe,
-    // which stays hidden until the embed page loads (reveal-on-load).
-    expect(widgetFrame(m).getAttribute("src")).toBe(EMBED_IFRAME_SRC);
-    fireFrameLoad(m);
-    expect(widgetFrame(m).classList.contains("hidden")).toBe(false);
-    expect(widgetImg(m).getAttribute("src")).toBeNull();
-  });
-
-  it("does not probe when there is no embed_url", () => {
-    const m = mountWidget(staticWidgetHtml());
-    deliver(
-      m,
-      toolResult({ image_url: IMAGE_URL }, { image_data_url: DATA_URL }),
-      m.wrapperWin,
-    );
-    expect(widgetImg(m).getAttribute("src")).toBe(DATA_URL);
-    expect(widgetFrame(m).getAttribute("src")).toBeNull();
-  });
-});
-
 /**
- * The mirror of the probe above: the `window.openai` path commits to the
- * iframe up front, so it needs a way DOWN to the PNG when that iframe never
- * renders. Before the watchdog this path had no fallback at all — a blocked
- * or hanging embed left an empty frame in the chat forever, with `image_url`
- * unused in the same payload.
+ * The `window.openai` path commits to the iframe up front, so it needs a way
+ * DOWN to the PNG when that iframe never renders. Before the watchdog this
+ * path had no fallback at all — a blocked or hanging embed left an empty frame
+ * in the chat forever, with `image_url` unused in the same payload.
  *
- * ChatGPT is the client that takes this path, and the server skips the PNG
- * prefetch for it, so these results carry `image_url` and NO
- * `_meta.image_data_url` — the real shape, not the Claude one.
+ * ChatGPT is the client that takes this path, so these results carry
+ * `image_url` and at most the PNG's natural dimensions in `_meta`.
  */
 describe("committed iframe watchdog (executed)", () => {
   /** ChatGPT-shaped payload: remote image URL, no baked data URI. */
@@ -707,6 +695,24 @@ describe("committed iframe watchdog (executed)", () => {
       get: () => px,
     });
   }
+
+  it("commits to the iframe immediately when window.openai is present", () => {
+    const m = mountChatGpt();
+    deliver(
+      m,
+      toolResult(
+        { embed_url: EMBED_URL, image_url: IMAGE_URL },
+        { image_natural_width: 800, image_natural_height: 600 },
+      ),
+      m.wrapperWin,
+    );
+    // ChatGPT path: no PNG detour — straight to the iframe, which stays
+    // hidden until the embed page loads (reveal-on-load).
+    expect(widgetFrame(m).getAttribute("src")).toBe(EMBED_IFRAME_SRC);
+    fireFrameLoad(m);
+    expect(widgetFrame(m).classList.contains("hidden")).toBe(false);
+    expect(widgetImg(m).getAttribute("src")).toBeNull();
+  });
 
   it("sizes the iframe to the CARD's aspect, not the requested height", () => {
     // The "square shape with empty bands" bug. A plain Tako chart renders
@@ -1102,14 +1108,13 @@ describe("committed iframe watchdog (executed)", () => {
     expect(widgetLink(m).classList.contains("hidden")).toBe(false);
   });
 
-  it("does not re-probe the iframe it just abandoned", () => {
+  it("does not reload the iframe it just abandoned", () => {
     const m = mountChatGpt();
     deliver(m, CHATGPT_RESULT, m.wrapperWin);
     fireFrameSrcViolation(m);
-    // The fallback image loading is exactly when the PNG path would normally
-    // arm `probeInteractiveIframe`. It must not here: the iframe already
-    // failed, and a probe "succeeding" on an error page would swap the
-    // working PNG back out.
+    // The fallback image loading must not send the frame back to the embed:
+    // the iframe already failed, and a reload "succeeding" on an error page
+    // would swap the working PNG back out.
     fireImageLoad(m);
     expect(widgetFrame(m).getAttribute("src")).toBe("about:blank");
     expect(widgetImg(m).getAttribute("src")).toBe(IMAGE_URL);
@@ -1150,577 +1155,6 @@ describe("committed iframe watchdog (executed)", () => {
     // `embedOrigin` was cleared on downgrade, so the abandoned embed can no
     // longer resize the widget out from under the PNG.
     expect(widgetFrame(m).getAttribute("height")).toBe(before);
-  });
-});
-
-/**
- * Native-card upgrade: replacing the PNG with Tako's real interactive card by
- * fetching the embed page through our CORS proxy and letting its own scripts
- * run in the widget document.
- *
- * The property that matters more than the upgrade working is that FAILING
- * leaves today's behavior exactly as it was. The PNG is painted first and the
- * document is only opened once the markup is in hand, so every failure mode —
- * 502, timeout, non-HTML, network error — has to be a no-op on screen.
- */
-describe("native card upgrade (executed)", () => {
-  const NATIVE_URL = "https://mcp.example.test/embed-html/abc123";
-  const NATIVE_HTML =
-    "<!doctype html><html><body><div id='app'>REAL CARD</div></body></html>";
-
-  /** Deliver a chart with the native URL armed. */
-  function deliverNative(m: Mounted, url = NATIVE_URL): void {
-    deliver(
-      m,
-      toolResult(
-        { embed_url: EMBED_URL, image_url: IMAGE_URL, height: 600 },
-        { image_data_url: DATA_URL, native_card_url: url },
-      ),
-      m.wrapperWin,
-    );
-  }
-
-  /** Stub the widget window's fetch. */
-  function stubFetch(
-    m: Mounted,
-    impl: (url: string) => Promise<unknown>,
-  ): { calls: string[] } {
-    const calls: string[] = [];
-    (m.widgetWin as unknown as { fetch: unknown }).fetch = (url: string) => {
-      calls.push(String(url));
-      return impl(String(url));
-    };
-    return { calls };
-  }
-
-  function htmlResponse(body: string, ok = true): Promise<unknown> {
-    return Promise.resolve({
-      ok,
-      status: ok ? 200 : 502,
-      text: () => Promise.resolve(body),
-    });
-  }
-
-  it("does not attempt an upgrade when the server did not arm it", () => {
-    // Production default: no native_card_url, so no fetch at all.
-    const m = mountWidget(staticWidgetHtml());
-    const f = stubFetch(m, () => htmlResponse(NATIVE_HTML));
-    deliver(
-      m,
-      toolResult(
-        { embed_url: EMBED_URL, image_url: IMAGE_URL },
-        { image_data_url: DATA_URL },
-      ),
-      m.wrapperWin,
-    );
-    fireImageLoad(m);
-    expect(f.calls).toEqual([]);
-  });
-
-  it("paints the PNG first, then fetches the native card", () => {
-    const m = mountWidget(staticWidgetHtml());
-    const f = stubFetch(m, () => htmlResponse(NATIVE_HTML));
-    deliverNative(m);
-    // The PNG is the committed baseline BEFORE any fetch happens.
-    expect(widgetImg(m).getAttribute("src")).toBe(DATA_URL);
-    expect(f.calls).toEqual([]);
-    fireImageLoad(m);
-    expect(f.calls).toEqual([NATIVE_URL]);
-  });
-
-  it("PIN: refuses to fetch a native card from a foreign origin", () => {
-    // upgradeToNativeCard document.write()s the response into the widget's
-    // own document — a wider grant than the pinned iframe's clipboard-write.
-    // With the bundle built for a known worker origin, a native_card_url on
-    // any other origin must never be fetched; the PNG stays.
-    const html = buildChartAppUiResourceFromOutputPubId(
-      ENV,
-      "https://mcp.example.test",
-    ).html;
-    const m = mountWidget(html);
-    const f = stubFetch(m, () => htmlResponse(NATIVE_HTML));
-    deliverNative(m, "https://evil.example/embed-html/abc123");
-    fireImageLoad(m);
-    expect(f.calls).toEqual([]);
-    expect(widgetImg(m).getAttribute("src")).toBe(DATA_URL);
-  });
-
-  it("PIN: still fetches from the pinned worker origin", () => {
-    // Positive control for the refusal above — the pin admits the origin the
-    // server actually builds native_card_url from.
-    const html = buildChartAppUiResourceFromOutputPubId(
-      ENV,
-      "https://mcp.example.test",
-    ).html;
-    const m = mountWidget(html);
-    const f = stubFetch(m, () => htmlResponse(NATIVE_HTML));
-    deliverNative(m);
-    fireImageLoad(m);
-    expect(f.calls).toEqual([NATIVE_URL]);
-  });
-
-  it("keeps the PNG when the proxy errors", async () => {
-    const m = mountWidget(staticWidgetHtml());
-    stubFetch(m, () => htmlResponse("upstream error", false));
-    deliverNative(m);
-    fireImageLoad(m);
-    await new Promise((r) => setTimeout(r, 10));
-    // Unchanged: same image, same click-through, document never opened.
-    expect(widgetImg(m).getAttribute("src")).toBe(DATA_URL);
-    expect(widgetLink(m).getAttribute("href")).toBe(EMBED_URL);
-    expect(m.widgetWin.document.body.innerHTML).not.toContain("REAL CARD");
-  });
-
-  it("keeps the PNG when the fetch rejects", async () => {
-    const m = mountWidget(staticWidgetHtml());
-    stubFetch(m, () => Promise.reject(new Error("network down")));
-    deliverNative(m);
-    fireImageLoad(m);
-    await new Promise((r) => setTimeout(r, 10));
-    expect(widgetImg(m).getAttribute("src")).toBe(DATA_URL);
-    expect(m.widgetWin.document.body.innerHTML).not.toContain("REAL CARD");
-  });
-
-  it("keeps the PNG when the body is not an HTML document", async () => {
-    // A proxy that starts returning JSON must not have it written into the
-    // document as markup.
-    const m = mountWidget(staticWidgetHtml());
-    stubFetch(m, () => htmlResponse('{"error":"UNIQUE-SENTINEL-BODY"}'));
-    deliverNative(m);
-    fireImageLoad(m);
-    await new Promise((r) => setTimeout(r, 10));
-    expect(widgetImg(m).getAttribute("src")).toBe(DATA_URL);
-    // A distinctive sentinel, not the word "error" — the widget's own markup
-    // legitimately contains that.
-    expect(m.widgetWin.document.body.innerHTML).not.toContain(
-      "UNIQUE-SENTINEL-BODY",
-    );
-  });
-
-  /**
-   * Intercept the upgrade's 7 s bail timer so it can be fired on demand.
-   *
-   * The widget calls `setTimeout` from its OWN window, so the global fake-timer
-   * machinery does not see it; patch the window's method instead. Only the
-   * 7000 ms timer is captured — everything else (the probe, the log ladder)
-   * keeps its real behavior.
-   */
-  function captureBailTimer(m: Mounted): { fire: () => void; count: () => number } {
-    const captured: Array<() => void> = [];
-    const win = m.widgetWin as unknown as {
-      setTimeout: (fn: () => void, ms?: number) => unknown;
-    };
-    const real = win.setTimeout.bind(m.widgetWin);
-    win.setTimeout = (fn: () => void, ms?: number) => {
-      if (ms === 7000) {
-        captured.push(fn);
-        return 0;
-      }
-      return real(fn, ms);
-    };
-    return {
-      fire: () => captured.forEach((fn) => fn()),
-      count: () => captured.length,
-    };
-  }
-
-  it("keeps the PNG when the native fetch times out", async () => {
-    // The fourth failure mode. The other three (502, network, non-HTML) each
-    // had a test; this one did not, and it is the one with real ordering risk.
-    const m = mountWidget(staticWidgetHtml());
-    // A fetch that never settles.
-    stubFetch(m, () => new Promise(() => {}));
-    const bail = captureBailTimer(m);
-    deliverNative(m);
-    fireImageLoad(m);
-    expect(bail.count()).toBe(1);
-
-    bail.fire();
-    await new Promise((r) => setTimeout(r, 10));
-    expect(widgetImg(m).getAttribute("src")).toBe(DATA_URL);
-    expect(m.widgetWin.document.body.innerHTML).not.toContain("REAL CARD");
-  });
-
-  it("ignores a native response that arrives AFTER the timeout", async () => {
-    // The timer sets `settled = true` but does not abort the fetch, so a late
-    // response still runs `.then`. The only thing standing between it and a
-    // `document.open()` over a working chart is the `if (settled) return` — so
-    // pin that guard, not the happy path.
-    const m = mountWidget(staticWidgetHtml());
-    let resolveFetch: ((v: unknown) => void) | undefined;
-    stubFetch(
-      m,
-      () =>
-        new Promise((res) => {
-          resolveFetch = res as (v: unknown) => void;
-        }),
-    );
-    const bail = captureBailTimer(m);
-    deliverNative(m);
-    fireImageLoad(m);
-
-    // Timeout first...
-    bail.fire();
-    await new Promise((r) => setTimeout(r, 10));
-    // ...then the response turns up anyway, with a perfectly good document.
-    resolveFetch!({
-      ok: true,
-      status: 200,
-      text: () => Promise.resolve(NATIVE_HTML),
-    });
-    await new Promise((r) => setTimeout(r, 10));
-
-    // It must not be written over the chart the user is already looking at.
-    expect(widgetImg(m).getAttribute("src")).toBe(DATA_URL);
-    expect(m.widgetWin.document.body.innerHTML).not.toContain("REAL CARD");
-  });
-
-  it("never fetches a relative url when the server armed no native card", () => {
-    // `nativeCardUrl` is `""` whenever `_meta.native_card_url` is absent — no
-    // longer the deployed default, but still an env without `PUBLIC_CDN_URL`, a
-    // failed resolve, or a cached result from before the field existed — and
-    // `""` IS a string, so it slipped past
-    // `withHostTheme`'s `typeof` bail, took the append branch, and came back
-    // `"?dark_mode=true"`. That cleared `upgradeToNativeCard`'s own
-    // `nativeUrl === ""` guard, which sees the TRANSFORMED value, and reached
-    // `fetch("?dark_mode=true")` resolved against the widget document — a
-    // request in nobody's `connect-src`, i.e. the same blocked-subresource
-    // class the retired iframe probe was costing us.
-    //
-    // Needs a host theme to reproduce: `withHostTheme` is a no-op when
-    // `hostTheme()` returns null.
-    const m = mountWidget(staticWidgetHtml());
-    (m.widgetWin as unknown as { openai: object }).openai = { theme: "dark" };
-    const f = stubFetch(m, () => htmlResponse(NATIVE_HTML));
-    deliver(
-      m,
-      toolResult(
-        // No `embed_url`, so `useIframe` is false and the PNG path runs even
-        // with `window.openai` present.
-        { image_url: IMAGE_URL, height: 600 },
-        { image_data_url: DATA_URL },
-      ),
-      m.wrapperWin,
-    );
-    fireImageLoad(m);
-    expect(f.calls).toEqual([]);
-  });
-
-  it("fetches at most once even if both image events fire", async () => {
-    const m = mountWidget(staticWidgetHtml());
-    const f = stubFetch(m, () => htmlResponse(NATIVE_HTML));
-    deliverNative(m);
-    fireImageLoad(m);
-    const WidgetEvent = (m.widgetWin as unknown as { Event: typeof Event })
-      .Event;
-    widgetImg(m).dispatchEvent(new WidgetEvent("error"));
-    fireImageLoad(m);
-    await new Promise((r) => setTimeout(r, 10));
-    expect(f.calls.length).toBe(1);
-  });
-
-  it("attempts the upgrade even when the PNG itself failed", async () => {
-    // Nothing to protect in that case, and the native card is the better
-    // outcome than a click-through link.
-    const m = mountWidget(staticWidgetHtml());
-    const f = stubFetch(m, () => htmlResponse(NATIVE_HTML));
-    deliverNative(m);
-    const WidgetEvent = (m.widgetWin as unknown as { Event: typeof Event })
-      .Event;
-    widgetImg(m).dispatchEvent(new WidgetEvent("error"));
-    await new Promise((r) => setTimeout(r, 10));
-    expect(f.calls).toEqual([NATIVE_URL]);
-  });
-
-  it("injects a height reporter into the markup it writes", async () => {
-    // `document.open()` discards the widget's own listeners, so without an
-    // injected reporter the host would size the card from a stale value.
-    let written = "";
-    const m = mountWidget(staticWidgetHtml());
-    stubFetch(m, () => htmlResponse(NATIVE_HTML));
-    const doc = m.widgetWin.document as unknown as {
-      open: () => void;
-      write: (s: string) => void;
-      close: () => void;
-    };
-    doc.open = () => {};
-    doc.write = (s: string) => {
-      written += s;
-    };
-    doc.close = () => {};
-    deliverNative(m);
-    fireImageLoad(m);
-    await new Promise((r) => setTimeout(r, 10));
-    expect(written).toContain("REAL CARD");
-    expect(written).toContain("ui/notifications/size-changed");
-    expect(written).toContain("notifyIntrinsicHeight");
-    // The reporter goes inside the body, not appended after </html>.
-    expect(written.indexOf("size-changed")).toBeLessThan(
-      written.indexOf("</body>"),
-    );
-  });
-
-  it("holds the native card to the host's inline height ceiling", async () => {
-    // `MAX_INLINE_WIDGET_HEIGHT_PX` is a host CONSTRAINT, not a preference:
-    // Claude renders inline up to ~500 px and gives the card no scrollbar, so
-    // anything past that is cropped and the card loses its bottom edge — the
-    // axis labels and the source line. The PNG path honours it in both
-    // directions (`max-height` + `object-fit: contain`, and a `Math.min` on
-    // what it notifies); the native card had no clamp at all, and after
-    // `document.open()` the CSS that enforced the ceiling is gone with the old
-    // document. It also carries strictly MORE than the PNG (range selectors,
-    // chart/table toggle, source line), so it is the likelier to exceed it.
-    //
-    // jsdom performs no layout, so `offsetHeight` is 0 and the reporter falls
-    // through to `__FALLBACK_HEIGHT__` — here the requested 600, over the cap.
-    // Exactly the case that matters.
-    const m = mountWidget(staticWidgetHtml());
-    stubFetch(m, () => htmlResponse(NATIVE_HTML));
-    deliverNative(m);
-    fireImageLoad(m);
-    await new Promise((r) => setTimeout(r, 10));
-
-    // The document was replaced by the real card...
-    expect(m.widgetWin.document.body.innerHTML).toContain("REAL CARD");
-    // ...and the reporter that came with it capped what it asked the host for,
-    // rather than requesting 600 and losing 100 px off the bottom.
-    const sizeChanges = m.toParent.filter(
-      (msg) =>
-        (msg as { method?: string }).method === "ui/notifications/size-changed",
-    ) as Array<{ params: { height: number } }>;
-    expect(sizeChanges.at(-1)?.params.height).toBe(500);
-
-    // And it scaled the document to fit rather than letting it be cropped —
-    // the document equivalent of `object-fit: contain`.
-    const root = m.widgetWin.document.documentElement;
-    expect(root.style.transform).toBe(`scale(${500 / 600})`);
-    expect(root.style.transformOrigin).toBe("top left");
-  });
-
-  it("leaves a card under the ceiling unscaled", async () => {
-    // The clamp must not touch the common case, or every short card gets a
-    // pointless transform and a blurrier render.
-    const m = mountWidget(staticWidgetHtml());
-    stubFetch(m, () => htmlResponse(NATIVE_HTML));
-    deliver(
-      m,
-      toolResult(
-        { embed_url: EMBED_URL, image_url: IMAGE_URL, height: 300 },
-        { image_data_url: DATA_URL, native_card_url: NATIVE_URL },
-      ),
-      m.wrapperWin,
-    );
-    fireImageLoad(m);
-    await new Promise((r) => setTimeout(r, 10));
-
-    const sizeChanges = m.toParent.filter(
-      (msg) =>
-        (msg as { method?: string }).method === "ui/notifications/size-changed",
-    ) as Array<{ params: { height: number } }>;
-    expect(sizeChanges.at(-1)?.params.height).toBe(300);
-    expect(m.widgetWin.document.documentElement.style.transform).toBe("");
-  });
-
-  /**
-   * The native card is INTERACTIVE, and the reporter used to treat its height as
-   * a one-time measurement.
-   *
-   * Reported on claude.ai 2026-08-07 as the card being "weirdly cut off" after
-   * pressing `Show more`. Measured on the real Nvidia card at a 762 px frame:
-   * 527 px on open, 619 px after a tab switch, 641 px after `Show more`. Neither
-   * interaction fires `resize` or `load`, the ladder is finished by 3 s, and the
-   * page's own CSS is `:root{overflow-y:hidden}` — so growth past the last
-   * reported height is not scrolled and not scaled, it is gone.
-   *
-   * jsdom performs no layout, so the readings are stubbed. The important part is
-   * that they are stubbed HONESTLY: `scrollHeight` is a function of the width the
-   * reporter has applied to the root, because the reflow that widening causes is
-   * the whole reason the loop guard is written the way it is. A stub that ignored
-   * the applied style would pass whether or not the guard worked.
-   */
-  function stubLayout(
-    m: Mounted,
-    read: { offsetHeight: () => number },
-  ): { fireObserver: () => void; observed: string[]; scrollReads: () => number } {
-    const w = m.widgetWin as unknown as {
-      HTMLElement: { prototype: object };
-      ResizeObserver?: unknown;
-    };
-    let scrollReads = 0;
-    Object.defineProperty(w.HTMLElement.prototype, "offsetHeight", {
-      configurable: true,
-      get: read.offsetHeight,
-    });
-    // Body's content height AT THE CURRENT ROOT WIDTH. The reporter's fit sets
-    // `documentElement.style.width = (100/s)%`, which in a real browser reflows
-    // the body shorter — so the value the guard records after the fit differs
-    // from the natural one, and a second pass reading the same value is how the
-    // sequence terminates. Modelled as an inverse relationship, which is the
-    // direction that matters, not the exact number.
-    Object.defineProperty(w.HTMLElement.prototype, "scrollHeight", {
-      configurable: true,
-      get(): number {
-        scrollReads += 1;
-        const natural = read.offsetHeight();
-        const raw = m.widgetWin.document.documentElement.style.width;
-        const pct = raw.endsWith("%") ? Number.parseFloat(raw) : 100;
-        if (!Number.isFinite(pct) || pct <= 0) return natural;
-        return Math.round(natural * (100 / pct));
-      },
-    });
-    const callbacks: Array<() => void> = [];
-    const observed: string[] = [];
-    w.ResizeObserver = class {
-      constructor(cb: () => void) {
-        callbacks.push(cb);
-      }
-      observe(target: { tagName?: string }): void {
-        observed.push(String(target?.tagName ?? "?").toLowerCase());
-      }
-      disconnect(): void {}
-    };
-    return {
-      fireObserver: () => {
-        for (const cb of callbacks) cb();
-      },
-      observed,
-      scrollReads: () => scrollReads,
-    };
-  }
-
-  it("re-reports its height when the card relayouts, not just on a timer", async () => {
-    const m = mountWidget(staticWidgetHtml());
-    stubFetch(m, () => htmlResponse(NATIVE_HTML));
-    let natural = 400;
-    const layout = stubLayout(m, { offsetHeight: () => natural });
-    deliverNative(m);
-    fireImageLoad(m);
-    await new Promise((r) => setTimeout(r, 10));
-
-    const heights = (): number[] =>
-      m.toParent
-        .filter(
-          (msg) =>
-            (msg as { method?: string }).method ===
-            "ui/notifications/size-changed",
-        )
-        .map((msg) => (msg as { params: { height: number } }).params.height);
-    const root = m.widgetWin.document.documentElement;
-
-    // It watches the BODY. Observing `documentElement` would mean every fit it
-    // applies observes itself.
-    expect(layout.observed).toEqual(["body"]);
-    expect(heights().at(-1)).toBe(400);
-    expect(root.style.transform).toBe("");
-    const settled = heights().length;
-
-    // A callback with nothing changed must not re-report and must not touch a
-    // style — that is what stops the correction from feeding itself every frame.
-    //
-    // Asserted through the READ COUNT, which is the only signal here that is both
-    // synchronous and exact. An early return reads body's scrollHeight once, in
-    // the guard; a pass that does work reads it a second time to record `last`.
-    // Counting reports alone cannot distinguish "returned early" from "ran and
-    // re-reported the same number", and counting style mutations cannot either,
-    // since a full pass clears and re-applies to the same values.
-    let reads = layout.scrollReads();
-    layout.fireObserver();
-    expect(heights().length).toBe(settled);
-    expect(layout.scrollReads()).toBe(reads + 1);
-
-    // `Show more`: the document grows past the host's inline ceiling. Now it has
-    // to both re-report and scale, or the user loses the rows they just asked
-    // for. Two reads, because this pass does the work.
-    natural = 640;
-    reads = layout.scrollReads();
-    layout.fireObserver();
-    expect(heights().length).toBe(settled + 1);
-    expect(heights().at(-1)).toBe(500);
-    expect(root.style.transform).toBe(`scale(${500 / 640})`);
-    expect(layout.scrollReads()).toBe(reads + 2);
-
-    // THE TERMINATION PROPERTY, which is the half a width-independent stub could
-    // not reach. Applying that fit widened the root to 128%, so body's
-    // scrollHeight has genuinely changed since the guard last looked — a real
-    // browser fires the observer again right here. The guard has to recognise the
-    // post-fit value as its own work and stop, or every correction re-corrects
-    // forever.
-    expect(root.style.width).toBe("128%");
-    for (const _ of [0, 1]) {
-      reads = layout.scrollReads();
-      layout.fireObserver();
-      // One read, no report, styles untouched: correction, confirming callback,
-      // quiet.
-      expect(layout.scrollReads()).toBe(reads + 1);
-      expect(heights().length).toBe(settled + 1);
-      expect(root.style.transform).toBe(`scale(${500 / 640})`);
-      expect(root.style.width).toBe("128%");
-    }
-  });
-
-  it("swallows a ResizeObserver constructor that throws", async () => {
-    // Not `delete window.ResizeObserver`: jsdom never defines it, so deleting it
-    // asserted nothing the pre-PR code did not already satisfy, and it could not
-    // tell the `typeof` guard apart from the surrounding `try/catch` — either
-    // alone would pass. A constructor that THROWS is what reaches the catch,
-    // because the global exists and the `typeof` check cannot help.
-    //
-    // What the catch is worth, stated precisely rather than generously: the
-    // observer is wired LAST, after the first report, the listeners and the
-    // ladder, so an escaping throw would not cost any of them. What it would cost
-    // is an uncaught error inside a widget document that hosts report to the user
-    // as a broken app. So that — not the ladder — is what this asserts.
-    const m = mountWidget(staticWidgetHtml());
-    stubFetch(m, () => htmlResponse(NATIVE_HTML));
-    const uncaught: string[] = [];
-    m.widgetWin.addEventListener("error", (e) => {
-      uncaught.push(String((e as ErrorEvent).message ?? e.type));
-    });
-    let constructed = 0;
-    (m.widgetWin as unknown as { ResizeObserver: unknown }).ResizeObserver =
-      class {
-        constructor() {
-          constructed += 1;
-          throw new Error("ResizeObserver unavailable in this host");
-        }
-      };
-    deliverNative(m);
-    fireImageLoad(m);
-    await new Promise((r) => setTimeout(r, 10));
-
-    // It really did try, so the catch is on the live path...
-    expect(constructed).toBe(1);
-    // ...nothing escaped...
-    expect(uncaught).toEqual([]);
-    // ...and everything wired before it is intact.
-    expect(m.widgetWin.document.body.innerHTML).toContain("REAL CARD");
-    expect(
-      m.toParent.filter(
-        (msg) =>
-          (msg as { method?: string }).method === "ui/notifications/size-changed",
-      ).length,
-    ).toBeGreaterThan(0);
-  });
-
-  it("keeps the ladder on a host with no ResizeObserver at all", async () => {
-    // The other half of the guard: `typeof ResizeObserver !== 'undefined'`. jsdom
-    // gives this for free by never defining it, which is exactly why the test
-    // above has to supply a throwing one to be worth anything.
-    const m = mountWidget(staticWidgetHtml());
-    expect(
-      (m.widgetWin as unknown as { ResizeObserver?: unknown }).ResizeObserver,
-    ).toBeUndefined();
-    stubFetch(m, () => htmlResponse(NATIVE_HTML));
-    deliverNative(m);
-    fireImageLoad(m);
-    await new Promise((r) => setTimeout(r, 10));
-    expect(m.widgetWin.document.body.innerHTML).toContain("REAL CARD");
-    expect(
-      m.toParent.filter(
-        (msg) =>
-          (msg as { method?: string }).method === "ui/notifications/size-changed",
-      ).length,
-    ).toBeGreaterThan(0);
   });
 });
 
@@ -1797,8 +1231,6 @@ describe("host theme (executed)", () => {
  * neither the late response nor a retry can fix.
  */
 describe("first-render hold (executed)", () => {
-  const NATIVE_URL = "https://mcp.example.test/embed-html/abc123?dark_mode=auto";
-
   /** Simulate the 200 ms timer having fired without an init response. */
   function forceInitializedSent(m: Mounted): void {
     vi.advanceTimersByTime(250);
@@ -1812,84 +1244,71 @@ describe("first-render hold (executed)", () => {
     vi.useRealTimers();
   });
 
-  function chart(): unknown {
-    return toolResult(
-      { embed_url: EMBED_URL, image_url: IMAGE_URL, height: 600 },
-      { image_data_url: DATA_URL, native_card_url: NATIVE_URL },
-    );
+  function mountLive(): { m: Mounted; stubs: LiveStubs } {
+    const m = mountWidget(liveHtml());
+    return { m, stubs: stubLive(m) };
   }
 
   it("holds a tool-result that arrives after `initialized` but before the response", () => {
-    const m = mountWidget(staticWidgetHtml());
+    const { m, stubs } = mountLive();
     forceInitializedSent(m);
-    deliver(m, chart(), m.wrapperWin);
-    // Nothing painted yet — the theme is still unknown.
-    expect(widgetImg(m).getAttribute("src")).toBeNull();
+    deliverLive(m, liveCharts(1));
+    // Nothing mounted yet — the theme is still unknown.
+    expect(stubs.fetches).toEqual([]);
+    expect(liveSlides(m)).toHaveLength(0);
   });
 
   it("renders with the theme once the late response lands", () => {
-    const m = mountWidget(staticWidgetHtml());
-    const calls: string[] = [];
-    (m.widgetWin as unknown as { fetch: unknown }).fetch = (url: string) => {
-      calls.push(String(url));
-      return Promise.resolve({
-        ok: true,
-        status: 200,
-        text: () => Promise.resolve("<!doctype html><html><body>c</body></html>"),
-      });
-    };
+    const { m, stubs } = mountLive();
     forceInitializedSent(m);
-    deliver(m, chart(), m.wrapperWin);
+    deliverLive(m, liveCharts(1));
     // Response arrives at ~350 ms, after the tool-result.
     deliver(
       m,
       { jsonrpc: "2.0", id: "tako-ui-init", result: { hostContext: { theme: "light" } } },
       m.wrapperWin,
     );
-    expect(widgetImg(m).getAttribute("src")).toBe(DATA_URL);
-    fireImageLoad(m);
     // The card is themed from the HOST, which is the whole point — before the
     // hold this url carried `dark_mode=auto` and resolved off the OS.
-    expect(calls[0]).toContain("dark_mode=false");
+    expect(fetchedUrls(stubs)[0]).toContain("dark_mode=false");
   });
 
   it("releases the hold when the grace window expires", () => {
     // A host that answers `initialized` but never `ui/initialize` must not
     // strand the chart forever.
-    const m = mountWidget(staticWidgetHtml());
+    const { m, stubs } = mountLive();
+    const charts = liveCharts(1);
     forceInitializedSent(m);
-    deliver(m, chart(), m.wrapperWin);
-    expect(widgetImg(m).getAttribute("src")).toBeNull();
+    deliverLive(m, charts);
+    expect(stubs.fetches).toEqual([]);
     vi.advanceTimersByTime(500);
-    expect(widgetImg(m).getAttribute("src")).toBe(DATA_URL);
+    expect(fetchedUrls(stubs)).toEqual(nativeUrls(charts));
   });
 
   it("renders only once when the response and the grace both fire", () => {
-    const m = mountWidget(staticWidgetHtml());
+    const { m, stubs } = mountLive();
     forceInitializedSent(m);
-    deliver(m, chart(), m.wrapperWin);
+    deliverLive(m, liveCharts(1));
     deliver(
       m,
       { jsonrpc: "2.0", id: "tako-ui-init", result: { hostContext: { theme: "dark" } } },
       m.wrapperWin,
     );
-    const first = widgetImg(m).getAttribute("src");
     vi.advanceTimersByTime(500);
-    expect(widgetImg(m).getAttribute("src")).toBe(first);
     // `rendered` latches, so a replay could not double-render anyway — but the
     // held payload is cleared before rendering so it cannot be replayed at all.
-    expect(
-      methodsSent(m).filter((x) => x === "ui/notifications/size-changed").length,
-    ).toBeGreaterThan(0);
+    expect(stubs.fetches).toHaveLength(1);
+    expect(liveSlides(m)).toHaveLength(1);
   });
 
   it("does NOT hold a tool-result that precedes `initialized`", () => {
     // Such a host is not following the handshake, so there is no response to
     // wait for — holding would only delay the chart. This is also the shape
     // every other test in this file uses, which is why they still pass.
-    const m = mountWidget(staticWidgetHtml());
-    deliver(m, chart(), m.wrapperWin);
-    expect(widgetImg(m).getAttribute("src")).toBe(DATA_URL);
+    const { m, stubs } = mountLive();
+    const charts = liveCharts(1);
+    deliverLive(m, charts);
+    expect(fetchedUrls(stubs)).toEqual(nativeUrls(charts));
   });
 });
 
@@ -1903,39 +1322,42 @@ describe("first-render hold (executed)", () => {
  * `result.hostContext.theme`, and hosts send `ui/notifications/host-context-changed`
  * when it changes. Both are read here.
  *
- * Asserted on the native-card url because that is the Claude path — no
- * `window.openai`, so `render()` takes the image branch and then upgrades.
+ * Asserted on the live card url because that is the Claude path — no
+ * `window.openai`, so `render()` mounts live cards.
  */
 describe("mcp apps host theme (executed)", () => {
-  const NATIVE_URL = "https://mcp.example.test/embed-html/abc123?dark_mode=auto";
+  const LIVE_CARD_URL = "https://mcp.example.test/embed-html/abc123?dark_mode=auto";
 
   /**
-   * Mount, feed the widget a sequence of host messages, deliver a chart with
-   * the native url armed, and return the url the native upgrade fetched.
-   * The upgrade runs from the image `load` handler, so that has to be fired.
+   * Mount, feed the widget a sequence of host messages, deliver a live chart,
+   * and return the url the live card fetched.
    */
-  function nativeUrlAfter(hostMessages: unknown[]): string | undefined {
-    const m = mountWidget(staticWidgetHtml());
-    const calls: string[] = [];
-    (m.widgetWin as unknown as { fetch: unknown }).fetch = (url: string) => {
-      calls.push(String(url));
-      return Promise.resolve({
-        ok: true,
-        status: 200,
-        text: () => Promise.resolve("<!doctype html><html><body></body></html>"),
-      });
-    };
+  function liveCardUrlAfter(hostMessages: unknown[]): string | undefined {
+    const m = mountWidget(liveHtml());
+    const stubs = stubLive(m);
     for (const msg of hostMessages) deliver(m, msg, m.wrapperWin);
-    deliver(
-      m,
-      toolResult(
-        { embed_url: EMBED_URL, image_url: IMAGE_URL, height: 600 },
-        { image_data_url: DATA_URL, native_card_url: NATIVE_URL },
-      ),
-      m.wrapperWin,
+    deliverLive(m, [{ ...liveChart(0), native_card_url: LIVE_CARD_URL }]);
+    return stubs.fetches[0]?.url;
+  }
+
+  function deliverChart(m: Mounted): void {
+    stubLive(m);
+    deliverLive(m, liveCharts(1));
+  }
+
+  /**
+   * Mount, feed the widget a sequence of host messages, deliver a live chart,
+   * and return the document the widget wrote into the live card's blob.
+   */
+  async function liveCardDocumentAfter(hostMessages: unknown[], openai?: object): Promise<string> {
+    const m = mountWidget(liveHtml(), openai);
+    const stubs = stubLive(m, () =>
+      okResponse("<!doctype html><html><body><div>card</div></body></html>"),
     );
-    fireImageLoad(m);
-    return calls[0];
+    for (const msg of hostMessages) deliver(m, msg, m.wrapperWin);
+    deliverLive(m, liveCharts(1));
+    await settle();
+    return (await stubs.blobs.get(mountedFrame(m, 0).getAttribute("src") ?? "")?.text()) ?? "";
   }
 
   function initResponse(hostContext: unknown): unknown {
@@ -1950,35 +1372,35 @@ describe("mcp apps host theme (executed)", () => {
     };
   }
 
-  function nativeUrlWithHostContext(hostContext: unknown): string | undefined {
-    return nativeUrlAfter(
+  function liveCardUrlWithHostContext(hostContext: unknown): string | undefined {
+    return liveCardUrlAfter(
       hostContext === undefined ? [] : [initResponse(hostContext)],
     );
   }
 
   it("asks for a light card when the host declares a light theme", () => {
-    expect(nativeUrlWithHostContext({ theme: "light" })).toContain(
+    expect(liveCardUrlWithHostContext({ theme: "light" })).toContain(
       "dark_mode=false",
     );
   });
 
   it("asks for a dark card when the host declares a dark theme", () => {
-    expect(nativeUrlWithHostContext({ theme: "dark" })).toContain(
+    expect(liveCardUrlWithHostContext({ theme: "dark" })).toContain(
       "dark_mode=true",
     );
   });
 
   it("stays on auto when the host declares no theme", () => {
     // Still the best available guess — following the OS beats a coin flip.
-    expect(nativeUrlWithHostContext({})).toContain("dark_mode=auto");
+    expect(liveCardUrlWithHostContext({})).toContain("dark_mode=auto");
   });
 
   it("stays on auto when the host never answers the handshake", () => {
-    expect(nativeUrlWithHostContext(undefined)).toContain("dark_mode=auto");
+    expect(liveCardUrlWithHostContext(undefined)).toContain("dark_mode=auto");
   });
 
   it("ignores an unrecognised hostContext theme", () => {
-    expect(nativeUrlWithHostContext({ theme: "solarized" })).toContain(
+    expect(liveCardUrlWithHostContext({ theme: "solarized" })).toContain(
       "dark_mode=auto",
     );
   });
@@ -1987,7 +1409,7 @@ describe("mcp apps host theme (executed)", () => {
     // Hosts MAY omit `theme` at initialize and send it later; a toggle before
     // the first tool call must still be reflected.
     expect(
-      nativeUrlAfter([initResponse({}), contextChanged({ theme: "light" })]),
+      liveCardUrlAfter([initResponse({}), contextChanged({ theme: "light" })]),
     ).toContain("dark_mode=false");
   });
 
@@ -1996,7 +1418,7 @@ describe("mcp apps host theme (executed)", () => {
     // rather than replacing it entirely." A displayMode-only update must not
     // wipe the theme learned at initialize.
     expect(
-      nativeUrlAfter([
+      liveCardUrlAfter([
         initResponse({ theme: "light" }),
         contextChanged({ displayMode: "fullscreen" }),
       ]),
@@ -2016,11 +1438,7 @@ describe("mcp apps host theme (executed)", () => {
       }),
       m.wrapperWin,
     );
-    deliver(
-      m,
-      toolResult({ embed_url: EMBED_URL, image_url: IMAGE_URL }, { image_data_url: DATA_URL }),
-      m.wrapperWin,
-    );
+    deliverChart(m);
     const root = m.widgetWin.document.documentElement;
     // The DOM normalizes hex to rgb() on the way in.
     expect(root.style.background).toBe("rgb(25, 24, 23)");
@@ -2039,11 +1457,7 @@ describe("mcp apps host theme (executed)", () => {
       }),
       m.wrapperWin,
     );
-    deliver(
-      m,
-      toolResult({ embed_url: EMBED_URL, image_url: IMAGE_URL }, { image_data_url: DATA_URL }),
-      m.wrapperWin,
-    );
+    deliverChart(m);
     const root = m.widgetWin.document.documentElement;
     expect(root.style.background).toBe("");
     expect(root.style.colorScheme).toBe("dark");
@@ -2065,11 +1479,7 @@ describe("mcp apps host theme (executed)", () => {
       }),
       m.wrapperWin,
     );
-    deliver(
-      m,
-      toolResult({ embed_url: EMBED_URL, image_url: IMAGE_URL }, { image_data_url: DATA_URL }),
-      m.wrapperWin,
-    );
+    deliverChart(m);
     const root = m.widgetWin.document.documentElement;
     expect(root.style.background).not.toContain("display:none");
     // Falls back to the approximate tier rather than trusting the value.
@@ -2081,11 +1491,7 @@ describe("mcp apps host theme (executed)", () => {
     // corners are already correct there. Painting anything would introduce the
     // opaque square the transparent surface exists to avoid.
     const m = mountWidget(staticWidgetHtml());
-    deliver(
-      m,
-      toolResult({ embed_url: EMBED_URL, image_url: IMAGE_URL }, { image_data_url: DATA_URL }),
-      m.wrapperWin,
-    );
+    deliverChart(m);
     const root = m.widgetWin.document.documentElement;
     expect(root.style.colorScheme).toBe("");
     expect(root.style.background).toBe("");
@@ -2099,14 +1505,7 @@ describe("mcp apps host theme (executed)", () => {
     // colour would put a square block back over the host's rounded container.
     const m = mountWidget(staticWidgetHtml());
     deliver(m, initResponse({ theme: "dark" }), m.wrapperWin);
-    deliver(
-      m,
-      toolResult(
-        { embed_url: EMBED_URL, image_url: IMAGE_URL, height: 600 },
-        { image_data_url: DATA_URL },
-      ),
-      m.wrapperWin,
-    );
+    deliverChart(m);
     expect(m.widgetWin.document.documentElement.style.colorScheme).toBe("dark");
     // Still transparent — the fix must not reintroduce an opaque surface.
     const bg = m.widgetWin.document.documentElement.style.background;
@@ -2116,11 +1515,7 @@ describe("mcp apps host theme (executed)", () => {
   it("follows a light host too", () => {
     const m = mountWidget(staticWidgetHtml());
     deliver(m, initResponse({ theme: "light" }), m.wrapperWin);
-    deliver(
-      m,
-      toolResult({ embed_url: EMBED_URL, image_url: IMAGE_URL }, { image_data_url: DATA_URL }),
-      m.wrapperWin,
-    );
+    deliverChart(m);
     expect(m.widgetWin.document.documentElement.style.colorScheme).toBe("light");
   });
 
@@ -2128,47 +1523,14 @@ describe("mcp apps host theme (executed)", () => {
     // Guessing dark here would put BLACK corners on a light host — the same
     // bug mirrored.
     const m = mountWidget(staticWidgetHtml());
-    deliver(
-      m,
-      toolResult({ embed_url: EMBED_URL, image_url: IMAGE_URL }, { image_data_url: DATA_URL }),
-      m.wrapperWin,
-    );
+    deliverChart(m);
     expect(m.widgetWin.document.documentElement.style.colorScheme).toBe("");
   });
 
-  it("injects the scheme into the native card document too", async () => {
-    // The native path replaces this document wholesale, so the widget's own
-    // <html> style does not survive — the scheme has to ride in the markup.
-    const m = mountWidget(staticWidgetHtml());
-    let written = "";
-    (m.widgetWin as unknown as { fetch: unknown }).fetch = () =>
-      Promise.resolve({
-        ok: true,
-        status: 200,
-        text: () =>
-          Promise.resolve("<!doctype html><html><body><div>card</div></body></html>"),
-      });
-    const doc = m.widgetWin.document as unknown as {
-      open(): void;
-      write(s: string): void;
-      close(): void;
-    };
-    doc.open = () => {};
-    doc.write = (s: string) => {
-      written += s;
-    };
-    doc.close = () => {};
-    deliver(m, initResponse({ theme: "dark" }), m.wrapperWin);
-    deliver(
-      m,
-      toolResult(
-        { embed_url: EMBED_URL, image_url: IMAGE_URL, height: 600 },
-        { image_data_url: DATA_URL, native_card_url: NATIVE_URL },
-      ),
-      m.wrapperWin,
-    );
-    fireImageLoad(m);
-    await new Promise((r) => setTimeout(r, 30));
+  it("injects the scheme into the live card document too", async () => {
+    // The live card is a separate document, so the widget's own <html> style
+    // does not reach it — the scheme has to ride in the markup.
+    const written = await liveCardDocumentAfter([initResponse({ theme: "dark" })]);
     // Theme only, no surface colour sent -> the approximate tier, which paints
     // the theme's canvas literal. It used to emit `color-scheme` alone and
     // leave the canvas transparent; measured in Chrome, `color-scheme` does not
@@ -2182,71 +1544,29 @@ describe("mcp apps host theme (executed)", () => {
     );
   });
 
-  it("paints the native card document in the host's surface colour", async () => {
-    // The native path replaces this document, so the colour has to ride in the
+  it("paints the live card document in the host's surface colour", async () => {
+    // The live card is a separate document, so the colour has to ride in the
     // markup — and this is the tier that makes the corners exact rather than
     // approximate.
-    const m = mountWidget(staticWidgetHtml());
-    let written = "";
-    (m.widgetWin as unknown as { fetch: unknown }).fetch = () =>
-      Promise.resolve({
-        ok: true,
-        status: 200,
-        text: () => Promise.resolve("<!doctype html><html><body>c</body></html>"),
-      });
-    const doc = m.widgetWin.document as unknown as {
-      open(): void;
-      write(s: string): void;
-      close(): void;
-    };
-    doc.open = () => {};
-    doc.write = (t: string) => {
-      written += t;
-    };
-    doc.close = () => {};
-    deliver(
-      m,
+    const written = await liveCardDocumentAfter([
       initResponse({
         theme: "dark",
         styles: { variables: { "--color-background-primary": "rgb(25, 24, 23)" } },
       }),
-      m.wrapperWin,
-    );
-    deliver(
-      m,
-      toolResult(
-        { embed_url: EMBED_URL, image_url: IMAGE_URL, height: 600 },
-        { image_data_url: DATA_URL, native_card_url: NATIVE_URL },
-      ),
-      m.wrapperWin,
-    );
-    fireImageLoad(m);
-    await new Promise((r) => setTimeout(r, 30));
+    ]);
     expect(written).toContain("background:rgb(25, 24, 23)");
     expect(written).toContain("color-scheme:dark");
   });
 
-  it("does not inject a hostile surface colour into the native document", async () => {
-    const m = mountWidget(staticWidgetHtml());
-    let written = "";
-    (m.widgetWin as unknown as { fetch: unknown }).fetch = () =>
-      Promise.resolve({
-        ok: true,
-        status: 200,
-        text: () => Promise.resolve("<!doctype html><html><body>c</body></html>"),
-      });
-    const doc = m.widgetWin.document as unknown as {
-      open(): void;
-      write(s: string): void;
-      close(): void;
-    };
-    doc.open = () => {};
-    doc.write = (t: string) => {
-      written += t;
-    };
-    doc.close = () => {};
-    deliver(
-      m,
+  it("leaves the live card canvas unpainted on a host that exposes window.openai", async () => {
+    const written = await liveCardDocumentAfter([], { theme: "dark" });
+    expect(written).toContain("card");
+    expect(written).toContain("color-scheme:dark");
+    expect(written).not.toContain("background:");
+  });
+
+  it("does not inject a hostile surface colour into the live card document", async () => {
+    const written = await liveCardDocumentAfter([
       initResponse({
         theme: "dark",
         styles: {
@@ -2255,18 +1575,7 @@ describe("mcp apps host theme (executed)", () => {
           },
         },
       }),
-      m.wrapperWin,
-    );
-    deliver(
-      m,
-      toolResult(
-        { embed_url: EMBED_URL, image_url: IMAGE_URL, height: 600 },
-        { image_data_url: DATA_URL, native_card_url: NATIVE_URL },
-      ),
-      m.wrapperWin,
-    );
-    fireImageLoad(m);
-    await new Promise((r) => setTimeout(r, 30));
+    ]);
     // The payload never lands. The document still gets a backdrop, but it is
     // the theme's canvas literal — the rejected value is nowhere in the markup,
     // and the escape sequence it carried never reaches the parser.
@@ -2333,17 +1642,21 @@ describe("mcp apps host theme (executed)", () => {
     expect(m.widgetWin.document.documentElement.style.colorScheme).toBe("light");
   });
 
-  it("backs the baked PNG too, not just the iframe", () => {
+  it("backs ChatGPT's fallback PNG too, not just the iframe", () => {
     // The PNG is the same rounded rectangle over the same transparent canvas,
-    // so it has the same corners. It is the surface claude.ai shows first and
-    // the one ChatGPT falls back to when the iframe is blocked.
+    // so it has the same corners. It is the surface ChatGPT falls back to when
+    // the iframe is blocked.
     const m = mountWidget(staticWidgetHtml());
-    deliver(m, initResponse({ theme: "dark" }), m.wrapperWin);
+    (m.widgetWin as unknown as { openai: Record<string, unknown> }).openai = {
+      theme: "dark",
+    };
     deliver(
       m,
-      toolResult({ embed_url: EMBED_URL, image_url: IMAGE_URL }, { image_data_url: DATA_URL }),
+      toolResult({ embed_url: EMBED_URL, image_url: IMAGE_URL, height: 600 }),
       m.wrapperWin,
     );
+    fireFrameSrcViolation(m);
+    expect(widgetImg(m).getAttribute("src")).toBe(IMAGE_URL);
     const img = m.widgetWin.document.getElementById("tako-embed-img") as HTMLElement;
     expect(img.style.background).toBe("rgb(18, 18, 18)");
   });
@@ -2370,16 +1683,13 @@ describe("mcp apps host theme (executed)", () => {
     expect(widgetFrame(m).style.background).toBe("rgb(25, 24, 23)");
   });
 
-  it("paints no backdrop at all when nothing names a colour", () => {
+  it("paints no backdrop at all when nothing names a colour", async () => {
     // No theme, no tokens, no surface. Painting here would be a guess, and the
     // wrong guess is a black corner on a light host.
-    const m = mountWidget(staticWidgetHtml());
-    deliver(
-      m,
-      toolResult({ embed_url: EMBED_URL, image_url: IMAGE_URL, height: 600 }),
-      m.wrapperWin,
-    );
-    expect(widgetFrame(m).style.background).toBe("");
+    const m = mountWidget(liveHtml());
+    deliverChart(m);
+    await settle();
+    expect(mountedFrame(m, 0).style.background).toBe("");
   });
 
   it("never paints ChatGPT's canvas, even when a surface colour IS supplied", () => {
@@ -2420,12 +1730,12 @@ describe("mcp apps host theme (executed)", () => {
     expect(widgetFrame(m).style.borderRadius).toBe("8px");
   });
 
-  it("leaves a NON-ChatGPT host unclipped, so claude.ai is untouched", () => {
+  it("leaves a NON-ChatGPT host unclipped, so claude.ai is untouched", async () => {
     // The scoping guarantee, stated as a test. claude.ai renders correctly in
     // production with the square backdrop and the canvas paint, so the fix for
     // ChatGPT must not reach it: no radius on the element, and tier 1 still
     // paints the canvas (asserted above).
-    const m = mountWidget(staticWidgetHtml());
+    const m = mountWidget(liveHtml());
     deliver(
       m,
       initResponse({
@@ -2434,12 +1744,10 @@ describe("mcp apps host theme (executed)", () => {
       }),
       m.wrapperWin,
     );
-    deliver(
-      m,
-      toolResult({ embed_url: EMBED_URL, image_url: IMAGE_URL, height: 600 }),
-      m.wrapperWin,
-    );
-    expect(widgetFrame(m).style.borderRadius).toBe("");
+    deliverChart(m);
+    await settle();
+    expect(mountedFrame(m, 0).style.background).toBe("rgb(25, 24, 23)");
+    expect(mountedFrame(m, 0).style.borderRadius).toBe("");
     expect(m.widgetWin.document.documentElement.style.background).toBe(
       "rgb(25, 24, 23)",
     );
@@ -2460,11 +1768,7 @@ describe("mcp apps host theme (executed)", () => {
       m.wrapperWin,
     );
     deliver(m, contextChanged({ theme: "light" }), m.wrapperWin);
-    deliver(
-      m,
-      toolResult({ embed_url: EMBED_URL, image_url: IMAGE_URL }, { image_data_url: DATA_URL }),
-      m.wrapperWin,
-    );
+    deliverChart(m);
     const root = m.widgetWin.document.documentElement;
     // Tier 1 dropped, tier 2 ran with the NEW theme.
     expect(root.style.background).toBe("");
@@ -2484,11 +1788,7 @@ describe("mcp apps host theme (executed)", () => {
       m.wrapperWin,
     );
     deliver(m, contextChanged({ theme: "dark" }), m.wrapperWin);
-    deliver(
-      m,
-      toolResult({ embed_url: EMBED_URL, image_url: IMAGE_URL }, { image_data_url: DATA_URL }),
-      m.wrapperWin,
-    );
+    deliverChart(m);
     expect(m.widgetWin.document.documentElement.style.background).toBe(
       "rgb(25, 24, 23)",
     );
@@ -2512,11 +1812,7 @@ describe("mcp apps host theme (executed)", () => {
       }),
       m.wrapperWin,
     );
-    deliver(
-      m,
-      toolResult({ embed_url: EMBED_URL, image_url: IMAGE_URL }, { image_data_url: DATA_URL }),
-      m.wrapperWin,
-    );
+    deliverChart(m);
     expect(m.widgetWin.document.documentElement.style.background).toBe(
       "rgb(255, 255, 255)",
     );
@@ -2536,11 +1832,7 @@ describe("mcp apps host theme (executed)", () => {
         }),
         m.wrapperWin,
       );
-      deliver(
-        m,
-        toolResult({ embed_url: EMBED_URL, image_url: IMAGE_URL }, { image_data_url: DATA_URL }),
-        m.wrapperWin,
-      );
+      deliverChart(m);
       const root = m.widgetWin.document.documentElement;
       expect(root.style.background, `${bogus} must not paint`).toBe("");
       // And the fallback tier still runs, which the early return had suppressed.
@@ -2559,11 +1851,7 @@ describe("mcp apps host theme (executed)", () => {
         }),
         m.wrapperWin,
       );
-      deliver(
-        m,
-        toolResult({ embed_url: EMBED_URL, image_url: IMAGE_URL }, { image_data_url: DATA_URL }),
-        m.wrapperWin,
-      );
+      deliverChart(m);
       expect(
         m.widgetWin.document.documentElement.style.background,
         `${good} must paint`,
@@ -2596,26 +1884,795 @@ describe("mcp apps host theme (executed)", () => {
   });
 });
 
-describe("no-image embed fallback strips tracking too", () => {
-  // The invariant the widget promises the ChatGPT app review is absolute —
-  // "every iframe load the widget performs" — but this branch used to assign
-  // the raw url. Reaching it needs a valid `embed_url` beside an `image_url`
-  // the image path rejects, which prod never emits today; the guard exists so
-  // the invariant holds by construction rather than by that continuing to be
-  // true. No `window.openai`, so the ChatGPT path is not taken and the
-  // else-if chain falls through image → embed.
-  it("appends disable_tracking on the validEmbed-without-image path", () => {
-    const m = mountWidget(staticWidgetHtml());
+describe("live cards (no window.openai)", () => {
+  it("mounts one chart as a blob: frame with no nav and no image", async () => {
+    const m = mountWidget(liveHtml());
+    const stubs = stubLive(m);
+    const charts = liveCharts(1);
+    deliverLive(m, charts);
+    await settle();
+
+    expect(fetchedUrls(stubs)).toEqual(nativeUrls(charts));
+    expect(stubs.fetches[0]?.init?.credentials).toBe("omit");
+    const frames = m.widgetWin.document.querySelectorAll("#tako-carousel iframe");
+    expect(frames).toHaveLength(1);
+    expect(mountedFrame(m, 0).getAttribute("src")?.startsWith("blob:")).toBe(true);
+    expect(mountedFrame(m, 0).getAttribute("sandbox")).toBe(
+      "allow-scripts allow-popups allow-popups-to-escape-sandbox",
+    );
+    expect(navButton(m, "tako-prev").classList.contains("hidden")).toBe(true);
+    expect(navButton(m, "tako-next").classList.contains("hidden")).toBe(true);
+    expect(fetchedUrls(stubs)).not.toContain(charts[0]?.image_url);
+    expect(m.widgetWin.document.querySelectorAll("img[src]")).toHaveLength(0);
+    expect(widgetFrame(m).getAttribute("src")).toBeNull();
+  });
+
+  it("writes the card, the host scheme, and a tako-live-card-height reporter into the blob", async () => {
+    const m = mountWidget(liveHtml());
+    const stubs = stubLive(m);
     deliver(
       m,
-      toolResult({ embed_url: EMBED_URL, image_url: "ftp://tako.com/x.png" }),
+      {
+        jsonrpc: "2.0",
+        id: "tako-ui-init",
+        result: { hostContext: { theme: "dark" } },
+      },
       m.wrapperWin,
     );
-    // Exact compare, not toContain: a regression that drops the flag or
-    // double-appends it must fail here.
-    expect(widgetFrame(m).getAttribute("src")).toBe(
-      `${EMBED_URL}&disable_tracking=true`,
+    const charts = liveCharts(1);
+    deliverLive(m, charts);
+    await settle();
+
+    const src = mountedFrame(m, 0).getAttribute("src") ?? "";
+    const blob = stubs.blobs.get(src);
+    expect(blob?.type).toBe("text/html");
+    const body = (await blob?.text()) ?? "";
+    expect(body).toContain(`CARD ${stubs.fetches[0]?.url}`);
+    expect(body).toContain('id="tako-host-scheme"');
+    expect(body).toContain("color-scheme:dark");
+    expect(body).toContain("tako-live-card-height");
+    expect(body).not.toContain("tako-embed-height");
+    expect(body).not.toContain("ui/notifications/size-changed");
+    expect(body.indexOf("tako-live-card-height")).toBeLessThan(body.indexOf("</body>"));
+  });
+
+  it("caps the height the blob's reporter posts at the inline ceiling", async () => {
+    const m = mountWidget(liveHtml());
+    const stubs = stubLive(m);
+    deliverLive(m, liveCharts(1));
+    await settle();
+    const blob = stubs.blobs.get(mountedFrame(m, 0).getAttribute("src") ?? "");
+    const body = (await blob?.text()) ?? "";
+
+    const posted: unknown[] = [];
+    const card = new JSDOM(body, {
+      runScripts: "dangerously",
+      beforeParse(window) {
+        Object.defineProperty(window.HTMLElement.prototype, "offsetHeight", {
+          configurable: true,
+          get: () => 800,
+        });
+      },
+    });
+    mounted.push(card);
+    card.window.addEventListener("message", (event) => posted.push(event.data));
+    await new Promise((r) => setTimeout(r, 10));
+
+    const heights = posted
+      .filter((d) => (d as { type?: string }).type === "tako-live-card-height")
+      .map((d) => (d as { height: number }).height);
+    expect(heights.length).toBeGreaterThan(0);
+    heights.forEach((h) => expect(h).toBeLessThanOrEqual(500));
+  });
+
+  it("mounts the first two of five charts, in search order, and the third on next", async () => {
+    const m = mountWidget(liveHtml());
+    const stubs = stubLive(m);
+    const charts = liveCharts(5);
+    deliverLive(m, charts);
+
+    expect(fetchedUrls(stubs)).toEqual(nativeUrls(charts.slice(0, 2)));
+    const slides = liveSlides(m);
+    expect(slides).toHaveLength(5);
+    await settle();
+    expect(slideFrame(m, 2)).toBeNull();
+
+    const track = m.widgetWin.document.querySelector("#tako-carousel .tako-track") as HTMLElement;
+    const scrollBy = vi.fn();
+    (track as unknown as { scrollBy: unknown }).scrollBy = scrollBy;
+    navButton(m, "tako-next").click();
+    expect(fetchedUrls(stubs)).toEqual(nativeUrls(charts.slice(0, 3)));
+    expect(scrollBy).toHaveBeenCalledTimes(1);
+    await settle();
+
+    for (let i = 0; i < 3; i++) {
+      const frame = mountedFrame(m, i);
+      expect(frame.getAttribute("title")).toBe(`Tako chart ${i + 1} of 5`);
+      const body = (await stubs.blobs.get(frame.getAttribute("src") ?? "")?.text()) ?? "";
+      expect(body).toContain(`CARD ${charts[i]?.native_card_url}`);
+    }
+    expect(slideFrame(m, 3)).toBeNull();
+    expect(slideFrame(m, 4)).toBeNull();
+  });
+
+  it.each([
+    ["HTTP 429", () => Promise.resolve({ ok: false, status: 429, text: () => Promise.resolve("slow down") })],
+    ["a non-HTML body", () => okResponse('{"error":"UNIQUE-SENTINEL-BODY"}')],
+  ])("shows the failure copy on the slide whose fetch returns %s", async (_label, failure) => {
+    const m = mountWidget(liveHtml());
+    const charts = liveCharts(3);
+    const failing = charts[1]?.native_card_url;
+    const stubs = stubLive(m, (url) => (url === failing ? failure() : okResponse(cardHtml(url))));
+    deliverLive(m, charts);
+    await settle();
+
+    expectFailureCopy(m, 1, charts[1] as LiveChart);
+    expect(m.widgetWin.document.body.innerHTML).not.toContain("UNIQUE-SENTINEL-BODY");
+    expect(mountedFrame(m, 0).getAttribute("src")?.startsWith("blob:")).toBe(true);
+
+    const track = m.widgetWin.document.querySelector("#tako-carousel .tako-track") as HTMLElement;
+    const scrollBy = vi.fn();
+    (track as unknown as { scrollBy: unknown }).scrollBy = scrollBy;
+    navButton(m, "tako-next").click();
+    navButton(m, "tako-prev").click();
+    expect(fetchedUrls(stubs)).toEqual(nativeUrls(charts));
+    await settle();
+    expect(mountedFrame(m, 2).getAttribute("src")?.startsWith("blob:")).toBe(true);
+    const lefts = scrollBy.mock.calls.map((call) => (call[0] as { left: number }).left);
+    expect(lefts[0]).toBeGreaterThan(0);
+    expect(lefts[1]).toBeLessThan(0);
+  });
+
+  it("shows the failure copy on a slide whose fetch outlives the 7000 ms timeout", async () => {
+    vi.useFakeTimers();
+    try {
+      const m = mountWidget(liveHtml());
+      const charts = liveCharts(3);
+      const stalled = charts[1]?.native_card_url;
+      const stubs = stubLive(m, (url) =>
+        url === stalled ? new Promise(() => {}) : okResponse(cardHtml(url)),
+      );
+      deliverLive(m, charts);
+      await vi.advanceTimersByTimeAsync(6900);
+      expect(liveSlides(m)[1]?.textContent).not.toContain("Couldn't load this chart.");
+      await vi.advanceTimersByTimeAsync(200);
+
+      expectFailureCopy(m, 1, charts[1] as LiveChart);
+      expect(mountedFrame(m, 0).getAttribute("src")?.startsWith("blob:")).toBe(true);
+      navButton(m, "tako-next").click();
+      navButton(m, "tako-next").click();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(fetchedUrls(stubs)).toEqual(nativeUrls(charts));
+      expect(mountedFrame(m, 2).getAttribute("src")?.startsWith("blob:")).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("shows the failure copy on the slide whose fetch rejects", async () => {
+    const m = mountWidget(liveHtml());
+    const charts = liveCharts(2);
+    const failing = charts[1]?.native_card_url;
+    stubLive(m, (url) =>
+      url === failing ? Promise.reject(new Error("network down")) : okResponse(cardHtml(url)),
     );
-    expect(widgetFrame(m).classList.contains("hidden")).toBe(false);
+    deliverLive(m, charts);
+    await settle();
+
+    expectFailureCopy(m, 1, charts[1] as LiveChart);
+    expect(mountedFrame(m, 0).getAttribute("src")?.startsWith("blob:")).toBe(true);
+  });
+
+  it("ignores a live card response that arrives AFTER the timeout", async () => {
+    // The timer settles the slide but does not abort the fetch, so a late
+    // response still runs `.then`. Only the `if (settled) return` guard stands
+    // between it and a frame mounted over the failure copy — so pin that
+    // guard, not the happy path.
+    vi.useFakeTimers();
+    try {
+      const m = mountWidget(liveHtml());
+      const charts = liveCharts(1);
+      let resolveFetch: ((v: unknown) => void) | undefined;
+      const stubs = stubLive(
+        m,
+        () =>
+          new Promise((res) => {
+            resolveFetch = res as (v: unknown) => void;
+          }),
+      );
+      deliverLive(m, charts);
+      await vi.advanceTimersByTimeAsync(7100);
+      expectFailureCopy(m, 0, charts[0] as LiveChart);
+
+      resolveFetch!({
+        ok: true,
+        status: 200,
+        text: () => Promise.resolve(cardHtml("LATE")),
+      });
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(slideFrame(m, 0)).toBeNull();
+      expect(stubs.blobs.size).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("never fetches a native card on a foreign origin, and shows the failure copy", async () => {
+    const m = mountWidget(liveHtml());
+    const stubs = stubLive(m);
+    const charts = liveCharts(2);
+    charts[0] = { ...(charts[0] as LiveChart), native_card_url: "https://evil.example/embed-html/live0" };
+    deliverLive(m, charts);
+    await settle();
+
+    expect(fetchedUrls(stubs)).toEqual([charts[1]?.native_card_url]);
+    expectFailureCopy(m, 0, charts[0]);
+    expect(mountedFrame(m, 1).getAttribute("src")?.startsWith("blob:")).toBe(true);
+  });
+
+  it("shows the failure copy on a slide whose chart has no native card url", async () => {
+    const m = mountWidget(liveHtml());
+    const stubs = stubLive(m);
+    const { native_card_url: _dropped, ...withoutNative } = liveChart(0);
+    deliverLive(m, [withoutNative]);
+    await settle();
+
+    expect(stubs.fetches).toEqual([]);
+    expectFailureCopy(m, 0, withoutNative);
+    expect(sizeChangesOf(m).at(-1)?.params.height).toBeGreaterThan(1);
+  });
+
+  it("resizes only the slide whose frame reported, within the 500 px ceiling, and never shrinks", async () => {
+    const m = mountWidget(liveHtml());
+    stubLive(m);
+    deliverLive(m, liveCharts(3));
+    await settle();
+    const first = mountedFrame(m, 0);
+    const second = mountedFrame(m, 1);
+    expect(first.classList.contains("veiled")).toBe(true);
+
+    postSlideHeight(m, first.contentWindow as Window, 380);
+    expect(first.getAttribute("height")).toBe("380");
+    expect(first.classList.contains("veiled")).toBe(false);
+    expect(second.classList.contains("veiled")).toBe(true);
+    const afterFirst = sizeChangesOf(m).at(-1)?.params.height ?? 0;
+    expect(afterFirst).toBe(380);
+
+    postSlideHeight(m, second.contentWindow as Window, 250);
+    expect(second.getAttribute("height")).toBe("250");
+    expect(first.getAttribute("height")).toBe("380");
+
+    const before = sizeChangesOf(m).length;
+    postSlideHeight(m, m.siblingWin, 450);
+    expect(first.getAttribute("height")).toBe("380");
+    expect(second.getAttribute("height")).toBe("250");
+    expect(sizeChangesOf(m)).toHaveLength(before);
+
+    postSlideHeight(m, first.contentWindow as Window, 900);
+    postSlideHeight(m, first.contentWindow as Window, 200);
+    const notified = sizeChangesOf(m).map((s) => s.params.height);
+    expect(Math.max(...notified)).toBe(500);
+    notified.forEach((h, i) => {
+      if (i > 0) expect(h).toBeGreaterThanOrEqual(notified[i - 1] as number);
+    });
+  });
+
+  it("ignores a tako-embed-height from a live frame, which only the card itself sends", async () => {
+    const m = mountWidget(liveHtml());
+    stubLive(m);
+    deliverLive(m, liveCharts(2));
+    await settle();
+    const first = mountedFrame(m, 0);
+    const before = sizeChangesOf(m).length;
+
+    postSlideHeight(m, first.contentWindow as Window, 420, "tako-embed-height");
+    expect(first.classList.contains("veiled")).toBe(true);
+    expect(first.getAttribute("height")).toBeNull();
+    expect(sizeChangesOf(m)).toHaveLength(before);
+
+    postSlideHeight(m, first.contentWindow as Window, 300);
+    postSlideHeight(m, first.contentWindow as Window, 420, "tako-embed-height");
+    expect(first.getAttribute("height")).toBe("300");
+  });
+
+  function stubTrackOverflow(m: Mounted): void {
+    const track = m.widgetWin.document.querySelector("#tako-carousel .tako-track") as HTMLElement;
+    Object.defineProperty(track, "scrollWidth", { configurable: true, get: () => 2000 });
+    Object.defineProperty(track, "clientWidth", { configurable: true, get: () => 700 });
+  }
+
+  it("fails a mounted frame that never reports a height once the settle window passes", async () => {
+    vi.useFakeTimers();
+    try {
+      const m = mountWidget(liveHtml());
+      const revoked: string[] = [];
+      const stubs = stubLive(m);
+      (m.widgetWin as unknown as { URL: { revokeObjectURL: unknown } }).URL.revokeObjectURL = (
+        url: string,
+      ) => revoked.push(url);
+      const charts = liveCharts(3);
+      deliverLive(m, charts);
+      stubTrackOverflow(m);
+      await vi.advanceTimersByTimeAsync(0);
+      const firstSrc = mountedFrame(m, 0).getAttribute("src");
+      expect(navButton(m, "tako-next").classList.contains("hidden")).toBe(true);
+
+      await vi.advanceTimersByTimeAsync(7900);
+      expect(slideFrame(m, 0)).not.toBeNull();
+      await vi.advanceTimersByTimeAsync(200);
+
+      expectFailureCopy(m, 0, charts[0] as LiveChart);
+      expectFailureCopy(m, 1, charts[1] as LiveChart);
+      expect(revoked).toContain(firstSrc);
+      expect(navButton(m, "tako-next").classList.contains("hidden")).toBe(false);
+      navButton(m, "tako-next").click();
+      expect(fetchedUrls(stubs)).toEqual(nativeUrls(charts));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps a frame that reports a height before the settle window passes", async () => {
+    vi.useFakeTimers();
+    try {
+      const m = mountWidget(liveHtml());
+      stubLive(m);
+      const charts = liveCharts(2);
+      deliverLive(m, charts);
+      await vi.advanceTimersByTimeAsync(0);
+      const first = mountedFrame(m, 0);
+      postSlideHeight(m, first.contentWindow as Window, 340);
+
+      await vi.advanceTimersByTimeAsync(9000);
+      expect(mountedFrame(m, 0)).toBe(first);
+      expect(first.getAttribute("height")).toBe("340");
+      expect(liveSlides(m)[0]?.textContent).not.toContain("Couldn't load this chart.");
+      expectFailureCopy(m, 1, charts[1] as LiveChart);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("fails the unreported live frames on a frame-src violation", async () => {
+    const m = mountWidget(liveHtml());
+    stubLive(m);
+    const charts = liveCharts(2);
+    deliverLive(m, charts);
+    await settle();
+    const first = mountedFrame(m, 0);
+    postSlideHeight(m, first.contentWindow as Window, 340);
+
+    fireFrameSrcViolation(m);
+
+    expect(mountedFrame(m, 0)).toBe(first);
+    expectFailureCopy(m, 1, charts[1] as LiveChart);
+  });
+
+  it("renders a finished agent result's charts as live cards", async () => {
+    const m = mountWidget(liveHtml());
+    const stubs = stubLive(m);
+    const charts = liveCharts(2);
+    deliverLive(m, charts, {
+      status: "completed",
+      run_id: "run_live",
+      answer: "Two cards.",
+      cards: [{ title: "A" }, { title: "B" }],
+      citations: [],
+      usage: null,
+    });
+    await settle();
+
+    expect(fetchedUrls(stubs)).toEqual(nativeUrls(charts));
+    expect(liveSlides(m)).toHaveLength(2);
+    expect(widgetEmpty(m).classList.contains("hidden")).toBe(true);
+  });
+
+  it("collapses a running agent result without fetching", () => {
+    const m = mountWidget(liveHtml());
+    const stubs = stubLive(m);
+    deliverLive(m, liveCharts(2), {
+      status: "running",
+      run_id: "run_live",
+      cards: [],
+      citations: [],
+      usage: null,
+    });
+
+    expect(stubs.fetches).toEqual([]);
+    expect(liveSlides(m)).toHaveLength(0);
+    expect(sizeChangesOf(m).at(-1)?.params.height).toBe(0);
+  });
+
+  it("collapses with the label when the chart list has no valid slide", () => {
+    const m = mountWidget(liveHtml());
+    const stubs = stubLive(m);
+    const offOrigin = {
+      ...liveChart(0),
+      embed_url: "https://evil.example/embed/live0/?dark_mode=auto",
+    };
+    deliverLive(m, [offOrigin]);
+
+    expect(stubs.fetches).toEqual([]);
+    expect(liveSlides(m)).toHaveLength(0);
+    expect(widgetEmpty(m).classList.contains("hidden")).toBe(false);
+    expect(sizeChangesOf(m).at(-1)?.params.height).toBe(0);
+  });
+
+  it("collapses a search result with cards but no chart list blank, so the host shows its own content", () => {
+    const m = mountWidget(liveHtml());
+    const stubs = stubLive(m);
+    deliver(m, toolResult(SEARCH_CONTENT), m.wrapperWin);
+
+    expect(stubs.fetches).toEqual([]);
+    expect(widgetEmpty(m).classList.contains("hidden")).toBe(true);
+    expect(sizeChangesOf(m).at(-1)?.params.height).toBe(0);
+  });
+
+  it("collapses an agent result with cards but no chart list blank", () => {
+    const m = mountWidget(liveHtml());
+    deliver(
+      m,
+      toolResult({
+        status: "completed",
+        run_id: "run_noui",
+        answer: "One card.",
+        cards: [{ title: "A" }],
+        citations: [],
+        usage: null,
+      }),
+      m.wrapperWin,
+    );
+
+    expect(widgetEmpty(m).classList.contains("hidden")).toBe(true);
+    expect(sizeChangesOf(m).at(-1)?.params.height).toBe(0);
+  });
+
+  it("still labels a zero-card search result that carries no chart list", () => {
+    const m = mountWidget(liveHtml());
+    deliver(m, toolResult({ cards: [], web_results: [], usage: null }), m.wrapperWin);
+
+    expect(widgetEmpty(m).classList.contains("hidden")).toBe(false);
+    expect(widgetEmpty(m).textContent).toMatch(/no chart/i);
+  });
+
+  describe("height reporter in the live card document", () => {
+    async function liveCardBody(): Promise<string> {
+      const m = mountWidget(liveHtml());
+      const stubs = stubLive(m, () => okResponse(cardHtml("REAL CARD")));
+      deliverLive(m, liveCharts(1));
+      await settle();
+      return (await stubs.blobs.get(mountedFrame(m, 0).getAttribute("src") ?? "")?.text()) ?? "";
+    }
+
+    interface LiveCardDocument {
+      win: Window & typeof globalThis;
+      heights: () => number[];
+    }
+
+    function runLiveCard(
+      body: string,
+      prepare: (win: Window & typeof globalThis) => void = () => {},
+    ): LiveCardDocument {
+      const posted: unknown[] = [];
+      const card = new JSDOM(body, {
+        runScripts: "dangerously",
+        pretendToBeVisual: true,
+        beforeParse(window) {
+          const win = window as unknown as Window & typeof globalThis;
+          (win as unknown as { postMessage: (msg: unknown) => void }).postMessage = (msg) => {
+            posted.push(msg);
+          };
+          prepare(win);
+        },
+      });
+      mounted.push(card);
+      return {
+        win: card.window as unknown as Window & typeof globalThis,
+        heights: () =>
+          posted
+            .filter((d) => (d as { type?: string }).type === "tako-live-card-height")
+            .map((d) => (d as { height: number }).height),
+      };
+    }
+
+    function stubOffsetHeight(win: Window & typeof globalThis, height: number): void {
+      Object.defineProperty(
+        (win as unknown as { HTMLElement: { prototype: object } }).HTMLElement.prototype,
+        "offsetHeight",
+        { configurable: true, get: () => height },
+      );
+    }
+
+    it("reports nothing while the card measures 0, so the slide stays veiled", async () => {
+      const card = runLiveCard(await liveCardBody());
+      await new Promise((r) => setTimeout(r, 10));
+
+      expect(card.win.document.body.innerHTML).toContain("REAL CARD");
+      expect(card.heights()).toEqual([]);
+    });
+
+    it("holds the live card to the host's inline height ceiling", async () => {
+      // `MAX_INLINE_WIDGET_HEIGHT_PX` is a host CONSTRAINT, not a preference:
+      // Claude renders inline up to ~500 px and gives the card no scrollbar, so
+      // anything past that is cropped and the card loses its bottom edge — the
+      // axis labels and the source line. The live card carries strictly MORE than
+      // the PNG (range selectors, chart/table toggle, source line), so it is the
+      // likelier to exceed it.
+      const card = runLiveCard(await liveCardBody(), (win) => stubOffsetHeight(win, 600));
+      await new Promise((r) => setTimeout(r, 10));
+
+      expect(card.win.document.body.innerHTML).toContain("REAL CARD");
+      // The reporter capped what it asked the widget for, rather than
+      // requesting 600 and losing 100 px off the bottom.
+      expect(card.heights().at(-1)).toBe(500);
+      // And it scaled the document to fit rather than letting it be cropped —
+      // the document equivalent of `object-fit: contain`.
+      const root = card.win.document.documentElement;
+      expect(root.style.transform).toBe(`scale(${500 / 600})`);
+      expect(root.style.transformOrigin).toBe("top left");
+    });
+
+    it("leaves a card under the ceiling unscaled", async () => {
+      // The clamp must not touch the common case, or every short card gets a
+      // pointless transform and a blurrier render.
+      const card = runLiveCard(await liveCardBody(), (win) => stubOffsetHeight(win, 300));
+      await new Promise((r) => setTimeout(r, 10));
+
+      expect(card.heights().at(-1)).toBe(300);
+      expect(card.win.document.documentElement.style.transform).toBe("");
+    });
+
+    /**
+     * The live card is INTERACTIVE, and the reporter used to treat its height as
+     * a one-time measurement.
+     *
+     * Reported on claude.ai 2026-08-07 as the card being "weirdly cut off" after
+     * pressing `Show more`. Measured on the real Nvidia card at a 762 px frame:
+     * 527 px on open, 619 px after a tab switch, 641 px after `Show more`. Neither
+     * interaction fires `resize` or `load`, the ladder is finished by 3 s, and the
+     * page's own CSS is `:root{overflow-y:hidden}` — so growth past the last
+     * reported height is not scrolled and not scaled, it is gone.
+     *
+     * jsdom performs no layout, so the readings are stubbed. The important part is
+     * that they are stubbed HONESTLY: `scrollHeight` is a function of the width the
+     * reporter has applied to the root, because the reflow that widening causes is
+     * the whole reason the loop guard is written the way it is. A stub that ignored
+     * the applied style would pass whether or not the guard worked.
+     */
+    function stubLayout(
+      win: Window & typeof globalThis,
+      read: { offsetHeight: () => number },
+    ): { fireObserver: () => void; observed: string[]; scrollReads: () => number } {
+      const w = win as unknown as {
+        HTMLElement: { prototype: object };
+        ResizeObserver?: unknown;
+      };
+      let scrollReads = 0;
+      Object.defineProperty(w.HTMLElement.prototype, "offsetHeight", {
+        configurable: true,
+        get: read.offsetHeight,
+      });
+      // Body's content height AT THE CURRENT ROOT WIDTH. The reporter's fit sets
+      // `documentElement.style.width = (100/s)%`, which in a real browser reflows
+      // the body shorter — so the value the guard records after the fit differs
+      // from the natural one, and a second pass reading the same value is how the
+      // sequence terminates. Modelled as an inverse relationship, which is the
+      // direction that matters, not the exact number.
+      Object.defineProperty(w.HTMLElement.prototype, "scrollHeight", {
+        configurable: true,
+        get(): number {
+          scrollReads += 1;
+          const natural = read.offsetHeight();
+          const raw = win.document.documentElement.style.width;
+          const pct = raw.endsWith("%") ? Number.parseFloat(raw) : 100;
+          if (!Number.isFinite(pct) || pct <= 0) return natural;
+          return Math.round(natural * (100 / pct));
+        },
+      });
+      const callbacks: Array<() => void> = [];
+      const observed: string[] = [];
+      w.ResizeObserver = class {
+        constructor(cb: () => void) {
+          callbacks.push(cb);
+        }
+        observe(target: { tagName?: string }): void {
+          observed.push(String(target?.tagName ?? "?").toLowerCase());
+        }
+        disconnect(): void {}
+      };
+      return {
+        fireObserver: () => {
+          for (const cb of callbacks) cb();
+        },
+        observed,
+        scrollReads: () => scrollReads,
+      };
+    }
+
+    it("re-reports its height when the card relayouts, not just on a timer", async () => {
+      const body = await liveCardBody();
+      let natural = 400;
+      let layout: ReturnType<typeof stubLayout> | undefined;
+      const card = runLiveCard(body, (win) => {
+        layout = stubLayout(win, { offsetHeight: () => natural });
+      });
+      await new Promise((r) => setTimeout(r, 10));
+      if (layout === undefined) throw new Error("layout was not stubbed");
+      const heights = card.heights;
+      const root = card.win.document.documentElement;
+
+      // It watches the BODY. Observing `documentElement` would mean every fit it
+      // applies observes itself.
+      expect(layout.observed).toEqual(["body"]);
+      expect(heights().at(-1)).toBe(400);
+      expect(root.style.transform).toBe("");
+      const settled = heights().length;
+
+      // A callback with nothing changed must not re-report and must not touch a
+      // style — that is what stops the correction from feeding itself every frame.
+      //
+      // Asserted through the READ COUNT, which is the only signal here that is both
+      // synchronous and exact. An early return reads body's scrollHeight once, in
+      // the guard; a pass that does work reads it a second time to record `last`.
+      // Counting reports alone cannot distinguish "returned early" from "ran and
+      // re-reported the same number", and counting style mutations cannot either,
+      // since a full pass clears and re-applies to the same values.
+      let reads = layout.scrollReads();
+      layout.fireObserver();
+      expect(heights().length).toBe(settled);
+      expect(layout.scrollReads()).toBe(reads + 1);
+
+      // `Show more`: the document grows past the host's inline ceiling. Now it has
+      // to both re-report and scale, or the user loses the rows they just asked
+      // for. Two reads, because this pass does the work.
+      natural = 640;
+      reads = layout.scrollReads();
+      layout.fireObserver();
+      expect(heights().length).toBe(settled + 1);
+      expect(heights().at(-1)).toBe(500);
+      expect(root.style.transform).toBe(`scale(${500 / 640})`);
+      expect(layout.scrollReads()).toBe(reads + 2);
+
+      // THE TERMINATION PROPERTY, which is the half a width-independent stub could
+      // not reach. Applying that fit widened the root to 128%, so body's
+      // scrollHeight has genuinely changed since the guard last looked — a real
+      // browser fires the observer again right here. The guard has to recognise the
+      // post-fit value as its own work and stop, or every correction re-corrects
+      // forever.
+      expect(root.style.width).toBe("128%");
+      for (const _ of [0, 1]) {
+        reads = layout.scrollReads();
+        layout.fireObserver();
+        // One read, no report, styles untouched: correction, confirming callback,
+        // quiet.
+        expect(layout.scrollReads()).toBe(reads + 1);
+        expect(heights().length).toBe(settled + 1);
+        expect(root.style.transform).toBe(`scale(${500 / 640})`);
+        expect(root.style.width).toBe("128%");
+      }
+    });
+
+    it("swallows a ResizeObserver constructor that throws", async () => {
+      // Not `delete window.ResizeObserver`: jsdom never defines it, so deleting it
+      // asserted nothing the pre-PR code did not already satisfy, and it could not
+      // tell the `typeof` guard apart from the surrounding `try/catch` — either
+      // alone would pass. A constructor that THROWS is what reaches the catch,
+      // because the global exists and the `typeof` check cannot help.
+      //
+      // What the catch is worth, stated precisely rather than generously: the
+      // observer is wired LAST, after the first report, the listeners and the
+      // ladder, so an escaping throw would not cost any of them. What it would cost
+      // is an uncaught error inside a card document that hosts report to the user
+      // as a broken app. So that — not the ladder — is what this asserts.
+      const body = await liveCardBody();
+      const uncaught: string[] = [];
+      let constructed = 0;
+      const card = runLiveCard(body, (win) => {
+        stubOffsetHeight(win, 400);
+        win.addEventListener("error", (e) => {
+          uncaught.push(String((e as ErrorEvent).message ?? e.type));
+        });
+        (win as unknown as { ResizeObserver: unknown }).ResizeObserver = class {
+          constructor() {
+            constructed += 1;
+            throw new Error("ResizeObserver unavailable in this host");
+          }
+        };
+      });
+      await new Promise((r) => setTimeout(r, 10));
+
+      // It really did try, so the catch is on the live path...
+      expect(constructed).toBe(1);
+      // ...nothing escaped...
+      expect(uncaught).toEqual([]);
+      // ...and everything wired before it is intact.
+      expect(card.win.document.body.innerHTML).toContain("REAL CARD");
+      expect(card.heights().length).toBeGreaterThan(0);
+    });
+
+    it("keeps the ladder on a host with no ResizeObserver at all", async () => {
+      // The other half of the guard: `typeof ResizeObserver !== 'undefined'`. jsdom
+      // gives this for free by never defining it, which is exactly why the test
+      // above has to supply a throwing one to be worth anything.
+      const card = runLiveCard(await liveCardBody(), (win) => stubOffsetHeight(win, 400));
+      expect(
+        (card.win as unknown as { ResizeObserver?: unknown }).ResizeObserver,
+      ).toBeUndefined();
+      await new Promise((r) => setTimeout(r, 10));
+      expect(card.win.document.body.innerHTML).toContain("REAL CARD");
+      expect(card.heights().length).toBeGreaterThan(0);
+    });
+  });
+});
+
+describe("live cards chosen by payload (window.openai defined)", () => {
+  function defineOpenAi(m: Mounted): void {
+    (m.widgetWin as unknown as { openai: object }).openai = {};
+  }
+
+  function embedFrames(m: Mounted): HTMLIFrameElement[] {
+    return Array.from(m.widgetWin.document.querySelectorAll("iframe")).filter((frame) =>
+      (frame.getAttribute("src") ?? "").includes("/embed/"),
+    );
+  }
+
+  it("mounts live cards for a /mcp payload that carries native_card_url", async () => {
+    const m = mountWidget(liveHtml());
+    defineOpenAi(m);
+    const stubs = stubLive(m);
+    const charts = liveCharts(2);
+    deliverLive(m, charts);
+    await settle();
+
+    expect(fetchedUrls(stubs)).toEqual(nativeUrls(charts));
+    expect(liveSlides(m)).toHaveLength(2);
+    expect(mountedFrame(m, 0).getAttribute("src")?.startsWith("blob:")).toBe(true);
+    expect(mountedFrame(m, 1).getAttribute("src")?.startsWith("blob:")).toBe(true);
+    expect(embedFrames(m)).toHaveLength(0);
+    expect(widgetEmpty(m).classList.contains("hidden")).toBe(true);
+  });
+
+  it("keeps the ChatGPT path for a payload with embed_url and no native_card_url", () => {
+    const m = mountWidget(staticWidgetHtml());
+    defineOpenAi(m);
+    const stubs = stubLive(m);
+    const { native_card_url: _omitted, ...chartWithoutNative } = liveChart(0);
+    deliver(
+      m,
+      toolResult(
+        { embed_url: liveChart(0).embed_url, image_url: liveChart(0).image_url },
+        { charts: [chartWithoutNative] },
+      ),
+      m.wrapperWin,
+    );
+
+    expect(stubs.fetches).toEqual([]);
+    expect(widgetFrame(m).getAttribute("src")?.startsWith(liveChart(0).embed_url)).toBe(true);
+  });
+
+  it("keeps the ChatGPT agent path when meta charts carry no native_card_url", () => {
+    const m = mountWidget(staticWidgetHtml());
+    defineOpenAi(m);
+    const stubs = stubLive(m);
+    const { native_card_url: _omitted, ...chartWithoutNative } = liveChart(0);
+    deliver(
+      m,
+      toolResult(
+        {
+          status: "completed",
+          run_id: "run_chatgpt",
+          answer: "One card.",
+          cards: [{ title: "A" }],
+          citations: [],
+          usage: null,
+        },
+        { charts: [chartWithoutNative] },
+      ),
+      m.wrapperWin,
+    );
+
+    expect(stubs.fetches).toEqual([]);
+    expect(widgetFrame(m).getAttribute("src")?.startsWith(liveChart(0).embed_url)).toBe(true);
   });
 });

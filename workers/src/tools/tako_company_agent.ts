@@ -105,8 +105,8 @@ const takoCompanyAgent = {
   extraMeta(output, ctx) {
     return agentChartsMeta(output as AgentRunOutput, ctx);
   },
-  appUiResource(env, requestOrigin): AppUiResource {
-    return buildChartAppUiResourceFromOutputPubId(env, requestOrigin);
+  appUiResource(env, requestOrigin, surface): AppUiResource {
+    return buildChartAppUiResourceFromOutputPubId(env, requestOrigin, surface);
   },
 } satisfies ToolModule<typeof inputSchema, Output>;
 

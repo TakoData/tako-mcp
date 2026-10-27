@@ -99,6 +99,7 @@ import { EMBED_DATA_PREFIX } from "../src/embed_proxy.js";
 // run. Reading a dropped field is exactly how this file's old `card_id`
 // assert kept the deploy smoke red for 17 days after PR #210 removed it.
 import type { ProjectedCard } from "../src/tools/_search_results.js";
+import { LIVE_CARD_RESOURCE_URI } from "../src/tools/_chart_widget.js";
 import { TOOL_REGISTRY } from "../src/tools/_registry.js";
 import takoVisualize from "../src/tools/tako_visualize.js";
 import { skillsForSurface } from "../src/skills.js";
@@ -426,21 +427,28 @@ try {
   ok(`skills/list → ${skillUris.join(", ")}; resources/read sizes and digests match`);
 
   // ----- MCP Apps wiring per surface --------------------------------------
-  // The generic surface (/mcp, this client) must NOT declare widget
-  // metadata — it ships the portable inline PNG instead (spec D14/D15).
-  // The chatgpt surface's widget wiring is asserted below via raw fetch:
-  // `_meta` carries the ui:// URI, and `resources/list` exposes a resource
-  // at that URI with the MCP Apps mimeType.
+  // Both surfaces list the widget: `_meta` carries the ui:// URI, and
+  // `resources/list` exposes a resource at that URI with the MCP Apps
+  // mimeType. The generic surface (/mcp, this client) lists the live-card URI
+  // for every client; only the tool RESULT varies by the session's declared
+  // UI support. The chatgpt surface is asserted below via raw fetch.
   const searchTool = tools.find((t) => t.name === "tako_search");
   assert(searchTool, "tako_search missing from tools/list");
   const genericWidgetUri = (
     searchTool?._meta as { ui?: { resourceUri?: string } } | undefined
   )?.ui?.resourceUri;
   assert(
-    genericWidgetUri === undefined,
-    `generic /mcp listing declares widget metadata (${JSON.stringify(genericWidgetUri)}) — the widget belongs to /mcp/chatgpt only`,
+    genericWidgetUri === LIVE_CARD_RESOURCE_URI,
+    `generic /mcp tako_search._meta.ui.resourceUri expected ${LIVE_CARD_RESOURCE_URI} (got: ${JSON.stringify(genericWidgetUri)})`,
   );
-  ok("generic /mcp → no widget metadata (inline PNG path)");
+  const { resources: genericResources } = await client.listResources();
+  const genericWidget = genericResources.find((r) => r.uri === LIVE_CARD_RESOURCE_URI);
+  assert(genericWidget, `generic /mcp resources/list does not include ${LIVE_CARD_RESOURCE_URI}`);
+  assert(
+    genericWidget?.mimeType === "text/html;profile=mcp-app",
+    `widget ${LIVE_CARD_RESOURCE_URI} mimeType is ${JSON.stringify(genericWidget?.mimeType)} (expected "text/html;profile=mcp-app")`,
+  );
+  ok(`generic /mcp → MCP Apps widget at ${LIVE_CARD_RESOURCE_URI} (${genericWidget?.mimeType})`);
   {
     const listRes = await fetch(`${baseUrl}/mcp/chatgpt`, {
       method: "POST",
@@ -789,8 +797,8 @@ try {
         `/embed-html/ → 404 "${nativeBody.trim()}": the native-card path is ` +
         `not serving here. PUBLIC_CDN_URL is either unset or malformed (both ` +
         `decline identically) — grep the worker log for "native-card proxy ` +
-        `disabled" to tell which. Charts on claude.ai render as a static dark ` +
-        `PNG, not an interactive host-themed card.`;
+        `disabled" to tell which. Every /mcp client, MCP Apps hosts included, ` +
+        `gets a static PNG instead of a live card.`;
       if (isDeployedTarget) fail(why);
       console.warn(`[warn] ${why}`);
     }

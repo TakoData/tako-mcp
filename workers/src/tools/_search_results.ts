@@ -20,6 +20,7 @@ import {
   DEFAULT_WIDTH,
   DEFAULT_HEIGHT,
   buildChartUrls,
+  nativeCardUrl,
   withShareOptIn,
 } from "./_chart_widget.js";
 import { GENERIC_SIGN_IN_HINT, PASSAGE_BREAK_DESCRIBE } from "./_shared_prose.js";
@@ -1484,6 +1485,19 @@ export function cardCharts(
     charts.push({ pub_id: card_id, embed_url, image_url });
   }
   return charts;
+}
+
+export type LiveCardChart = CardChart & { native_card_url?: string };
+
+export function liveCardCharts(
+  charts: readonly CardChart[],
+  env: Env,
+  origin: string | undefined,
+): LiveCardChart[] {
+  return charts.map((chart) => {
+    const native_card_url = nativeCardUrl(env, origin, chart.pub_id);
+    return native_card_url === undefined ? { ...chart } : { ...chart, native_card_url };
+  });
 }
 
 export type ChartMeta = CardChart & { image_natural_width?: number; image_natural_height?: number };

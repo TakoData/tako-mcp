@@ -14,6 +14,7 @@ declare module "jsdom" {
     runScripts?: "dangerously" | "outside-only";
     pretendToBeVisual?: boolean;
     virtualConsole?: VirtualConsole;
+    beforeParse?: (window: DOMWindow) => void;
   }
 
   type DOMWindow = Window & typeof globalThis & { close(): void };

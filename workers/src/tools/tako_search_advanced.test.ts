@@ -457,10 +457,10 @@ describe("web include_contents is honoured, not advertised and dropped", () => {
 
 // The absence of widget hooks here is DELIBERATE and cost-driven, and it was
 // previously justified by a false claim ("the inline PNG belongs to the default
-// surface, and this tool is never on it"). mcp.ts gates the widget on the SURFACE
-// — `widgetSuppressed = options.surface !== "chatgpt"` — and runs
-// `extraContentBlocks` whenever `ui === undefined`, which on /mcp is always. So a
-// hook declared here WOULD fire; nothing structural prevents it. An opt-in tool
+// surface, and this tool is never on it"). mcp.ts decides per call — `widgetLive`
+// — and runs `extraContentBlocks` whenever no widget is live, which on /mcp is
+// every client that doesn't declare MCP Apps support. So a hook declared here
+// WOULD fire; nothing structural prevents it. An opt-in tool
 // on /mcp can declare both hooks — tako_answer did, before the fold deleted it.
 //
 // Pin both halves, because each is what the next author gets wrong: no hooks, AND

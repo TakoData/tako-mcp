@@ -7,8 +7,9 @@
  * The created card auto-renders inline as a chart: the backend returns a
  * `card_id` (+ embed/image URLs), which the tool lifts into the same widget
  * fields `tako_search` uses, sharing `_chart_widget.ts`. Those widget fields
- * are advertised on `/mcp/chatgpt` alone, where a widget reads them; on `/mcp`
- * the widget is suppressed and the chart ships as a PNG content block instead.
+ * are advertised on `/mcp/chatgpt` alone, where the widget reads them. On
+ * `/mcp`, a client that declares MCP Apps support gets the widget, which reads
+ * the chart from `_meta.charts`, and any other client gets a PNG content block.
  *
  * This is the one tool on the surface that WRITES, and what it writes is
  * world-readable: the supplied data is stored by Tako and the resulting `url`
@@ -33,7 +34,7 @@ import {
   fetchPngContentBlock,
 } from "./_chart_widget.js";
 import { looseArray } from "./_loose_array.js";
-import { nonEmpty } from "./_search_results.js";
+import { cardCharts, liveCardCharts, nonEmpty } from "./_search_results.js";
 import { logWireGuardFailure } from "./_log.js";
 import {
   renderVisualizeMarkdown,
@@ -417,8 +418,8 @@ const tako_visualize = {
   description: DESCRIPTION,
   inputSchema,
   outputSchema,
-  // The chart widget fields exist only where a widget reads them; on `/mcp`
-  // the widget is suppressed and the chart ships as a PNG content block.
+  // The chart widget fields exist only on `/mcp/chatgpt`, where the widget
+  // reads them. The `/mcp` widget reads `_meta.charts` instead.
   outputSchemaBySurface: { chatgpt: visualizeChatgptOutputShape },
   annotations: {
     title: "Tako: Visualize",
@@ -521,28 +522,12 @@ const tako_visualize = {
     return renderVisualizeMarkdown(output as VisualizeOutput);
   },
   async extraMeta(output, ctx) {
-    // Skip the PNG prefetch on ChatGPT (its widget renders embed_url
-    // directly) — mirrors tako_search.
-    // `bakeImage` is FALSE on every call today: `extraMeta` runs only when a
-    // widget is live (`ui !== undefined` in mcp.ts), and only the chatgpt
-    // surface serves one — so `ctx.surface !== "chatgpt"` cannot be true here.
-    // The expression stays because it is what the claude.ai widget fast-follow
-    // needs (gated on anthropics/claude-ai-mcp#753 and #40): a widget on the
-    // generic surface reads the baked PNG rather than an iframe, so it wants
-    // `bakeImage: true`, and this already says so. On the generic surface the
-    // inline PNG comes from `extraContentBlocks` instead, which mcp.ts runs on
-    // the opposite condition (`ui === undefined`).
-    //
-    // What the reachable branch does: ChatGPT's widget renders `embed_url` in
-    // an iframe and never reads the baked PNG, but it cannot measure that
-    // cross-origin iframe, so without the card's real aspect ratio the iframe
-    // falls back to a fixed height and leaves empty bands under a wide chart.
-    // Dimensions only — a 64-byte ranged read instead of a ~170 KB render.
-    // Cast: the widget fields are declared only on the chatgpt advertised
-    // schema now, so the loose base Output no longer types them.
     const o = output as VisualizeOutput;
+    if (ctx.surface !== "chatgpt") {
+      const charts = cardCharts([{ card_id: o.pub_id }], ctx.env);
+      return { charts: liveCardCharts(charts, ctx.env, ctx.origin) };
+    }
     return buildChartExtraMeta(o.image_url, {
-      bakeImage: ctx.surface !== "chatgpt",
       env: ctx.env,
       origin: ctx.origin,
       pubId: o.pub_id,
@@ -554,8 +539,8 @@ const tako_visualize = {
     if (o.image_url === undefined) return [];
     return fetchPngContentBlock(o.image_url);
   },
-  appUiResource(env, requestOrigin): AppUiResource {
-    return buildChartAppUiResourceFromOutputPubId(env, requestOrigin);
+  appUiResource(env, requestOrigin, surface): AppUiResource {
+    return buildChartAppUiResourceFromOutputPubId(env, requestOrigin, surface);
   },
 } satisfies ToolModule<typeof inputSchema, Output>;
 

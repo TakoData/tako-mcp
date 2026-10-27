@@ -157,9 +157,10 @@ export const UPSTREAM_DATA_PATH = "/knowledge/get_data/";
  * Upstream bound for the embed page and CDN assets. A buffered body (the page,
  * JavaScript) must arrive whole within it, headers included. A streamed asset
  * gets it per upstream read, so a stalled CDN aborts mid-body but a client that
- * reads slowly never does. The widget shows the PNG until the page resolves,
- * so a slow page costs an upgrade, never the chart. Deliberately below the ~8 s
- * the widget's own paths use, since this is a page fetch and not a render.
+ * reads slowly never does. A page that misses it fails the live card, and the
+ * widget shows "Couldn't load this chart." with a link to Tako. Deliberately
+ * below the widget's 7 s fetch bound (`PROXIED_CARD_FETCH_TIMEOUT_MS`), so the
+ * proxy's error reaches the widget before the widget's own timeout fires.
  */
 export const UPSTREAM_TIMEOUT_MS = 6_000;
 
@@ -527,6 +528,14 @@ export function sanitizeEmbedHtml(html: string): {
  * help — the page passes `location.href` explicitly rather than relying on
  * `document.baseURI`. So the interception has to be on `fetch` itself.
  *
+ * The one thing the shim does change is a frame whose location is opaque, such
+ * as a `blob:` frame. There `new URL(path, window.location.href)` throws, so
+ * the card never reaches `fetch`. In that frame only, the shim replaces
+ * `window.URL` with a proxy that retries a throwing construction against an
+ * absolute base built from the data proxy url, and only when the failed base
+ * was the document's own location. Where the location resolves normally, the
+ * shim leaves `window.URL` alone.
+ *
  * Deliberately narrow:
  *
  *   - It matches on the resolved PATHNAME being exactly
@@ -559,11 +568,25 @@ export function dataProxyShim(dataProxyUrl: string): string {
     `var T=${target};var P=${upstreamPath};`,
     "var f=window.fetch;",
     "if(typeof f!=='function')return;",
+    "var U=window.URL||URL;",
+    "var R=function(x,b){return new U(x,b);};",
+    "try{",
+    "var L=window.location;",
+    "try{new U('/',L.href);}catch(e0){",
+    "var isLoc=function(b){return b===L||String(b)===String(L.href);};",
+    "var N=new Proxy(U,{construct:function(t,a,nt){",
+    "try{return Reflect.construct(t,a,nt);}catch(e){",
+    "if(a.length>1&&isLoc(a[1]))return Reflect.construct(t,[a[0],T],nt);",
+    "throw e;}}});",
+    "R=function(x,b){return new N(x,b);};",
+    "window.URL=N;",
+    "}",
+    "}catch(e){}",
     "window.fetch=function(input,init){",
     "var to=null;",
     "try{",
     "if(typeof input==='string'||(typeof URL!=='undefined'&&input instanceof URL)){",
-    "var u=new URL(String(input),window.location.href);",
+    "var u=R(String(input),window.location.href);",
     "if(u.pathname===P)to=T+u.search;",
     "}",
     "}catch(e){}",
@@ -843,10 +866,11 @@ export async function handleEmbedProxy(
       // attached and read the auth code out of a same-origin response — without
       // ever touching the HttpOnly cookie.
       //
-      // Nothing needs it to be HTML. The only consumer is `upgradeToNativeCard`
+      // Nothing needs it to be HTML. The only consumer is `mountLiveCard`
       // in `_chart_widget.ts`, which does `fetch(...).then(r => r.text())` and
-      // writes the string into its OWN sandboxed document; it never dispatches
-      // on the content type (its sole shape check is `indexOf("<html")`).
+      // wraps the string in its own `text/html` blob for a `blob:` frame; it
+      // never dispatches on the content type (its sole shape check is
+      // `indexOf("<html")`).
       "content-type": "text/plain; charset=utf-8",
       // Belt to that brace: even if something did render this as a document,
       // `sandbox` with no tokens denies scripts, forms, popups and same-origin,

@@ -13,7 +13,7 @@ Tako MCP gives your agent premium live data from authoritative providers and web
 
 Tako MCP lets an agent:
 
-- **Search** Tako's knowledge graph and the live web — every card renders as a chart on the ChatGPT app (the first card's chart elsewhere), and `tako_contents` reads the rows behind it
+- **Search** Tako's knowledge graph and the live web — every card renders as a chart on the ChatGPT app and in other hosts that declare MCP Apps support (the first card's chart image elsewhere), and `tako_contents` reads the rows behind it
 - **Discover** exactly what proprietary data exists for an entity or metric
 - **Fetch** the underlying rows (JSON) or a page's text behind any result URL
 - **Visualize** your own structured data as an embeddable card — public and permanent, readable by anyone with the link _(opt-in; on by default on the ChatGPT app)_
@@ -240,7 +240,7 @@ The consumer chat hosts don't accept Bearer tokens. `claude_desktop_config.json`
 3. Paste `https://mcp.tako.com/mcp/chatgpt` and click **Connect**
 4. Complete the Tako sign-in flow; the connector is then listed and ready
 
-The `/mcp/chatgpt` surface is OAuth-only and tuned for ChatGPT (interactive chart widget, a fixed seven-tool listing; `?tools=` is ignored there). The generic `/mcp` URL also works there — you get chart images instead of the interactive widget.
+The `/mcp/chatgpt` surface is OAuth-only and tuned for ChatGPT (interactive chart widget, a fixed seven-tool listing; `?tools=` is ignored there). The generic `/mcp` URL also works there. It sends the chart widget only to a client whose `initialize` declares MCP Apps support, and chart images to any other client.
 
 ![ChatGPT connector connected](docs/images/chatgpt-tako-connected.png)
 
@@ -289,7 +289,7 @@ The full reference — every description and parameter exactly as the model sees
 
 | Tool | What it's for |
 | ---- | ------------- |
-| `tako_search` | **Find the data.** Fast search over Tako's curated graph and the live web. Four parameters — `query`, `sources`, `country_code`, `locale` — and no defaults of its own, so an omitted field takes the API's. Cards carry headline values, node ids and chart links; `tako_contents` reads the rows. Every card renders as a chart on the ChatGPT app, and the first card's chart renders elsewhere, each with an **Open in Tako** link. Parallelize broad questions into narrow single entity+metric searches. |
+| `tako_search` | **Find the data.** Fast search over Tako's curated graph and the live web. Four parameters — `query`, `sources`, `country_code`, `locale` — and no defaults of its own, so an omitted field takes the API's. Cards carry headline values, node ids and chart links; `tako_contents` reads the rows. Every card renders as a chart on the ChatGPT app and in other hosts that declare MCP Apps support, and the first card's chart image renders elsewhere, each with an **Open in Tako** link. Parallelize broad questions into narrow single entity+metric searches. |
 | `tako_available_data` | **Find what structured data exists** on an entity or metric in one call — the exact metric name to search on, an `id` for graph traversal, and a ready-to-run `next_call`. Ambiguous names come back as candidates with a `kind`; `metric` doubles as the substring browse filter; `limit` widens the candidate list. |
 | `tako_contents` | Fetch what's behind result URLs (1-10 per call): a card's rows or a web page's text — set `query` to a question to get only the passages that answer it. To analyze rows in code, set `delivery: "link"` for a CSV that expires after 5 minutes; `format: "card"` returns the card's own structure. `premium: true` returns a card's premium cells, such as a person's email and phone, and charges scale with the rows that hold one. `offset` with `max_rows` fetches one slice. `/mcp/chatgpt` returns rows inline only. Requires a signed-in connection. |
 | `tako_graph_related` | Explore a graph node: a map (each relation's key, total, first three names) or one paged relation — metrics, the entities a metric covers, competitors (`rel:competes_with`), memberships, sources. `q` is a substring filter. |
@@ -303,9 +303,9 @@ On connect, the server also advertises [MCP server instructions](https://modelco
 | Tool | Token | What it's for |
 | ---- | ----- | ------------- |
 | `tako_search_advanced` | `search_advanced` | The whole v3 search request body: per-source `count`, inline rows and `max_rows`, graph pins (`node_ids` + `strict`), web `include_domains` / `exclude_domains` / `category` / `snippet_max_chars` / `published_after` / `published_before`, `location`, `timezone`, `include_related`, and `effort: deep`. Set `include_answer: true` for one synthesized, citation-backed answer (and `output_schema` to fill a JSON Schema from the same evidence). Same structured payload as `tako_search`, minus the auto-rendered inline chart — `embed_url` is still there to click through. |
-| `tako_agent` | `agent` | Tako's **Answer Agent**: multi-step research across many retrievals, returning a synthesized answer plus chart cards. Its description tells the model to start a run only when the user asks for an agent. A call waits up to 45 s. If the run is still going, it returns `status: "running"` and an `answer_run_…` `run_id`; call again with that `run_id` instead of `query`. On `/mcp/chatgpt`, every card renders inline in the chart widget. |
-| `tako_company_agent` | `company_agent` | Tako's **Company Agent**: lists of companies or people, such as companies by location, industry, status, founding date, funding stage, or size, and the officers, directors, owners, or employees of those companies. Same explicit-ask rule and start-or-resume contract with a `company_run_…` `run_id`. On by default on `/mcp/chatgpt`, like `tako_agent`. On `/mcp/chatgpt`, every card renders inline in the chart widget. |
-| `tako_visualize` | `visualize` | Author a Tako card from your own typed `components` (timeseries, bar, table, financial boxes…). It PUBLISHES: the card is public, permanent, and readable by anyone with the link. On by default on `/mcp/chatgpt`, the host that renders the widget inline. |
+| `tako_agent` | `agent` | Tako's **Answer Agent**: multi-step research across many retrievals, returning a synthesized answer plus chart cards. Its description tells the model to start a run only when the user asks for an agent. A call waits up to 45 s. If the run is still going, it returns `status: "running"` and an `answer_run_…` `run_id`; call again with that `run_id` instead of `query`. On `/mcp/chatgpt`, and on `/mcp` in hosts that declare MCP Apps support, every card renders inline in the chart widget. |
+| `tako_company_agent` | `company_agent` | Tako's **Company Agent**: lists of companies or people, such as companies by location, industry, status, founding date, funding stage, or size, and the officers, directors, owners, or employees of those companies. Same explicit-ask rule and start-or-resume contract with a `company_run_…` `run_id`. On by default on `/mcp/chatgpt`, like `tako_agent`. On `/mcp/chatgpt`, and on `/mcp` in hosts that declare MCP Apps support, every card renders inline in the chart widget. |
+| `tako_visualize` | `visualize` | Author a Tako card from your own typed `components` (timeseries, bar, table, financial boxes…). It PUBLISHES: the card is public, permanent, and readable by anyone with the link. On by default on `/mcp/chatgpt`. On `/mcp/chatgpt`, and on `/mcp` in hosts that declare MCP Apps support, the card renders inline in the chart widget. |
 
 **`?tools=` is an allowlist that replaces the defaults.** `?tools=search,contents` lists exactly those two; `?tools=agent` lists only `tako_agent`. Tokens are tool names with the `tako_` prefix optional. Unknown tokens are ignored, and a param that names nothing yields the defaults, so a typo never breaks the connection. Include the defaults you rely on:
 
@@ -344,7 +344,7 @@ Two tools, one step apart — `tako_search` finds, `tako_contents` fetches:
 **Data to work with → parallel `tako_search` (synthesize yourself):**
 1. User asks: *"Compare US CPI, core CPI, PCE, and core PCE inflation."*
 2. Agent fires **four** narrow `tako_search` calls concurrently — one per entity+metric
-3. Each returns a card with headline values (every card renders as a chart on the ChatGPT app; the first card's chart renders elsewhere)
+3. Each returns a card with headline values (every card renders as a chart on the ChatGPT app and in other hosts that declare MCP Apps support; the first card's chart image renders elsewhere)
 4. Agent synthesizes the four results, calling `tako_contents` on a card's `url` if it needs full rows (when the card is `exportable: true`)
 </details>
 
@@ -555,7 +555,7 @@ Tako is published to the official [MCP Registry](https://registry.modelcontextpr
 
 `chatgpt-app-submission.json` at the repo root is the file the OpenAI portal imports. `assertChatgptSubmissionParity` in `workers/scripts/gen-registry.ts` keeps its `tools` object matched to what `/mcp/chatgpt` serves. The schema has no field for three things the portal asks for, so set them by hand:
 
-- **MCP URL:** `https://mcp.tako.com/mcp/chatgpt`. Not `/mcp`, which is the generic surface and serves no widget.
+- **MCP URL:** `https://mcp.tako.com/mcp/chatgpt`. Not `/mcp`, which is the generic surface.
 - **Authentication:** OAuth only. An anonymous request to `/mcp/chatgpt` gets a 401.
 - **Frame domain explanation:** paste the block below. The portal cuts the field at 200 characters without warning, so keep any edit under that. Name only tools on the submitted surface.
 
