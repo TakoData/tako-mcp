@@ -1015,10 +1015,10 @@ function registerTool(
       // image-baked dynamic variant).
       if (widgetLive && ui.dynamic !== undefined) {
         try {
-          // Pass both `input` and `output` to the resolver. Currently
-          // `tako_search` is the only tool with a dynamic URI resolver;
-          // it reads the chart `pub_id` from the search output
-          // (`output.pub_id`). Output is `unknown` here because
+          // Pass both `input` and `output` to the resolver. Every widget
+          // tool's resolver comes from `buildChartAppUiResourceFromOutputPubId`,
+          // which reads the top chart's `pub_id` from the output
+          // (`output.pub_id`, else `output.charts[0].pub_id`). Output is `unknown` here because
           // `AnyToolModule` erases handler types at the registry
           // boundary; resolvers narrow it themselves.
           const resolvedUri = ui.dynamic.resolveUriFromInput(input, output);

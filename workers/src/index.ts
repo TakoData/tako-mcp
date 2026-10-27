@@ -82,8 +82,10 @@ export default {
 
     // GET /mcp (server->client SSE stream) and DELETE /mcp (session
     // terminate) are genuinely not offered: we run stateless JSON-response
-    // mode and never issue an `Mcp-Session-Id`, so there is no session to
-    // resubscribe to or tear down.
+    // mode. The `Mcp-Session-Id` that `initialize` mints carries only the
+    // client's declared UI support (`ui-` or `noui-`, see `mcp_session.ts`);
+    // the server keeps no session, so there is nothing to resubscribe to or
+    // tear down.
     //
     // They must still answer 405, not fall through to the catch-all 404.
     // Streamable HTTP gives those two codes different meanings: 405 means

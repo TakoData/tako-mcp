@@ -221,10 +221,11 @@ export const searchAdvancedOutputShape = z.looseObject({
  *  Codex, VS Code — 5 of the 17 audited) receives a title and no way to show
  *  or link the chart it just published.
  *
- *  `pub_id`, `dark_mode`, `width` and `height` stay chatgpt-only. The widget
- *  is their sole reader (`_chart_widget.ts` reads them off
- *  `window.openai.toolOutput`) and it is suppressed on `/mcp`, where the chart
- *  ships as a PNG content block instead (`widgetSuppressed` in `mcp.ts`).
+ *  `pub_id`, `dark_mode`, `width` and `height` stay chatgpt-only. The ChatGPT
+ *  widget is their sole reader (`_chart_widget.ts` reads them off
+ *  `window.openai.toolOutput`). On `/mcp` the widget mounts live cards from
+ *  `_meta.charts`, and a client without a live widget gets the chart as a PNG
+ *  content block (`widgetLive` in `mcp.ts`).
  *  `card_id` is advertised nowhere: `pub_id` carries the identical string. */
 const visualizeCoreFields = {
   title: z

@@ -1057,9 +1057,9 @@ const WIDGET_HTML = `<!doctype html>
     try {
       var root = document.documentElement;
       var backdrop = chartBackdrop();
-      // Behind the chart, on every path. \`frame\` is the committed/probed embed
-      // iframe, \`image\` the baked PNG — both rounded, both transparent at the
-      // corners.
+      // Behind the chart, on every path. \`frame\` is ChatGPT's committed embed
+      // iframe, \`image\` its PNG, and each carousel slide holds an iframe or a
+      // PNG — all rounded, all transparent at the corners.
       // Cleared, not just skipped, when nothing names a colour any more —
       // otherwise a theme flip that drops its surface leaves the previous
       // theme's backdrop painted behind the corners.
@@ -1411,21 +1411,16 @@ const WIDGET_HTML = `<!doctype html>
   // Injected LAST so it wins over the page's own rules.
   function hostSchemeStyle(hostScheme) {
     var scheme = hostScheme.scheme;
-    // \`color-scheme\` only — the backdrop is deliberately NOT painted here.
-    //
-    // This path replaces the whole document with the card, so
+    // On ChatGPT, \`color-scheme\` only: \`hostSchemeSnapshot\` drops the
+    // backdrop there. This path replaces the whole document with the card, so
     // \`:root,body{background:…}\` paints a FULL-BLEED rectangle behind a card
-    // that has 8px rounded corners: the same square-behind-rounded mismatch
-    // that drew a visible outline on the iframe path, in the one place
-    // claude.ai actually renders. And the colour is no more knowable here —
-    // it comes from the same \`hostContext\` claim, which the reporting host
-    // got wrong (declared \`#212121\`, rendered black).
+    // that has 8px rounded corners, and ChatGPT is the one host measured to
+    // declare a surface it doesn't render (declared \`#212121\`, rendered
+    // black). There the rectangle draws a visible outline.
     //
-    // Leaving the canvas transparent lets the host's real background show
-    // through the card's corners, which is correct on every host without
-    // trusting anyone's colour. \`color-scheme\` stays: it themes the
-    // UA-drawn surfaces inside the card (scrollbars, form controls) and
-    // paints nothing itself.
+    // Every other host gets the backdrop as well, the same scoping as
+    // \`applyHostSurface\`. \`color-scheme\` themes the UA-drawn surfaces
+    // inside the card (scrollbars, form controls) and paints nothing itself.
     if (hostScheme.backdrop) {
       return '<style id="tako-host-scheme">:root,body{background:' + hostScheme.backdrop + '}' +
         (scheme ? ':root{color-scheme:' + scheme + '}' : "") + '</style>';
@@ -2369,9 +2364,9 @@ const WIDGET_HTML = `<!doctype html>
   // emits its six widget fields all-or-nothing, so no server path produces
   // that pair alone.
   //
-  // Claude does not have this failure mode — it gets a per-call dynamic
-  // \`ui/resourceUri\` carrying the \`pub_id\`, so the URI itself identifies the
-  // card. ChatGPT reads its template URI from static \`tools/list\` registration
+  // Claude does not have this failure mode — an MCP Apps host hands the widget
+  // the whole tool result, \`_meta\` included, in
+  // \`ui/notifications/tool-result\`. ChatGPT reads its template URI from static \`tools/list\` registration
   // metadata (see the \`ui?.dynamic\` block in mcp.ts, which deliberately does
   // NOT override \`openai/outputTemplate\`), so the widget has no identity of
   // its own and \`toolOutput\` is its only source. Widget state is the Apps
@@ -2379,12 +2374,9 @@ const WIDGET_HTML = `<!doctype html>
   // \`window.openai.widgetState\` is restored on reload.
   //
   // The structuredContent half is mirrored, plus the small \`charts\` list from
-  // \`_meta\`. The big \`_meta\` fields (the baked \`image_data_url\`) are
-  // deliberately NOT persisted: \`image_data_url\` is up to 400 KB
-  // against a store the SDK documents as ephemeral and widget-scoped, and the
-  // ChatGPT path never reads it anyway — that host's permissive \`img-src\`
-  // renders the cross-origin \`image_url\` directly. A restored render on
-  // ChatGPT therefore takes the same branch it took the first time.
+  // \`_meta\`. Nothing else is needed: that host's permissive \`img-src\`
+  // renders the cross-origin \`image_url\` directly, so a restored render on
+  // ChatGPT takes the same branch it took the first time.
   var lastPersistedKey = null;
   function persistWidgetState(structuredContent, charts) {
     var w = window;
@@ -3403,10 +3395,10 @@ export async function fetchImageDataUrlAndDims(
 
 /**
  * Fetch the chart PNG and return it as a single MCP `image` content
- * block. Used by both tools' `extraContentBlocks` hook on unknown
- * clients — the one bucket where the widget bundle is suppressed
- * entirely (ChatGPT and Claude both get the widget; see
- * `widgetSuppressed` in mcp.ts).
+ * block. Used by the `extraContentBlocks` hook of `tako_search` and
+ * `tako_visualize`, which mcp.ts runs whenever no widget is live for the
+ * call (`widgetLive`): every `/mcp` client that doesn't declare MCP Apps
+ * support, and a `ui-` session when live cards can't be served.
  *
  * All failure modes (timeout, !ok, wrong content-type, 0-byte body,
  * oversize, network error) return `[]` so the tool call still resolves
