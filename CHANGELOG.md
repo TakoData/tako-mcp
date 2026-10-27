@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.6.1](https://github.com/TakoData/tako-mcp/compare/v1.6.0...v1.6.1) (2026-10-27)
+
+
+### Features
+
+* **contents:** let ChatGPT users reveal a card's premium cells ([#377](https://github.com/TakoData/tako-mcp/issues/377)) ([b647589](https://github.com/TakoData/tako-mcp/commit/b647589e5a4b0f129c08df96d1288eff17f8b7ac))
+* **search:** describe people lookups as business professionals, and lead the About with one sentence ([#378](https://github.com/TakoData/tako-mcp/issues/378)) ([2b80716](https://github.com/TakoData/tako-mcp/commit/2b8071641718251379f329bbf769b6c89a08760d))
+
 ## [1.6.0](https://github.com/TakoData/tako-mcp/compare/v1.5.0...v1.6.0) (2026-10-27)
 
 
