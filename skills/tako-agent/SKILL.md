@@ -10,11 +10,11 @@ Tako's agents run multi-step research. An agent plans its own steps, searches th
 
 ## When to use an agent
 
-Start an agent only when the user asks for one: they name Tako's agent or ask for deep or multi-step research with Tako. Otherwise, use `tako-search`, even when the question needs a ranking, a trend, a calculation, or a list of people or companies. Don't start an agent for a task that needs no data, such as writing, editing, or explaining a concept.
+Start an agent only when the user asks for one: they name Tako's agent or ask for deep or multi-step research with Tako. Otherwise, use `tako-search`, even when the question needs a ranking, a trend, a calculation, or a list of companies or professionals. Don't start an agent for a task that needs no data, such as writing, editing, or explaining a concept.
 
 ## Choose the agent
 
-- Use `tako_company_agent` when the user names the Company Agent or wants a list of companies or people: companies by location, industry, status, founding date, funding, or size, or the officers, directors, owners, or employees of those companies.
+- Use `tako_company_agent` when the user names the Company Agent or wants a list of companies or of the professionals at them: companies by location, industry, status, founding date, funding, or size, or the officers, directors, executives, or employees of those companies.
 - Use `tako_agent` for anything else, such as a chart, a written finding, or a ranking of companies by a metric.
 
 ## Run an agent

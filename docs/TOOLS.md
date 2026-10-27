@@ -881,9 +881,9 @@ tako_search: Carnival, Inc. Revenues
 
 Description:
 
-Run Tako's Company Agent. It searches company registries, company and people profiles, and the web over several steps, and returns a written `answer` with numbered citations plus the list `cards` it built. Start a run only when the user asks for one: they name Tako's agent or ask for deep or multi-step research with Tako. Otherwise, use `tako_search`.
+Run Tako's Company Agent. It searches company registries, business profiles, and the web over several steps, and returns a written `answer` with numbered citations plus the list `cards` it built. Start a run only when the user asks for one: they name Tako's agent or ask for deep or multi-step research with Tako. Otherwise, use `tako_search`.
 
-Best for: an ask for Tako's Company Agent, or an ask for Tako's agent to build a list of companies or people. It filters companies by location, industry, status, founding date, funding stage, or size, and people by role, seniority, department, or ownership at those companies. At `medium` and `high` effort, it can also filter companies by financial metrics such as revenue.
+Best for: an ask for Tako's Company Agent, or an ask for Tako's agent to build a list of companies or of their professionals, for prospecting or hiring. It filters companies by location, industry, status, founding date, funding stage, or size, and their executives by role, seniority, or department, and finds the officers, directors, and controllers in company registries. At `medium` and `high` effort, it also filters companies by financial metrics such as revenue.
 
 A call returns within 45 s. If `status` is `running`, call again with `run_id`; don't start a new run. In your reply, link each card's `url`; the full list or chart lives on that page.
 
@@ -2005,7 +2005,7 @@ Search Tako's data graph and the live web in one call: many results at once, as 
 
 It finds results; `tako_contents` fetches what's behind them. Each card carries a headline value, node ids, and a url — pass the url to `tako_contents` for rows (`exportable: true` cards) or a web result's full page text. When `exportable` is false the rows are locked — read the headline value from the card's `description`.
 
-Best for: breadth — fan out several narrow queries in parallel. Each query answers one question — one metric for one entity, a comparison set ("Apple revenue", "Nvidia vs AMD gross margin"), one news or web lookup ("EU AI Act timeline"), or one list of people or companies ("CFOs in Austin", "fintechs in London"); several metrics or topics in one query retrieve poorly. To find a person, search the name alone ("Jane Doe"); extra words drop the list.
+Best for: breadth — fan out several narrow queries in parallel. Each query answers one question — one metric for one entity, a comparison set ("Apple revenue", "Nvidia vs AMD gross margin"), one news or web lookup ("EU AI Act timeline"), or one list of companies, or of business professionals by role and place, for prospecting or recruiting ("fintechs in London", "CFOs in Austin"); several metrics or topics in one query retrieve poorly.
 
 Parameters:
 
