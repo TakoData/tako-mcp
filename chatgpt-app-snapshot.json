@@ -18,7 +18,7 @@
     },
     "tako_contents": {
       "description_sha256": "f53bbd6e7d95da249c851e0a87e73d2806171bb5d676504a4edb774a3025931a",
-      "input_schema_sha256": "b2c9ec554620588cae26529c48c6ddc5c18a6c8eab48e63444d07cfff22ccd81",
+      "input_schema_sha256": "a5775e9ba10b9c9757c7916c3847eaa56bc3be5f604b428c64318ebdd41586fa",
       "output_schema_sha256": "02d991fd4dba0c8a91cb3112967f2621bf9fa805596cf424eff717ba328bdeac"
     },
     "tako_graph_related": {
