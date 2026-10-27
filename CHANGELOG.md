@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.6.2](https://github.com/TakoData/tako-mcp/compare/v1.6.1...v1.6.2) (2026-10-27)
+
+
+### Bug Fixes
+
+* **chatgpt:** describe the shared chart widget, and premium as a cost ([#380](https://github.com/TakoData/tako-mcp/issues/380)) ([4091a4b](https://github.com/TakoData/tako-mcp/commit/4091a4bbc3b63648d07af070e6cb0eb04b1a9b9f))
+
 ## [1.6.1](https://github.com/TakoData/tako-mcp/compare/v1.6.0...v1.6.1) (2026-10-27)
 
 
