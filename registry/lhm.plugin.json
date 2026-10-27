@@ -129,7 +129,7 @@
             "maximum": 100000
           },
           "premium": {
-            "description": "Tako cards only: `true` returns premium cells, which `tako_search` shows as 🔒 and `note` names. Charges scale with the rows that hold one, so set it only when the user asks, with `max_rows`.",
+            "description": "Tako cards only: `true` returns premium cells, which `tako_search` shows as 🔒 and this tool's `note` lists by column. Charges scale with the rows that hold one, so set it only when the user asks, with `max_rows`.",
             "type": "boolean"
           }
         },

@@ -258,7 +258,7 @@ function refusePremiumWithoutMaxRows(input: { premium?: boolean | undefined; max
     refinement.addIssue({
       code: "custom",
       path: ["max_rows"],
-      message: "premium needs `max_rows`. Set it to the rows the user wants, because Tako bills each row that holds a premium cell.",
+      message: "premium needs `max_rows`. Set it to the rows the user wants, because charges scale with the rows that hold a premium cell.",
     });
   }
 }
@@ -275,7 +275,7 @@ const premiumInput = z
   .boolean()
   .optional()
   .describe(
-    "Tako cards only: `true` returns premium cells, which `tako_search` shows as 🔒 and `note` names. Charges scale with the rows that hold one, so set it only when the user asks, with `max_rows`.",
+    "Tako cards only: `true` returns premium cells, which `tako_search` shows as 🔒 and this tool's `note` lists by column. Charges scale with the rows that hold one, so set it only when the user asks, with `max_rows`.",
   );
 
 export const chatgptInputSchema = sharedInputSchema

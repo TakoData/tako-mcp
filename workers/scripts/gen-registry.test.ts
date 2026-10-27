@@ -398,6 +398,17 @@ describe("assertChatgptSnapshot", () => {
     expect(() => assertChatgptSnapshot([edited, ...others], snapshot)).toThrow(/input_schema/);
   });
 
+  it("fails when a reviewed tool's widget description changes", () => {
+    const withWidget = (widgetDescription: string) => ({
+      ...search,
+      appUiResource: () => ({ uri: "ui://tako/embed/chart", name: "chart", html: "", widgetDescription }),
+    });
+    const snapshot = buildChatgptSnapshot([withWidget("Shows a chart."), ...others]);
+    expect(() => assertChatgptSnapshot([withWidget("Shows a list."), ...others], snapshot)).toThrow(
+      /tako_search.*widget description/,
+    );
+  });
+
   it("ignores tools that are not on the chatgpt surface", () => {
     const snapshot = buildChatgptSnapshot([search, ...others]);
     const advanced = { name: "tako_search_advanced", description: "x", inputSchema: z.object({}) };

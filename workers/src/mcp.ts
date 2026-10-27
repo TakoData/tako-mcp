@@ -662,7 +662,7 @@ function registerTool(
         new ResourceTemplate(dynamic.uriPattern, { list: undefined }),
         {
           mimeType: APP_UI_MIME_TYPE,
-          ...(hasResourceMeta ? { _meta: resourceMeta } : {}),
+          ...(Object.keys(uiMeta).length > 0 ? { _meta: { ui: uiMeta } } : {}),
         },
         async (uri, variables) => {
           const html = await dynamic.renderHtml(variables, ctx);
@@ -676,8 +676,8 @@ function registerTool(
             mimeType: APP_UI_MIME_TYPE,
             text: html,
           };
-          if (hasResourceMeta) {
-            contentItem._meta = resourceMeta;
+          if (Object.keys(uiMeta).length > 0) {
+            contentItem._meta = { ui: uiMeta };
           }
           return { contents: [contentItem] };
         },

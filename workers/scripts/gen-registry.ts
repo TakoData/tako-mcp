@@ -1529,19 +1529,30 @@ interface ChatgptSnapshot {
   note: string;
   tools: Record<
     string,
-    { description_sha256: string; input_schema_sha256: string; output_schema_sha256?: string }
+    {
+      description_sha256: string;
+      input_schema_sha256: string;
+      output_schema_sha256?: string;
+      widget_description_sha256?: string;
+    }
   >;
 }
 
 const SNAPSHOT_NOTE =
-  "The description, input schema and chatgpt-surface output schema of every tool on the fixed /mcp/chatgpt surface, as last ACCEPTED here. OpenAI rescans /mcp/chatgpt daily and updates each tool after its automated checks pass, so an accepted change reaches ChatGPT users with the next production deploy. registry:check fails on any drift. Accept a deliberate change with: npm run registry:gen -- --accept-chatgpt-snapshot";
+  "The description, input schema, chatgpt-surface output schema and widget description of every tool on the fixed /mcp/chatgpt surface, as last ACCEPTED here. OpenAI rescans /mcp/chatgpt daily and updates each tool after its automated checks pass, so an accepted change reaches ChatGPT users with the next production deploy. registry:check fails on any drift. Accept a deliberate change with: npm run registry:gen -- --accept-chatgpt-snapshot";
 
 /** The snapshot for the tools on the fixed chatgpt surface, serialized. */
 export function buildChatgptSnapshot(
   tools: ReadonlyArray<
     Pick<
       ToolModule,
-      "name" | "description" | "inputSchema" | "inputSchemaBySurface" | "outputSchema" | "outputSchemaBySurface"
+      | "name"
+      | "description"
+      | "inputSchema"
+      | "inputSchemaBySurface"
+      | "outputSchema"
+      | "outputSchemaBySurface"
+      | "appUiResource"
     >
   >,
 ): string {
@@ -1555,6 +1566,7 @@ export function buildChatgptSnapshot(
     // Hashed in its WIRE form and key-sorted, for the
     // same two reasons the input digest documents.
     const outputSchema = outputSchemaForSurface(tool, "chatgpt");
+    const widgetDescription = tool.appUiResource?.(SAMPLE_FIXTURE_ENV).widgetDescription;
     snapshot.tools[tool.name] = {
       description_sha256: sha256(tool.description),
       // Key-SORTED before hashing: `z.toJSONSchema` emits keys in whatever
@@ -1567,6 +1579,7 @@ export function buildChatgptSnapshot(
       ...(outputSchema !== undefined
         ? { output_schema_sha256: sha256(stableStringify(publishedOutputJsonSchema(outputSchema))) }
         : {}),
+      ...(widgetDescription !== undefined ? { widget_description_sha256: sha256(widgetDescription) } : {}),
     };
   }
   return serializeJson(snapshot);
@@ -1575,14 +1588,21 @@ export function buildChatgptSnapshot(
 /**
  * Fail when a tool on the chatgpt surface no longer matches the accepted
  * snapshot. `assertChatgptSubmissionParity` guards the tool SET and the
- * annotations; this guards the two things OpenAI's snapshot also carries
- * and that check cannot see — the description and the input schema.
+ * annotations; this guards what OpenAI's snapshot also carries and that
+ * check cannot see — the description, the schemas, and the widget
+ * description.
  */
 export function assertChatgptSnapshot(
   tools: ReadonlyArray<
     Pick<
       ToolModule,
-      "name" | "description" | "inputSchema" | "inputSchemaBySurface" | "outputSchema" | "outputSchemaBySurface"
+      | "name"
+      | "description"
+      | "inputSchema"
+      | "inputSchemaBySurface"
+      | "outputSchema"
+      | "outputSchemaBySurface"
+      | "appUiResource"
     >
   >,
   snapshotJson: string,
@@ -1604,6 +1624,9 @@ export function assertChatgptSnapshot(
     }
     if (was.output_schema_sha256 !== hashes.output_schema_sha256) {
       problems.push(`tool "${name}" output_schema changed since the accepted snapshot`);
+    }
+    if (was.widget_description_sha256 !== hashes.widget_description_sha256) {
+      problems.push(`tool "${name}" widget description changed since the accepted snapshot`);
     }
   }
   for (const name of Object.keys(accepted.tools)) {

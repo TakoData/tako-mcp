@@ -240,7 +240,8 @@ export interface AppUiResource {
   connectDomains?: string[];
   /**
    * What the widget shows, as `_meta["openai/widgetDescription"]` on the
-   * resource. Every tool that renders this widget shares it.
+   * static resource. Every tool that renders this widget shares it. The
+   * `dynamic` template doesn't carry it.
    */
   widgetDescription?: string;
   /**
