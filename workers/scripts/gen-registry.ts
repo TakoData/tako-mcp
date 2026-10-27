@@ -1566,7 +1566,7 @@ export function buildChatgptSnapshot(
     // Hashed in its WIRE form and key-sorted, for the
     // same two reasons the input digest documents.
     const outputSchema = outputSchemaForSurface(tool, "chatgpt");
-    const widgetDescription = tool.appUiResource?.(SAMPLE_FIXTURE_ENV).widgetDescription;
+    const widgetDescription = tool.appUiResource?.(SAMPLE_FIXTURE_ENV, undefined, "chatgpt").widgetDescription;
     snapshot.tools[tool.name] = {
       description_sha256: sha256(tool.description),
       // Key-SORTED before hashing: `z.toJSONSchema` emits keys in whatever
