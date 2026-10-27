@@ -25,7 +25,7 @@ import {
 } from "./_render_markdown.js";
 import { projectAgentRun, projectRunningRun, refusalGuidance } from "./_agent_run.js";
 import { projectRelated } from "./_graph.js";
-import { buildSearchOutput, STRICT_PIN_GUIDANCE } from "./_search_results.js";
+import { buildSearchOutput, STRICT_PIN_GUIDANCE, WITHHELD_CELLS_GUIDANCE } from "./_search_results.js";
 import { buildVisualizeOutput } from "./tako_visualize.js";
 import {
   buildMatch,
@@ -1126,7 +1126,7 @@ describe("channel parity (tako_search and tako_search_advanced)", () => {
       ENV,
       false,
       "authenticated",
-      { rowCap: "all", keepWebText: true, toolName: "tako_search_advanced", canRequestPremium: true },
+      { rowCap: "all", keepWebText: true, toolName: "tako_search_advanced", premiumGuidance: WITHHELD_CELLS_GUIDANCE },
       // The advanced tool's four extra fields ride here too: it is the only
       // tool that can return them, and they reach the model through the same
       // renderer. A separate fixture would let this walk keep passing while

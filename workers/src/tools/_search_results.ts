@@ -1348,7 +1348,10 @@ export function withheldDataGuidance(cards: ReadonlyArray<TakoCard>): string | u
 export const WITHHELD_CELLS_GUIDANCE =
   "A card withholds cells, such as each person's email and phone. When the user asks for them, `tako_contents` with `premium: true` returns them and bills each row that holds one.";
 
-export function withheldCellsGuidance(cards: ReadonlyArray<TakoCard>): string | undefined {
+export const CHATGPT_WITHHELD_CELLS_GUIDANCE =
+  "A card shows premium cells as 🔒. When the user asks for them, `tako_contents` with `premium: true` returns them and bills each row that holds one.";
+
+export function withheldCellsGuidance(cards: ReadonlyArray<TakoCard>, guidance: string): string | undefined {
   const withholds = cards.some((card) => {
     const content = card.content as Record<string, unknown> | null | undefined;
     if (content == null || content.premium === true) return false;
@@ -1356,7 +1359,7 @@ export function withheldCellsGuidance(cards: ReadonlyArray<TakoCard>): string | 
     if (premiumRows == null || typeof premiumRows !== "object") return false;
     return Object.values(premiumRows).some((count) => typeof count === "number" && count > 0);
   });
-  return withholds ? WITHHELD_CELLS_GUIDANCE : undefined;
+  return withholds ? guidance : undefined;
 }
 
 /** Wire fields that ride into the output when the request asked for them. */
@@ -1393,7 +1396,7 @@ export function buildSearchOutput(
     keepWebText: boolean;
     /** The tool this output belongs to, named in the projection log. */
     toolName: SearchToolName;
-    canRequestPremium: boolean;
+    premiumGuidance: string | null;
   },
   extras: SearchOutputExtras = {},
 ): SearchOutput {
@@ -1403,7 +1406,7 @@ export function buildSearchOutput(
   );
   const web = webResults.map((w) => projectWebResult(w, opts.keepWebText));
   const withheld = withheldDataGuidance(rawCards);
-  const withheldCells = tier !== "free" && opts.canRequestPremium ? withheldCellsGuidance(rawCards) : undefined;
+  const withheldCells = tier !== "free" && opts.premiumGuidance !== null ? withheldCellsGuidance(rawCards, opts.premiumGuidance) : undefined;
   const base: SearchOutput = {
     cards,
     web_results: web,

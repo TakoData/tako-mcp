@@ -2052,7 +2052,7 @@ describe("published inputSchema per surface", () => {
     expect(await contentsInputProperties("generic")).toEqual(
       expect.arrayContaining(["urls", "max_rows", "max_chars", "query", "delivery", "format"]),
     );
-    expect(await contentsInputProperties("chatgpt")).toEqual(["urls", "max_rows", "max_chars", "query"]);
+    expect(await contentsInputProperties("chatgpt")).toEqual(["urls", "max_rows", "max_chars", "query", "offset", "premium"]);
   });
 });
 

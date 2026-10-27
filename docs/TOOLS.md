@@ -1346,6 +1346,16 @@ Annotations:
       "description": "Web pages only: a question the passages should answer. The result holds those passages instead of the page. Omit it to get the whole page.",
       "type": "string",
       "minLength": 1
+    },
+    "offset": {
+      "description": "Tako list cards only: rows to skip. With `max_rows: 1`, it fetches a single row.",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100000
+    },
+    "premium": {
+      "description": "Tako cards only: `true` reveals a card's premium cells. A `tako_search` card shows each one as 🔒, and `tako_contents` returns it as null and names its column in `note`. Tako bills each row that holds one, so set it only when the user asks, with `max_rows` set to the rows they want.",
+      "type": "boolean"
     }
   },
   "required": [

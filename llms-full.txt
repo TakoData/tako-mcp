@@ -70,7 +70,7 @@ Precondition (Tako cards): a card marked `exportable: false` is usually license-
 
 Results ride in `results`, positionally aligned with the urls you passed, failures included. Each entry carries `url` and `cost`, plus exactly one of `rows` (a card's data as `{columns, rows, total_rows}`, with positional cells and `null` for a missing value), `text` (a web page), or `error`. `truncated` reports a cut payload, and `note` says whether `text` holds the passages for `query` or the whole page. Root `usage.total_cost_usd` is the call's total.
 
-With `delivery: "link"`, a card's entry carries `download` (`url`, `expires_at`, `file_format`, `total_rows`) instead of inline data. With `format: "card"`, it carries `card`, the card's own structure. To analyze rows in code, use `delivery: "link"` and download the file right away. When a card withholds cells, such as a person's email and phone, `note` names them. `/mcp/chatgpt` takes four inputs and returns rows inline only.
+With `delivery: "link"`, a card's entry carries `download` (`url`, `expires_at`, `file_format`, `total_rows`) instead of inline data. With `format: "card"`, it carries `card`, the card's own structure. To analyze rows in code, use `delivery: "link"` and download the file right away. When a card withholds cells, such as a person's email and phone, `note` names them. `/mcp/chatgpt` takes no `delivery` or `format` and returns rows inline only.
 
 Parameters:
 - `urls` (array of string, 1-10, required): The result urls to fetch — a Tako card's `url`, web-result urls, or a mix. Each is fetched independently, and one url failing doesn't fail the others (its entry carries an `error` instead of a payload).
