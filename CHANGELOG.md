@@ -1,5 +1,37 @@
 # Changelog
 
+## [1.6.0](https://github.com/TakoData/tako-mcp/compare/v1.5.0...v1.6.0) (2026-10-27)
+
+
+### Features
+
+* **agent:** render tako_agent and tako_company_agent cards inline on ChatGPT ([#364](https://github.com/TakoData/tako-mcp/issues/364)) ([5ef3e97](https://github.com/TakoData/tako-mcp/commit/5ef3e97bcf95b72288c0303587ba8e8b0aa7b61c))
+* **chatgpt-plugin:** lead the listing with premium data, and package the screenshots and review test cases ([#366](https://github.com/TakoData/tako-mcp/issues/366)) ([969ad37](https://github.com/TakoData/tako-mcp/commit/969ad37a3b7bea94995ba16cd532cf1252b6c014))
+* **chatgpt-plugin:** refresh the starter prompts to show revenue, sports, and web traffic data ([#372](https://github.com/TakoData/tako-mcp/issues/372)) ([92ed9f1](https://github.com/TakoData/tako-mcp/commit/92ed9f1c2cf0b5a5b582138940e2cfb827b4f57a))
+* **contents:** return a person's email and phone on request, and fetch one row with offset ([#371](https://github.com/TakoData/tako-mcp/issues/371)) ([12616a3](https://github.com/TakoData/tako-mcp/commit/12616a3d3cb5a0dea8aafe9af7f0274dea87d470))
+* **plugin:** add tako_visualize to the Claude plugin and Gemini extension ([#360](https://github.com/TakoData/tako-mcp/issues/360)) ([914bf6e](https://github.com/TakoData/tako-mcp/commit/914bf6ea4a7ce7406b7e368893c239a0ab1fbc60))
+* **skills:** answer people and company list lookups with tako_search, not the company agent ([#367](https://github.com/TakoData/tako-mcp/issues/367)) ([a22088c](https://github.com/TakoData/tako-mcp/commit/a22088c001a73710c0ccd3b64e857dfe2b4c4901))
+* **skills:** load tako-search when the answer needs a calculation over real-world data ([#365](https://github.com/TakoData/tako-mcp/issues/365)) ([dd4715a](https://github.com/TakoData/tako-mcp/commit/dd4715aebb811e0f9bdd21b8249db18ac51d4330))
+* **skills:** ship the tako-agent skill to ChatGPT and serve Tako's skills over MCP ([#363](https://github.com/TakoData/tako-mcp/issues/363)) ([30434f0](https://github.com/TakoData/tako-mcp/commit/30434f0aafdd8886cbf8fec560ff834e52b06955))
+
+
+### Bug Fixes
+
+* **agent:** start an agent only on an explicit ask, and choose it by what the user wants back ([#368](https://github.com/TakoData/tako-mcp/issues/368)) ([977ea5e](https://github.com/TakoData/tako-mcp/commit/977ea5e93706f7f89718cd2ed0ee29b5a5a0e94c))
+* **chatgpt-plugin:** package the connected MCP server so the OpenAI portal accepts uploads ([#375](https://github.com/TakoData/tako-mcp/issues/375)) ([e451bb8](https://github.com/TakoData/tako-mcp/commit/e451bb8393e639f1a55f552238b1d15d6962e70b))
+* **embed-proxy:** abort an asset or embed page whose upstream stalls mid-body ([#376](https://github.com/TakoData/tako-mcp/issues/376)) ([e9e8cb1](https://github.com/TakoData/tako-mcp/commit/e9e8cb17e024480edc7e3f9e686e0a4abafdd184))
+
+
+### Chores
+
+* sync OpenAPI spec from monorepo ([#362](https://github.com/TakoData/tako-mcp/issues/362)) ([a5ca326](https://github.com/TakoData/tako-mcp/commit/a5ca32637dc8f5350930ab5d62372324f5075a8b))
+* sync OpenAPI spec from monorepo ([#373](https://github.com/TakoData/tako-mcp/issues/373)) ([d034246](https://github.com/TakoData/tako-mcp/commit/d03424638453cdff8c2d6f0c9d723a1602ef163f))
+
+
+### Documentation
+
+* **listings:** give every listing the ChatGPT lead line and the current tools ([#369](https://github.com/TakoData/tako-mcp/issues/369)) ([0092911](https://github.com/TakoData/tako-mcp/commit/0092911903678168353f367a02d05e4282b9e44e))
+
 ## [1.5.0](https://github.com/TakoData/tako-mcp/compare/v1.4.5...v1.5.0) (2026-10-24)
 
 
