@@ -18,8 +18,8 @@
     },
     "tako_contents": {
       "description_sha256": "f53bbd6e7d95da249c851e0a87e73d2806171bb5d676504a4edb774a3025931a",
-      "input_schema_sha256": "5a3b2e42c2ee2aaada7bfd549734e1a37aa8d41a8c078fbfe7b03bacb026607e",
-      "output_schema_sha256": "3af001d51beba867f9c6e2ec4ebe6bb9abab4753aa7b1c14c10f198dc4b944dc"
+      "input_schema_sha256": "b2c9ec554620588cae26529c48c6ddc5c18a6c8eab48e63444d07cfff22ccd81",
+      "output_schema_sha256": "02d991fd4dba0c8a91cb3112967f2621bf9fa805596cf424eff717ba328bdeac"
     },
     "tako_graph_related": {
       "description_sha256": "f7f773f8e1fcd95d305b33daa3fcb682c3caafbcee9df6d4888620bc1ef47001",

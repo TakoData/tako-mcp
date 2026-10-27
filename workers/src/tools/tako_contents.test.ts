@@ -1044,6 +1044,27 @@ describe("tako_contents premium and offset", () => {
     );
   });
 
+  it("names the CSV marker, not null, for premium cells in a link download", async () => {
+    vi.mocked(djangoPost).mockResolvedValue({
+      contents: [
+        {
+          content_format: "csv",
+          url: "https://s3/people.csv",
+          expires_at: "2026-10-23T20:00:00+00:00",
+          total_rows: 2,
+          cost: 0.01,
+          source_url: cardUrl,
+          redacted_cells: { phone: [0, 1] },
+        },
+      ],
+      request_id: "r",
+    });
+    const out = await tool.handler(tool.inputSchema.parse({ urls: [cardUrl], delivery: "link" }), ctx);
+    expect(out.results[0]!.note).toBe(
+      "Tako returned the premium cells in `phone` as `[premium: withheld]` in 2 rows. To get them, call again with `premium: true`, which bills each of those rows.",
+    );
+  });
+
   it("names the premium cells on chatgpt and points to premium", async () => {
     vi.mocked(djangoPost).mockResolvedValue(peopleCard({ phone: [1] }));
     const out = await tool.handler(

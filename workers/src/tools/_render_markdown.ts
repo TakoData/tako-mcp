@@ -103,7 +103,7 @@ const searchCoreFields = {
   guidance: z
     .string()
     .optional()
-    .describe("How to unlock a placeholder card or a card's withheld cells."),
+    .describe("How to unlock a placeholder card or a card's premium cells."),
   metric_definitions: z
     .record(z.string(), z.string())
     .optional()
@@ -202,7 +202,7 @@ export const searchAdvancedOutputShape = z.looseObject({
     // `include_contents: true` caller into a priced refetch of rows it had
     // already paid to inline.
     .describe("The data cards. Rows ride in a card's `rows` only when the request asked to inline them — otherwise fetch an exportable card's rows with tako_contents on its url."),
-  guidance: z.string().optional().describe("Why a `strict: true` pin returned no cards, or how to get withheld cells."),
+  guidance: z.string().optional().describe("Why a `strict: true` pin returned no cards, or how to get premium cells."),
   ...answerFoldFields,
 });
 

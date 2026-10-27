@@ -275,7 +275,7 @@ const premiumInput = z
   .boolean()
   .optional()
   .describe(
-    "Tako cards only: `true` reveals premium cells, which `tako_search` shows as 🔒 and this tool returns as `null`. Tako bills each row with one, so set it only when the user asks, with `max_rows`.",
+    "Tako cards only: `true` reveals premium cells. `tako_search` shows each one as 🔒, and this tool's `note` names their columns. Tako bills each row with one, so set it only when the user asks, with `max_rows`.",
   );
 
 export const chatgptInputSchema = sharedInputSchema
