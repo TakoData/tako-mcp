@@ -67,7 +67,7 @@ describe("tako_company_agent", () => {
 
   it("the description starts a run only on an explicit ask and sends other questions to tako_search", () => {
     expect(tool.description).toContain("Start a run only when the user asks for one: they name Tako's agent or ask for deep or multi-step research with Tako.");
-    expect(tool.description).toContain("Otherwise, use `tako_search`.");
+    expect(tool.description).toContain("Otherwise, use `tako_search`, even for a list that search can't fully filter.");
     expect(tool.description).toContain("an ask for Tako's agent to build a list of companies or of their professionals");
   });
 

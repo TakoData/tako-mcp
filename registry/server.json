@@ -51,7 +51,7 @@
         },
         "sources": {
           "type": "array",
-          "description": "Which corpora to search; default is both. Narrow to [\"web\"] only for news or page text — website traffic is in the data graph. A thread keeps its sources, so omit this on a follow-up."
+          "description": "Which corpora to search; default is both. `data` is Tako's knowledge graph, curated from authoritative data sources; `web` is the open web. Keep both unless the user asks for one. A thread keeps its sources, so omit this on a follow-up."
         },
         "thread_id": {
           "type": "string",
@@ -119,7 +119,7 @@
     },
     {
       "name": "tako_company_agent",
-      "description": "Run Tako's Company Agent. It searches company registries, business profiles, and the web over several steps, and returns a written `answer` with numbered citations plus the list `cards` it built. Start a run only when the user asks for one: they name Tako's agent or ask for deep or multi-step research with Tako. Otherwise, use `tako_search`.\n\nBest for: an ask for Tako's Company Agent, or an ask for Tako's agent to build a list of companies or of their professionals, for prospecting or hiring. It filters companies by location, industry, status, founding date, funding stage, or size, and their executives by role, seniority, or department, and finds the officers, directors, and controllers in company registries. At `medium` and `high` effort, it also filters companies by financial metrics such as revenue.\n\nA call returns within 45 s. If `status` is `running`, call again with `run_id`; don't start a new run. In your reply, link each card's `url`; the full list or chart lives on that page.",
+      "description": "Run Tako's Company Agent. It searches company registries, business profiles, and the web over several steps, and returns a written `answer` with numbered citations plus the list `cards` it built. Start a run only when the user asks for one: they name Tako's agent or ask for deep or multi-step research with Tako. Otherwise, use `tako_search`, even for a list that search can't fully filter.\n\nBest for: an ask for Tako's Company Agent, or an ask for Tako's agent to build a list of companies or of their professionals, for prospecting or hiring. It filters companies by location, industry, status, founding date, funding stage, or size, and their executives by role, seniority, or department, and finds the officers, directors, and controllers in company registries.\n\nA call returns within 45 s. If `status` is `running`, call again with `run_id`; don't start a new run. In your reply, link each card's `url`; the full list or chart lives on that page.",
       "parameters": {
         "query": {
           "type": "string",
@@ -198,7 +198,7 @@
         },
         "premium": {
           "type": "boolean",
-          "description": "Tako cards only: `true` returns premium cells, which `tako_search` shows as 🔒 and this tool's `note` lists by column. Charges scale with the rows that hold one, so set it only when the user asks, with `max_rows`."
+          "description": "Tako cards only: `true` returns premium cells, shown as 🔒 and listed in `note`. Charges scale with the rows that hold one, so set it only when the user asks, with `offset` and `max_rows` on just the rows they want."
         }
       },
       "annotations": {
@@ -275,7 +275,7 @@
         },
         "sources": {
           "type": "array",
-          "description": "Which corpora to search; default is both. Narrow to [\"web\"] only for news or page text — website traffic is in the data graph.",
+          "description": "Which corpora to search; default is both. `data` is Tako's knowledge graph, curated from authoritative data sources; `web` is the open web. Keep both unless the user asks for one.",
           "default": [
             "data",
             "web"

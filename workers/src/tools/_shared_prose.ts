@@ -17,12 +17,12 @@
  * enum and route the same way, so the sentence is one string. `tako_agent`
  * appends `AGENT_SOURCES_THREAD_RULE`.
  *
- * The digital-metrics clause is the load-bearing part: models narrow to
- * `["web"]` for website and app traffic on the assumption that a data graph
- * cannot hold it, and Tako's does.
+ * The keep-both rule is the load-bearing part: models narrow to `["web"]`
+ * whenever they guess the graph can't hold the answer, for website traffic,
+ * a role at a company, or a contact, and Tako's graph holds all three.
  */
 export const SOURCES_DESCRIBE =
-  'Which corpora to search; default is both. Narrow to ["web"] only for news or page text — website traffic is in the data graph.';
+  "Which corpora to search; default is both. `data` is Tako's knowledge graph, curated from authoritative data sources; `web` is the open web. Keep both unless the user asks for one.";
 
 /** The `sources` rule both agent tools share: a thread's sources are fixed. */
 export const AGENT_SOURCES_THREAD_RULE =
