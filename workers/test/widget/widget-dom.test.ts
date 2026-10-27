@@ -2168,6 +2168,10 @@ describe("live cards (no window.openai)", () => {
     postSlideHeight(m, card.contentWindow as Window, 399);
     expect(card.getAttribute("height")).toBe("399");
     expect(sizeChangesOf(m).at(-1)?.params.height).toBe(399);
+
+    const settledCount = sizeChangesOf(m).length;
+    postSlideHeight(m, card.contentWindow as Window, 399);
+    expect(sizeChangesOf(m)).toHaveLength(settledCount);
   });
 
   it("ignores a tako-embed-height from a live frame, which only the card itself sends", async () => {

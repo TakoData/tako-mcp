@@ -1461,8 +1461,10 @@ const WIDGET_HTML = `<!doctype html>
   // intrinsic height. We notify on load (placeholder height) and again
   // after rendering. No-op on hosts that don't expose the function.
   var highestNotifiedHeight = 0;
+  var lastNotifiedHeight = 0;
   function notifyHeight(h) {
     if (h > highestNotifiedHeight) highestNotifiedHeight = h;
+    lastNotifiedHeight = h;
     // ChatGPT Apps SDK mechanism.
     try {
       if (window.openai && typeof window.openai.notifyIntrinsicHeight === "function") {
@@ -1727,6 +1729,7 @@ const WIDGET_HTML = `<!doctype html>
   var carouselNext = document.getElementById("tako-next");
   var carouselSlides = [];
   var keepSingleFrameUntilSlideReveals = false;
+  var carouselShrinks = false;
 
   function renderCarousel(charts, fallbackHeight) {
     if (carouselSlides.length > 0) return true;
@@ -1741,6 +1744,7 @@ const WIDGET_HTML = `<!doctype html>
   function renderLiveCards(charts) {
     if (carouselSlides.length > 0) return true;
     regrowAfterShrink();
+    carouselShrinks = true;
     carousel.classList.remove("hidden");
     charts.forEach(function (chart, i) {
       carouselSlides.push(liveCardSlide(chart, i, charts.length));
@@ -1978,20 +1982,18 @@ const WIDGET_HTML = `<!doctype html>
       setIframeHeight(slide.iframe, h);
       slide.iframe.classList.remove("veiled");
     }
-    fitCarouselHeight(slide.live === true);
+    fitCarouselHeight();
   }
 
-  var notifiedCarouselHeight = 0;
-  function fitCarouselHeight(shrinkable) {
+  function fitCarouselHeight() {
     var tallest = 0;
     carouselSlides.forEach(function (s) {
       if (s.revealed && s.height > tallest) tallest = s.height;
     });
-    var resized = shrinkable
-      ? tallest > 0 && tallest !== notifiedCarouselHeight
+    var resized = carouselShrinks
+      ? tallest > 0 && tallest !== lastNotifiedHeight
       : tallest > highestNotifiedHeight;
     if (resized) {
-      notifiedCarouselHeight = tallest;
       notifyHeight(tallest);
       log("carousel resized", { height: tallest });
     }
