@@ -1036,22 +1036,22 @@ describe("tako_contents premium and offset", () => {
     expect(out.results[0]).not.toHaveProperty("note");
   });
 
-  it("names the withheld cells and the rows that hold them, and points to premium", async () => {
+  it("names the premium cells and the rows that hold them, and points to premium", async () => {
     vi.mocked(djangoPost).mockResolvedValue(peopleCard({ work_email: [0, 1], phone: [0] }));
     const out = await tool.handler(tool.inputSchema.parse({ urls: [cardUrl] }), ctx);
     expect(out.results[0]!.note).toBe(
-      "Tako withheld `work_email`, `phone` in 2 rows. To get them, call again with `premium: true`, which bills each of those rows.",
+      "Tako returned the premium cells in `work_email`, `phone` as `null` in 2 rows. To get them, call again with `premium: true`, which bills each of those rows.",
     );
   });
 
-  it("names the withheld cells on chatgpt and points to premium", async () => {
+  it("names the premium cells on chatgpt and points to premium", async () => {
     vi.mocked(djangoPost).mockResolvedValue(peopleCard({ phone: [1] }));
     const out = await tool.handler(
       tool.inputSchemaBySurface!.chatgpt!.parse({ urls: [cardUrl] }),
       { ...ctx, surface: "chatgpt" as const },
     );
     expect(out.results[0]!.note).toBe(
-      "Tako withheld `phone` in 1 row. To get them, call again with `premium: true`, which bills each of those rows.",
+      "Tako returned the premium cells in `phone` as `null` in 1 row. To get them, call again with `premium: true`, which bills each of those rows.",
     );
   });
 

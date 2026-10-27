@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
+import { MCP_PATHS } from "../surface.js";
 import { TOOL_REGISTRY } from "./_registry.js";
 import { TIER_CLAIM } from "./__test_helpers.js";
 import {
@@ -166,5 +167,12 @@ describe("inputSchemaForSurface", () => {
     const tool = { inputSchema: generic };
     expect(inputSchemaForSurface(tool, "chatgpt")).toBe(generic);
     expect(inputSchemaForSurface(tool, "generic")).toBe(generic);
+  });
+
+  it("gives tako_contents a premium input on every surface, since tako_search points every surface to it", () => {
+    const contents = TOOL_REGISTRY.find((t) => t.name === "tako_contents")!;
+    for (const surface of new Set(MCP_PATHS.values())) {
+      expect("premium" in inputSchemaForSurface(contents, surface).shape, surface).toBe(true);
+    }
   });
 });

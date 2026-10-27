@@ -12,7 +12,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Env } from "../env.js";
 import { jsonResponse, mockFetchSequence, noopSendProgress, requestFrom } from "./__test_helpers.js";
 import { runSearch } from "./_run_search.js";
-import { CHATGPT_WITHHELD_CELLS_GUIDANCE, WITHHELD_CELLS_GUIDANCE } from "./_search_results.js";
+import { WITHHELD_CELLS_GUIDANCE } from "./_search_results.js";
 import type { ToolContext } from "./types.js";
 
 const ENV: Env = { DJANGO_BASE_URL: "https://staging.trytako.com" };
@@ -144,9 +144,9 @@ describe("runSearch withheld-cells guidance", () => {
     expect(out.guidance).toBe(WITHHELD_CELLS_GUIDANCE);
   });
 
-  it("points to premium on /mcp/chatgpt by how the cells look, not what they hold", async () => {
+  it("gives /mcp/chatgpt the same premium guidance as /mcp", async () => {
     const out = await search(new Set(["tako_search", "tako_contents"]), "chatgpt");
-    expect(out.guidance).toBe(CHATGPT_WITHHELD_CELLS_GUIDANCE);
+    expect(out.guidance).toBe(WITHHELD_CELLS_GUIDANCE);
   });
 
   it("names no tako_contents on a connection that registers tako_search alone", async () => {

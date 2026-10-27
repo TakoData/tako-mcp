@@ -21,6 +21,7 @@ import {
   serverInstructionsFor,
 } from "./instructions.js";
 import { GENERIC_SIGN_IN_HINT } from "./tools/_shared_prose.js";
+import { WITHHELD_CELLS_GUIDANCE } from "./tools/_search_results.js";
 import {
   AUTH_INVALID_MESSAGE,
   authModeFor,
@@ -2243,6 +2244,49 @@ describe("caller attribution through handleMcpRequest", () => {
     expect(caller).toBe(
       `channel=mcp, surface=chatgpt, tier=oauth, tool=tako_search, client_ua="${CLIENT_UA}"`,
     );
+  });
+
+  it("gives /mcp/chatgpt the premium guidance in the text channel, not in structuredContent", async () => {
+    const env = prodEnv();
+    const bearer = await mintOAuthBearer(env);
+    mockFetchSequence([
+      jsonResponse(200, {
+        cards: [
+          {
+            card_id: "people",
+            title: "Jane Doe",
+            content: { cost: 0.001, total_rows: 2, truncated: false, premium: false, premium_rows: { person_contact: 2 } },
+          },
+        ],
+        web_results: [],
+        request_id: "r",
+      }),
+      jsonResponse(404, {}),
+    ]);
+    const res = await worker.fetch(
+      new Request("https://mcp.tako.com/mcp/chatgpt", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+          "cf-connecting-ip": "203.0.113.7",
+          authorization: `Bearer ${bearer}`,
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { name: "tako_search", arguments: { query: "Jane Doe" } },
+        }),
+      }),
+      env,
+    );
+    const body = (await res.json()) as {
+      result: { content: Array<{ type: string; text?: string }>; structuredContent: Record<string, unknown> };
+    };
+    const text = body.result.content.map((block) => block.text ?? "").join("\n");
+    expect(text).toContain(WITHHELD_CELLS_GUIDANCE);
+    expect(body.result.structuredContent).not.toHaveProperty("guidance");
   });
 
   it("omits client_ua when the request carries no User-Agent", async () => {

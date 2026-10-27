@@ -44,7 +44,6 @@ import {
   buildSearchOutput,
   takoCardSchema,
   webResultSchema,
-  WITHHELD_CELLS_GUIDANCE,
   type Usage,
 } from "../src/tools/_search_results.js";
 import { type AgentProduct, toPublicRunId } from "../src/tools/_agent_product.js";
@@ -841,7 +840,7 @@ function buildSearchSample(tool: ToolModule): ToolSample {
     SAMPLE_FIXTURE_ENV,
     false,
     "authenticated",
-    { rowCap: null, keepWebText: false, toolName: "tako_search", premiumGuidance: WITHHELD_CELLS_GUIDANCE },
+    { rowCap: null, keepWebText: false, toolName: "tako_search", canRequestPremium: true },
   );
   return {
     // The generic-surface narrowing — what an `/mcp` client's model reads.
@@ -888,7 +887,7 @@ function buildAdvancedSample(tool: ToolModule): ToolSample {
     SAMPLE_FIXTURE_ENV,
     false,
     "authenticated",
-    { rowCap: "all", keepWebText: true, toolName: "tako_search_advanced", premiumGuidance: WITHHELD_CELLS_GUIDANCE },
+    { rowCap: "all", keepWebText: true, toolName: "tako_search_advanced", canRequestPremium: true },
     { answer: raw.answer, structured_output: raw.structured_output },
   );
   return {

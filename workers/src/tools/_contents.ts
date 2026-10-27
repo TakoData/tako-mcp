@@ -142,17 +142,12 @@ export interface ContentsWireItem {
 
 export const CARD_FALLBACK_NOTE = "This card type has no structure of its own, so this is its data as rows.";
 
-export function withheldNote(
-  redactedCells: Record<string, number[]> | null | undefined,
-  canRequestPremium: boolean,
-): string | undefined {
+export function withheldNote(redactedCells: Record<string, number[]> | null | undefined): string | undefined {
   if (redactedCells == null) return undefined;
   const columns = Object.keys(redactedCells).filter((column) => (redactedCells[column] ?? []).length > 0);
   if (columns.length === 0) return undefined;
   const rowCount = new Set(columns.flatMap((column) => redactedCells[column] ?? [])).size;
-  const withheld = `Tako withheld ${columns.map((column) => `\`${column}\``).join(", ")} in ${rowCount} ${rowCount === 1 ? "row" : "rows"}.`;
-  if (!canRequestPremium) return withheld;
-  return `${withheld} To get them, call again with \`premium: true\`, which bills each of those rows.`;
+  return `Tako returned the premium cells in ${columns.map((column) => `\`${column}\``).join(", ")} as \`null\` in ${rowCount} ${rowCount === 1 ? "row" : "rows"}. To get them, call again with \`premium: true\`, which bills each of those rows.`;
 }
 
 export const PREMIUM_REVEAL_NOTE =
@@ -194,7 +189,6 @@ export function projectContentsItem(
     note?: string | undefined;
     cardNote?: string | undefined;
     effectiveMaxChars?: number | undefined;
-    canRequestPremium?: boolean | undefined;
   },
 ): ProjectedContentsItem {
   const isCard = item.content_format != null;
@@ -224,7 +218,7 @@ export function projectContentsItem(
       };
     }
     if (item.card_data != null) card = item.card_data;
-    const notes = [opts.cardNote, withheldNote(item.redacted_cells, opts.canRequestPremium === true), offsetNote(item), revealNote(item)];
+    const notes = [opts.cardNote, withheldNote(item.redacted_cells), offsetNote(item), revealNote(item)];
     const present = notes.filter((part): part is string => part !== undefined);
     note = present.length > 0 ? present.join(" ") : undefined;
   } else if (typeof item.data === "string") {

@@ -180,7 +180,7 @@ describe("slimCardContent — drop-all mode (capRows = null)", () => {
 // `tako_search`'s call shape: no inlined rows, no web page text. Shared by the
 // buildSearchOutput tests below, which exercise guidance and card order rather
 // than the `tako_search_advanced` inline path.
-const OPTS = { rowCap: null, keepWebText: false, toolName: "tako_search", premiumGuidance: WITHHELD_CELLS_GUIDANCE } as const;
+const OPTS = { rowCap: null, keepWebText: false, toolName: "tako_search", canRequestPremium: true } as const;
 
 describe("buildSearchOutput — zero-card guidance", () => {
   const ENV: Env = { DJANGO_BASE_URL: "https://staging.trytako.com" };
@@ -228,10 +228,10 @@ describe("buildSearchOutput — withheld cells", () => {
     expect(out.guidance).toBe(WITHHELD_CELLS_GUIDANCE);
   });
 
-  it("says nothing on a surface whose tako_contents has no premium input", () => {
+  it("says nothing on a connection without tako_contents", () => {
     const out = buildSearchOutput([peopleCard(false, { person_contact: 2 })], [], "r", null, ENV, false, "authenticated", {
       ...OPTS,
-      premiumGuidance: null,
+      canRequestPremium: false,
     });
     expect(out.guidance).toBeUndefined();
   });
@@ -826,7 +826,7 @@ describe("projectCard — the nine-field model-facing card", () => {
         { DJANGO_BASE_URL: "https://staging.trytako.com" },
         false,
         "authenticated",
-        { rowCap: "all", keepWebText: false, toolName: "tako_search_advanced", premiumGuidance: WITHHELD_CELLS_GUIDANCE },
+        { rowCap: "all", keepWebText: false, toolName: "tako_search_advanced", canRequestPremium: true },
       );
       expect(out.cards[0]?.rows, "the bad payload is still dropped").toBeUndefined();
     } finally {

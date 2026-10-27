@@ -258,27 +258,28 @@ function refusePremiumWithoutMaxRows(input: { premium?: boolean | undefined; max
     refinement.addIssue({
       code: "custom",
       path: ["max_rows"],
-      message: "premium needs `max_rows`. Set it to the rows the user wants, because Tako bills each row that holds a withheld cell.",
+      message: "premium needs `max_rows`. Set it to the rows the user wants, because Tako bills each row that holds a premium cell.",
     });
   }
 }
 
+const offsetInput = z
+  .number()
+  .int()
+  .gte(0)
+  .lte(MAX_LINK_ROWS)
+  .optional()
+  .describe("Tako list cards only: rows to skip. With `max_rows: 1`, it fetches a single row.");
+
+const premiumInput = z
+  .boolean()
+  .optional()
+  .describe(
+    "Tako cards only: `true` reveals premium cells, which `tako_search` shows as 🔒 and this tool returns as `null`. Tako bills each row with one, so set it only when the user asks, with `max_rows`.",
+  );
+
 export const chatgptInputSchema = sharedInputSchema
-  .extend({
-    offset: z
-      .number()
-      .int()
-      .gte(0)
-      .lte(MAX_LINK_ROWS)
-      .optional()
-      .describe("Tako list cards only: rows to skip. With `max_rows: 1`, it fetches a single row."),
-    premium: z
-      .boolean()
-      .optional()
-      .describe(
-        "Tako cards only: `true` reveals a card's premium cells. A `tako_search` card shows each one as 🔒, and `tako_contents` returns it as null and names its column in `note`. Tako bills each row that holds one, so set it only when the user asks, with `max_rows` set to the rows they want.",
-      ),
-  })
+  .extend({ offset: offsetInput, premium: premiumInput })
   .superRefine(refusePremiumWithoutMaxRows);
 
 const inputSchema = sharedInputSchema
@@ -293,7 +294,7 @@ const inputSchema = sharedInputSchema
       .enum(["rows", "card"])
       .optional()
       .describe(
-        "Tako cards only. `rows` returns the card's data as one table. `card` returns the card's own structure, such as a company card's tabs or a game's box score. A card type without its own structure returns `rows`. Web pages ignore it.",
+        "Tako cards only. `rows` returns the card's data as one table. `card` returns the card's own structure, such as a company card's tabs or a game's box score.",
       ),
     max_rows: z
       .number()
@@ -304,21 +305,8 @@ const inputSchema = sharedInputSchema
       .describe(
         'Tako cards only: how many rows to return. Omit it to get up to 2,000 rows. With `delivery: "link"`, you can raise it to 100,000. Charges scale with rows returned, so lower it when the recent rows are enough.',
       ),
-    offset: z
-      .number()
-      .int()
-      .gte(0)
-      .lte(MAX_LINK_ROWS)
-      .optional()
-      .describe(
-        "Tako list cards only: rows to skip. With `max_rows: 1`, it fetches one person's row.",
-      ),
-    premium: z
-      .boolean()
-      .optional()
-      .describe(
-        "Tako cards only: `true` returns withheld cells, such as a person's email and phone. Tako bills each row with one, so set it only when the user asks.",
-      ),
+    offset: offsetInput,
+    premium: premiumInput,
   })
   .superRefine((input, refinement) => {
     if (input.max_rows !== undefined && input.max_rows > MAX_CONTENTS_ROWS && input.delivery !== "link") {
@@ -333,7 +321,7 @@ const inputSchema = sharedInputSchema
       refinement.addIssue({
         code: "custom",
         path: ["premium"],
-        message: 'premium needs `format: "rows"`. A card\'s own structure carries no withheld cells.',
+        message: 'premium needs `format: "rows"`. A card\'s own structure carries no premium cells.',
       });
     }
     if (input.format === "card" && input.offset !== undefined && input.offset > 0) {
@@ -485,13 +473,13 @@ async function fetchCard(
   ctx: ToolContext,
 ): Promise<ProjectedContentsItem> {
   try {
-    return projectContentsItem(await postContents(body, ctx), url, { canRequestPremium: true });
+    return projectContentsItem(await postContents(body, ctx), url, {});
   } catch (err) {
     if (!isUnsupportedContentFormat(err)) throw err;
     console.warn("[tako] tako_contents card fallback tool=tako_contents status=422");
   }
   const rowsBody = { ...body, ...wireFormatFor(url, { ...input, format: "rows" }) };
-  return projectContentsItem(await postContents(rowsBody, ctx), url, { cardNote: CARD_FALLBACK_NOTE, canRequestPremium: true });
+  return projectContentsItem(await postContents(rowsBody, ctx), url, { cardNote: CARD_FALLBACK_NOTE });
 }
 
 function parseBackendError(body: string): z.infer<typeof BaseAPIError> | undefined {
@@ -518,7 +506,6 @@ async function fetchPage(
 ): Promise<ProjectedContentsItem> {
   const projected = projectContentsItem(await postContents(body, ctx), url, {
     effectiveMaxChars: body.max_chars,
-    canRequestPremium: true,
     ...(note !== undefined ? { note } : {}),
   });
   // Observability for tuning BATCH_CHAR_BUDGET (a guessed starting number —
@@ -574,7 +561,7 @@ async function postContents(
       const detail = parseBackendError(err.body)?.error_message ?? extractErrorDetail(err.body);
       err.modelGuidance =
         body.premium === true
-          ? `Tako refused this request with \`premium\`${detail !== undefined ? ` (${detail})` : ""}. Fetch the card again without \`premium\`, and if that call succeeds, tell the user that contact details aren't available on this connection.`
+          ? `Tako refused this request with \`premium\`${detail !== undefined ? ` (${detail})` : ""}. Fetch the card again without \`premium\`, and if that call succeeds, tell the user that premium cells aren't available on this connection.`
           : `Tako's export gate refused this card${detail !== undefined ? ` (${detail})` : ""}, so its rows can't be returned on any path — an \`exportable: true\` card can still land here. Read the headline value from the card's \`description\` instead of retrying.`;
       throw err;
     }

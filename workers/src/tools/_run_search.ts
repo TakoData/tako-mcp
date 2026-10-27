@@ -13,11 +13,9 @@ import { AnswerRequest, AnswerResponse, SearchRequest, SearchResponse } from "..
 import { logWireGuardFailure } from "./_log.js";
 import {
   buildSearchOutput,
-  CHATGPT_WITHHELD_CELLS_GUIDANCE,
   type SearchOutputExtras,
   takoCardSchema,
   webResultSchema,
-  WITHHELD_CELLS_GUIDANCE,
   type SearchOutput,
   type SearchToolName,
 } from "./_search_results.js";
@@ -39,11 +37,6 @@ export type SearchEndpoint = "search" | "answer";
 export type SearchCall =
   | { endpoint: "search"; body: z.input<typeof SearchRequest> }
   | { endpoint: "answer"; body: z.input<typeof AnswerRequest> };
-
-function premiumGuidanceFor(ctx: ToolContext): string | null {
-  if (ctx.registeredTools?.has("tako_contents") !== true) return null;
-  return ctx.surface === "chatgpt" ? CHATGPT_WITHHELD_CELLS_GUIDANCE : WITHHELD_CELLS_GUIDANCE;
-}
 
 /**
  * Issue the search and shape the response.
@@ -162,7 +155,7 @@ export async function runSearch(
     ctx.env,
     strictPin,
     ctx.tier ?? "authenticated",
-    { rowCap, keepWebText, toolName, premiumGuidance: premiumGuidanceFor(ctx) },
+    { rowCap, keepWebText, toolName, canRequestPremium: ctx.registeredTools?.has("tako_contents") === true },
     extras,
   );
 }
