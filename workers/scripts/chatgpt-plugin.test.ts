@@ -1,23 +1,25 @@
-import { existsSync, readFileSync, statSync } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { MCP_PATHS } from "../src/surface.js";
+import { surfaceForPath } from "../src/surface.js";
 import {
+  CONNECTED_SERVER_URL,
   MCP_CONFIG_PATH,
   PLUGIN_DIR,
   PLUGIN_MANIFEST_PATH,
   SUBMISSION_PATH,
   packagedManifest,
+  packagedMcpConfig,
   reviewTestCases,
+  writePackageManifests,
   type McpConfig,
   type PluginManifest,
   type Submission,
   type SubmissionTestCase,
 } from "./chatgpt-plugin.js";
-
-const PRODUCTION_ORIGIN = "https://mcp.tako.com";
 
 const MAX_SCREENSHOT_BYTES = 5 * 1024 * 1024;
 const SCREENSHOT_WIDTH_PX = 706;
@@ -81,10 +83,12 @@ function committedMcpConfig(): McpConfig {
   return JSON.parse(readFileSync(MCP_CONFIG_PATH, "utf8")) as McpConfig;
 }
 
-function chatgptSurfaceUrl(): string {
-  const path = [...MCP_PATHS].find(([, surface]) => surface === "chatgpt")?.[0];
-  if (path === undefined) throw new Error("MCP_PATHS has no chatgpt surface");
-  return `${PRODUCTION_ORIGIN}${path}`;
+function mcpConfig(urls: string[]): McpConfig {
+  return {
+    mcpServers: Object.fromEntries(
+      urls.map((url, index) => [`server${index}`, { type: "streamable-http", url }]),
+    ),
+  };
 }
 
 describe("reviewTestCases", () => {
@@ -143,6 +147,44 @@ describe("packagedManifest", () => {
   });
 });
 
+describe("packagedMcpConfig", () => {
+  it("accepts one server at the connected URL", () => {
+    const config = mcpConfig([CONNECTED_SERVER_URL]);
+    expect(packagedMcpConfig(config)).toEqual(config);
+  });
+
+  it("refuses a config with no servers", () => {
+    expect(() => packagedMcpConfig(mcpConfig([]))).toThrow(/exactly one/);
+  });
+
+  it("refuses a config with two servers", () => {
+    expect(() =>
+      packagedMcpConfig(mcpConfig([CONNECTED_SERVER_URL, "https://mcp.tako.com/mcp"])),
+    ).toThrow(/exactly one/);
+  });
+
+  it("refuses a server at another URL", () => {
+    expect(() => packagedMcpConfig(mcpConfig(["https://mcp.tako.com/mcp/openai"]))).toThrow(
+      /OpenAI support/,
+    );
+  });
+});
+
+describe("writePackageManifests", () => {
+  it("writes plugin.json and mcp.json at the package root", () => {
+    const stagingDir = mkdtempSync(join(tmpdir(), "chatgpt-plugin-"));
+    try {
+      writePackageManifests(stagingDir);
+      expect(readdirSync(stagingDir).sort()).toEqual(["mcp.json", "plugin.json"]);
+      expect(JSON.parse(readFileSync(join(stagingDir, "mcp.json"), "utf8"))).toEqual(
+        committedMcpConfig(),
+      );
+    } finally {
+      rmSync(stagingDir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("committed ChatGPT plugin listing", () => {
   const listing = committedManifest().extensions["com.openai"].interface;
 
@@ -161,13 +203,17 @@ describe("committed ChatGPT plugin listing", () => {
     for (const prompt of listing.defaultPrompt) expect(prompt.length).toBeLessThanOrEqual(128);
   });
 
-  it("declares exactly one MCP server, so the portal accepts plugin-level test cases", () => {
-    expect(Object.keys(committedMcpConfig().mcpServers)).toHaveLength(1);
+  it("declares only the connected server, over Streamable HTTP with no headers", () => {
+    expect(Object.values(committedMcpConfig().mcpServers)).toEqual([
+      { type: "streamable-http", url: CONNECTED_SERVER_URL },
+    ]);
   });
 
-  it("declares the connected /mcp/chatgpt server with no headers", () => {
-    const [server] = Object.values(committedMcpConfig().mcpServers);
-    expect(server).toEqual({ type: "streamable-http", url: chatgptSurfaceUrl() });
+  it("keeps the connected server URL on the chatgpt surface", () => {
+    expect(
+      surfaceForPath(new URL(CONNECTED_SERVER_URL).pathname),
+      "OpenAI can't move the connected server through an upload; keep this path in MCP_PATHS",
+    ).toBe("chatgpt");
   });
 
   it("points every screenshot at a packaged 2x PNG under 5 MiB", () => {
