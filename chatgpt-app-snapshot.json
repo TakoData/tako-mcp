@@ -12,7 +12,7 @@
       "output_schema_sha256": "c99944f017b8b94928982d9ac00ed9cd33680441d1d6d60bd50d1e9ec1303270"
     },
     "tako_company_agent": {
-      "description_sha256": "62bd2be5eae61b9083360cd1fd1af8230812b8046d40c019133a78dcd1cde38b",
+      "description_sha256": "d930437e397520bd9ec9905dbbab026c7d2edefb0cdb13057574fac0f9323bad",
       "input_schema_sha256": "fc57f6b733bf892d631cf40c35243bf1fe50150dc4e0ae2b3c15081a6b84a977",
       "output_schema_sha256": "f57b2820d75a252937566d66fd201e5d7a6f5a11103f4cd8e9cdc1035b413e6b"
     },
@@ -27,7 +27,7 @@
       "output_schema_sha256": "3569c618ed16c5e390812f9e4f3e10859fd2fc0b38bf44535b5ed097a9a70b26"
     },
     "tako_search": {
-      "description_sha256": "98b915229affe7bddf90e2f9072726301abc00879e99e651fb6eaf06b99add61",
+      "description_sha256": "a345df73655f0d1e6116aedf752fa6c4d6cf29844eb8502206620e259285c560",
       "input_schema_sha256": "d63574b4b90c302d28014df6c86d545dbc99094c236c8f12167f53d5498a08e0",
       "output_schema_sha256": "01213e17b8451b3ebc3c7be81ee8a3371efe96fc961dd8992c5dfb720a878fc3"
     },

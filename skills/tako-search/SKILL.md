@@ -1,12 +1,12 @@
 ---
 name: tako-search
 description: >-
-  Use when you need to look something up: current events, facts, figures, or pages on any topic. Also use it when the answer needs a calculation over real-world data. Tako searches the live web and a knowledge graph of licensed data in one call, and returns web results, plus a structured, cited card when the graph has one.
+  Use when you need to look something up: current events, facts, figures, or pages on any topic. Also use it when the answer needs a calculation over real-world data. Tako searches the web and a knowledge graph of licensed data in one call, and returns web results, plus a structured, cited card when the graph has one.
 ---
 
 # Tako
 
-Tako searches the live web and a knowledge graph of licensed and public data in one call. The graph covers companies, people, markets, economies, sports, weather, prediction markets, websites, and more, and refreshes much of it during the day. When the graph has the answer, the result leads with a card: a headline value, its source, and a chart. Every search also returns web results. All tools below live on the Tako MCP server (server name `tako`).
+Tako searches the web and a knowledge graph of licensed and public data in one call. The graph covers companies, business professionals, markets, economies, sports, weather, prediction markets, websites, and more, and refreshes much of it during the day. When the graph has the answer, the result leads with a card: a headline value, its source, and a chart. Every search also returns web results. All tools below live on the Tako MCP server (server name `tako`).
 
 ## Look something up
 
@@ -18,18 +18,18 @@ Tako searches the live web and a knowledge graph of licensed and public data in 
 
 If the user asks for Tako's agent and the `tako-agent` skill is installed, follow `tako-agent` instead.
 
-## Find people and companies
+## Find professionals and companies
 
-`tako_search` finds people and company records and returns them as a list card. Each row is one person or company, with their title, employer, location, LinkedIn, and a `tako_url` to their own page. Use it when the user wants people or companies themselves: a list of prospects, or the record of someone they name.
+`tako_search` finds business professionals and companies for B2B research, prospecting, and recruiting, and returns them as a list card. Each row is one professional or company, with their title, employer, location, LinkedIn, and a `tako_url` to their own page. Use it when the user wants the professionals or companies themselves: a list of prospects or candidates, or the professional record of someone they name.
 
-**People by attributes.** Name who and where.
+**Professionals by role and place.** Name who and where.
 
 - Who: a role or title ("engineers", "CFO", "VPs of sales", "head of marketing", "founders", "interns"), or a word for a company's people ("employees", "staff", "leadership team"). "Executives", "leadership", and "management" return C-suite and VP-level people.
 - Where: an employer, a place, or both: "engineers at Stripe", "CFOs in Austin", "engineers at Google in London". A place needs a role, so "people in Austin" returns no list. A role alone ("CFOs") and an employer alone ("Stripe") also return no list.
 - To find who holds a role at one company, search the role and the company: "Airbnb CFO" or "who is the CFO of Airbnb".
 - Give a city its state or country: "engineers in Portland, OR". A bare city name matches every place with that name.
 
-**People by name.** Search the full name alone, such as "Jane Doe". The list holds everyone with that name.
+**A professional by name.** Search the full name alone, such as "Jane Doe". The list holds everyone with that name.
 
 - Leave out everything else the user told you, such as the employer or title. Search reads every word as part of the name, so "Jane Doe Stripe" returns no list. Use those details to pick the person from the rows.
 - Search doesn't match nicknames: "Tim Cook" and "Timothy Cook" return different people. If no row fits, try the other form of the name.
@@ -42,7 +42,7 @@ Then read the list:
 1. The card's `description` doesn't name the matches. To see them, pass the card's url to `tako_contents` with `max_rows` set to the rows the answer needs, such as 25. Fetch the full list, up to 1,000 rows, only when the user asks for it.
 2. Check each row before you use it. A name list holds everyone with that name, and a company name can match more than one company. If more than one row fits the person the user means, ask which one.
 3. Each row's `tako_url` opens that one person or company in Tako. Link it.
-4. Tako withholds contact fields such as `work_email` and `phone`, and the result's `note` names the ones it withheld. Don't tell the user that a person has no email or phone. When the user asks for contact details, call `tako_contents` again with `premium: true`, and set `offset` and `max_rows` to only the rows they want, because Tako bills each of those rows. The row order can change between calls, so check the name on each row you get. After a `premium: true` call, the card's page shows those details to anyone who opens it, so don't link that card unless the user wants to share them. If `tako_contents` has no `premium` input, tell the user that contact details aren't available on this connection.
+4. Tako withholds premium cells, such as business contact fields. A list card shows each one as 🔒, and the result's `note` names the withheld columns. Don't tell the user that a withheld field is empty. When the user asks for those fields, call `tako_contents` again with `premium: true`, and set `offset` and `max_rows` to only the rows they want, because Tako bills each of those rows. The row order can change between calls, so check the name on each row you get. After a `premium: true` call, the card's page shows those cells to anyone who opens it, so don't link that card unless the user wants to share them.
 5. A list can't filter on revenue, investors, registry status, or a company's officers and directors. If the question needs one of those, say so. If the `tako-agent` skill is installed, offer Tako's company agent.
 6. If no list card comes back, tell the user that Tako found no list. If the `tako-agent` skill is installed, offer Tako's company agent.
 
