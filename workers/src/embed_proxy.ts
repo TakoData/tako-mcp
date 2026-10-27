@@ -154,9 +154,12 @@ export const EMBED_DATA_PREFIX = "/embed-data/";
 export const UPSTREAM_DATA_PATH = "/knowledge/get_data/";
 
 /**
- * Upstream fetch bound. The widget shows the PNG until this resolves, so a slow
- * upstream costs an upgrade, never the chart. Deliberately below the ~8 s the
- * widget's own paths use, since this is a page fetch and not a render.
+ * Upstream bound for the embed page and CDN assets. A buffered body (the page,
+ * JavaScript) must arrive whole within it, headers included. A streamed asset
+ * gets it per upstream read, so a stalled CDN aborts mid-body but a client that
+ * reads slowly never does. The widget shows the PNG until the page resolves,
+ * so a slow page costs an upgrade, never the chart. Deliberately below the ~8 s
+ * the widget's own paths use, since this is a page fetch and not a render.
  */
 export const UPSTREAM_TIMEOUT_MS = 6_000;
 
@@ -171,7 +174,7 @@ export const UPSTREAM_TIMEOUT_MS = 6_000;
  * production: ~0.6 s and a ~350 KB body for one tab of a twelve-tab card).
  * `Card.js` imposes no deadline of its own, so this is the only one.
  */
-const DATA_UPSTREAM_TIMEOUT_MS = 20_000;
+export const DATA_UPSTREAM_TIMEOUT_MS = 20_000;
 
 /**
  * Ceiling on the request body this route will forward.
@@ -674,62 +677,61 @@ export async function handleEmbedProxy(
   // back on; a page that ignores it renders exactly as before.
   const upstream = `${origins.publicBase}/embed/${pubId}/?dark_mode=${darkMode}&disable_tracking=true&showShare=true`;
   const { signal, settle } = upstreamDeadline(UPSTREAM_TIMEOUT_MS);
-  let response: Response;
-  try {
-    response = await fetch(upstream, {
-      signal,
-      // No cookies, no auth: the embed page is public, and forwarding
-      // credentials into a proxy whose output crosses into a sandbox would be
-      // a way to leak a session.
-      headers: { accept: "text/html" },
-      // A 3xx is an upstream ERROR here, not an instruction. Following one
-      // would quietly break the guarantee the `handleCdnAssetProxy` docstring
-      // states and this route relies on just as much: the origin is fixed by
-      // configuration. That holds for the request we issue, but not for the
-      // response we serve — with `follow`, the `text/html` gate below, the
-      // sanitizer, and the body itself would all be judging a document from
-      // whatever host the redirect chain ended at, re-served under our origin
-      // with `ACAO: *`. Tako's origin does redirect on this class of path
-      // (canonical-host 301/308, and `redirect("/login")`), so this is not
-      // hypothetical — only currently same-host. `manual` turns a 3xx into a
-      // non-`ok` response, which falls into the error branch below.
-      redirect: "manual",
-      cf: { cacheEverything: true, cacheTtl: UPSTREAM_CACHE_TTL_S },
-    } satisfies CfFetchInit as CfFetchInit);
-  } catch (err) {
-    settle();
-    console.warn(`[mcp] embed proxy upstream failed for ${pubId}:`, err);
-    return textResponse("upstream unavailable", 502);
-  }
-
-  if (!response.ok) {
-    settle();
-    console.warn(
-      `[mcp] embed proxy upstream HTTP ${response.status} for ${pubId}`,
-    );
-    // Propagate not-found as not-found; everything else — a 3xx included, see
-    // `redirect: "manual"` above — is a bad gateway.
-    return textResponse(
-      response.status === 404 ? "chart not found" : "upstream error",
-      response.status === 404 ? 404 : 502,
-    );
-  }
-
-  const contentType = response.headers.get("content-type") ?? "";
-  if (!contentType.includes("text/html")) {
-    settle();
-    console.warn(
-      `[mcp] embed proxy got non-HTML content-type "${contentType}" for ${pubId}`,
-    );
-    return textResponse("upstream returned non-HTML", 502);
-  }
-
   let buffer: ArrayBuffer;
   try {
-    buffer = await response.arrayBuffer();
-  } catch (err) {
-    console.warn(`[mcp] embed proxy upstream body failed for ${pubId}:`, err);
-    return textResponse("upstream unavailable", 502);
+    let response: Response;
+    try {
+      response = await fetch(upstream, {
+        signal,
+        // No cookies, no auth: the embed page is public, and forwarding
+        // credentials into a proxy whose output crosses into a sandbox would be
+        // a way to leak a session.
+        headers: { accept: "text/html" },
+        // A 3xx is an upstream ERROR here, not an instruction. Following one
+        // would quietly break the guarantee the `handleCdnAssetProxy` docstring
+        // states and this route relies on just as much: the origin is fixed by
+        // configuration. That holds for the request we issue, but not for the
+        // response we serve — with `follow`, the `text/html` gate below, the
+        // sanitizer, and the body itself would all be judging a document from
+        // whatever host the redirect chain ended at, re-served under our origin
+        // with `ACAO: *`. Tako's origin does redirect on this class of path
+        // (canonical-host 301/308, and `redirect("/login")`), so this is not
+        // hypothetical — only currently same-host. `manual` turns a 3xx into a
+        // non-`ok` response, which falls into the error branch below.
+        redirect: "manual",
+        cf: { cacheEverything: true, cacheTtl: UPSTREAM_CACHE_TTL_S },
+      } satisfies CfFetchInit as CfFetchInit);
+    } catch (err) {
+      console.warn(`[mcp] embed proxy upstream failed for ${pubId}:`, err);
+      return textResponse("upstream unavailable", 502);
+    }
+
+    if (!response.ok) {
+      console.warn(
+        `[mcp] embed proxy upstream HTTP ${response.status} for ${pubId}`,
+      );
+      // Propagate not-found as not-found; everything else — a 3xx included, see
+      // `redirect: "manual"` above — is a bad gateway.
+      return textResponse(
+        response.status === 404 ? "chart not found" : "upstream error",
+        response.status === 404 ? 404 : 502,
+      );
+    }
+
+    const contentType = response.headers.get("content-type") ?? "";
+    if (!contentType.includes("text/html")) {
+      console.warn(
+        `[mcp] embed proxy got non-HTML content-type "${contentType}" for ${pubId}`,
+      );
+      return textResponse("upstream returned non-HTML", 502);
+    }
+
+    try {
+      buffer = await response.arrayBuffer();
+    } catch (err) {
+      console.warn(`[mcp] embed proxy upstream body failed for ${pubId}:`, err);
+      return textResponse("upstream unavailable", 502);
+    }
   } finally {
     settle();
   }
@@ -1014,22 +1016,23 @@ export function findUpstreamWrite(
 
 interface UpstreamDeadline {
   signal: AbortSignal;
+  arm: () => void;
   settle: () => void;
 }
 
 function upstreamDeadline(boundMs: number): UpstreamDeadline {
   const controller = new AbortController();
-  let timeout: ReturnType<typeof setTimeout> | undefined = setTimeout(
-    () => controller.abort(),
-    boundMs,
-  );
-  return {
-    signal: controller.signal,
-    settle: () => {
-      if (timeout !== undefined) clearTimeout(timeout);
-      timeout = undefined;
-    },
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const settle = () => {
+    if (timeout !== undefined) clearTimeout(timeout);
+    timeout = undefined;
   };
+  const arm = () => {
+    settle();
+    timeout = setTimeout(() => controller.abort(), boundMs);
+  };
+  arm();
+  return { signal: controller.signal, arm, settle };
 }
 
 /**
@@ -1037,14 +1040,14 @@ function upstreamDeadline(boundMs: number): UpstreamDeadline {
  *
  * Two jobs, both about the failure the streaming path used to swallow:
  *
- *   - On a clean end it calls `settle`, which clears the upstream timeout. That
- *     is what makes the upstream timeout bound the whole exchange
- *     rather than time-to-headers: the timer stays armed while the body flows,
- *     so a stalled upstream aborts instead of hanging the tab forever.
+ *   - It bounds each upstream read with the route's deadline: armed when a
+ *     read is issued, settled when it resolves. A stalled upstream aborts
+ *     instead of hanging the client, while a client that reads slowly never
+ *     counts against the bound — the time between pulls is the client's.
  *   - On an error it LOGS, with the route, the subject and the byte count. The
  *     status line is already sent by then, so the client sees a failed read
- *     either way — but before this, that was the only failure on this route
- *     that reached a user with nothing written down anywhere.
+ *     either way — but before this, that was the only failure on a streamed
+ *     route that reached a user with nothing written down anywhere.
  *
  * Constant memory: one chunk in flight, never an accumulated copy.
  */
@@ -1052,8 +1055,9 @@ function countingPassThrough(
   source: ReadableStream<Uint8Array>,
   route: string,
   subject: string,
-  settle: () => void,
+  deadline: UpstreamDeadline,
 ): ReadableStream<Uint8Array> {
+  deadline.settle();
   const reader = source.getReader();
   let seen = 0;
   // An explicit reader loop rather than a `TransformStream`, because the hook
@@ -1063,10 +1067,11 @@ function countingPassThrough(
   // byte count is in scope.
   return new ReadableStream<Uint8Array>({
     async pull(controller) {
+      deadline.arm();
       try {
         const { done, value } = await reader.read();
+        deadline.settle();
         if (done) {
-          settle();
           controller.close();
           return;
         }
@@ -1078,7 +1083,7 @@ function countingPassThrough(
         // An upstream reset, or our own abort firing mid-body. The status line
         // went out long ago, so the client now holds a truncated body — this
         // line is the only record of why, and its absence was the actual gap.
-        settle();
+        deadline.settle();
         console.warn(
           `[mcp] ${route} response stream failed after ${seen}B for ${subject}: ${String(err)}`,
         );
@@ -1089,7 +1094,7 @@ function countingPassThrough(
       // The client went away (a closed tab, a navigated widget). Not a failure,
       // so it is not logged — but the timer has to go, and the upstream body
       // should stop being pulled.
-      settle();
+      deadline.settle();
       void reader.cancel(reason).catch(() => {});
     },
   });
@@ -1201,28 +1206,28 @@ export async function handleEmbedDataProxy(
 
   const upstream = `${origins.publicBase}${UPSTREAM_DATA_PATH}`;
   // NOT cleared when the headers arrive. `Card.js` sets no deadline of its own,
-  // so this is the only bound on the whole exchange — and clearing it in a
-  // `finally` around the fetch made it cover time-to-headers only, leaving a
-  // stalled response body as an unbounded spinner in the tab the user just
-  // clicked. `settle()` below clears it when the body actually finishes.
-  const { signal, settle } = upstreamDeadline(DATA_UPSTREAM_TIMEOUT_MS);
+  // so this is the only bound on the upstream — and clearing it in a `finally`
+  // around the fetch made it cover time-to-headers only, leaving a stalled
+  // response body as an unbounded spinner in the tab the user just clicked.
+  // `countingPassThrough` below re-arms it for every read of the body.
+  const deadline = upstreamDeadline(DATA_UPSTREAM_TIMEOUT_MS);
   let response: Response;
   try {
     response = await fetch(upstream, {
       method: "POST",
-      signal,
+      signal: deadline.signal,
       headers: { "content-type": "application/json", accept: "application/json" },
       body,
       redirect: "manual",
     });
   } catch (err) {
-    settle();
+    deadline.settle();
     console.warn(`[mcp] embed data proxy upstream failed for ${pubId}:`, err);
     return textResponse("upstream unavailable", 502);
   }
 
   if (!response.ok) {
-    settle();
+    deadline.settle();
     console.warn(
       `[mcp] embed data proxy upstream HTTP ${response.status} for ${pubId}` +
         (response.status === 400
@@ -1245,7 +1250,7 @@ export async function handleEmbedDataProxy(
   }
   const upstreamType = response.headers.get("content-type") ?? "";
   if (!upstreamType.toLowerCase().includes("application/json")) {
-    settle();
+    deadline.settle();
     console.warn(
       `[mcp] embed data proxy got non-JSON content-type "${upstreamType}" for ${pubId}`,
     );
@@ -1269,11 +1274,11 @@ export async function handleEmbedDataProxy(
   // profile flat.
   // A 200 with no body at all: nothing will ever call `settle`, so do it here or
   // the abort timer stays armed for the full bound on a request that is finished.
-  if (response.body === null) settle();
+  if (response.body === null) deadline.settle();
   return new Response(
     response.body === null
       ? null
-      : countingPassThrough(response.body, "embed data proxy", pubId, settle),
+      : countingPassThrough(response.body, "embed data proxy", pubId, deadline),
     {
       status: 200,
       headers: {
@@ -1338,6 +1343,11 @@ export function rewriteCdnUrls(
  * Assets are content-hashed and served `immutable` with a one-year max-age
  * upstream, so that is passed straight through — a cold cache costs ~400 KB for
  * `Card.js` plus fonts, and every warm hit is free.
+ *
+ * {@link UPSTREAM_TIMEOUT_MS} bounds the upstream: JavaScript, buffered for the
+ * rewrite, must arrive whole within it; every other asset streams, and only a
+ * single upstream read may take that long. Streamed assets include the ~600 KB
+ * choropleth `geo/*.json` files, so the client's read speed must never count.
  */
 export async function handleCdnAssetProxy(
   request: Request,
@@ -1439,11 +1449,11 @@ export async function handleCdnAssetProxy(
   // so a query could only ever be someone else's. Measured on a real production
   // page, 0 of 9 rewritten urls carried one.
   const upstream = `${cdnBase}/${assetPath}`;
-  const { signal, settle } = upstreamDeadline(UPSTREAM_TIMEOUT_MS);
+  const deadline = upstreamDeadline(UPSTREAM_TIMEOUT_MS);
   let response: Response;
   try {
     response = await fetch(upstream, {
-      signal,
+      signal: deadline.signal,
       // See `handleEmbedProxy` — a 3xx is an upstream error, not an
       // instruction. Following one would make every decision below (the
       // reflected content type, the body, `response.ok`) judge a response from
@@ -1453,12 +1463,12 @@ export async function handleCdnAssetProxy(
       cf: { cacheEverything: true, cacheTtl: UPSTREAM_CACHE_TTL_S },
     } satisfies CfFetchInit as CfFetchInit);
   } catch (err) {
-    settle();
+    deadline.settle();
     console.warn(`[mcp] cdn asset proxy failed for ${assetPath}:`, err);
     return textResponse("upstream unavailable", 502);
   }
   if (!response.ok) {
-    settle();
+    deadline.settle();
     return textResponse(
       "asset not available",
       response.status === 404 ? 404 : 502,
@@ -1520,7 +1530,7 @@ export async function handleCdnAssetProxy(
       console.warn(`[mcp] cdn asset proxy body failed for ${assetPath}:`, err);
       return textResponse("upstream unavailable", 502);
     } finally {
-      settle();
+      deadline.settle();
     }
     if (bytes.byteLength > MAX_JS_REWRITE_BYTES) {
       console.warn(
@@ -1577,11 +1587,11 @@ export async function handleCdnAssetProxy(
   // performance profile, which is the only thing it does.
   headers.set("timing-allow-origin", "*");
   headers.set("x-content-type-options", "nosniff");
-  if (response.body === null) settle();
+  if (response.body === null) deadline.settle();
   return new Response(
     response.body === null
       ? null
-      : countingPassThrough(response.body, "cdn asset proxy", assetPath, settle),
+      : countingPassThrough(response.body, "cdn asset proxy", assetPath, deadline),
     { status: 200, headers },
   );
 }

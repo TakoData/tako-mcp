@@ -31,6 +31,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Env } from "./env.js";
 import {
+  DATA_UPSTREAM_TIMEOUT_MS,
   dataProxyShim,
   findUpstreamWrite,
   handleCdnAssetProxy,
@@ -1674,6 +1675,7 @@ describe("handleEmbedDataProxy", () => {
 describe("the upstream bound covers the body, not only the headers", () => {
   const realSetTimeout = globalThis.setTimeout;
   const STILL_WAITING = "still waiting" as const;
+  const FONT_PATH = "archive/abc/fonts/google/geist/geist.woff2";
 
   function stalledUpstream(contentType: string) {
     return vi.fn().mockImplementation((_url: string, init: RequestInit) => {
@@ -1694,33 +1696,107 @@ describe("the upstream bound covers the body, not only the headers", () => {
     });
   }
 
+  function healthyUpstream(contentType: string, chunks: string[]) {
+    return vi.fn().mockImplementation((_url: string, init: RequestInit) => {
+      let next = 0;
+      const body = new ReadableStream<Uint8Array>(
+        {
+          pull(controller) {
+            if (init.signal?.aborted) controller.error(init.signal.reason);
+            else if (next < chunks.length)
+              controller.enqueue(new TextEncoder().encode(chunks[next++]));
+            else controller.close();
+          },
+        },
+        { highWaterMark: 0 },
+      );
+      return Promise.resolve(
+        new Response(body, {
+          status: 200,
+          headers: { "content-type": contentType },
+        }),
+      );
+    });
+  }
+
   async function outcomeAfterBound<T>(
     pending: Promise<T>,
+    boundMs = UPSTREAM_TIMEOUT_MS,
   ): Promise<T | typeof STILL_WAITING> {
-    await vi.advanceTimersByTimeAsync(UPSTREAM_TIMEOUT_MS);
+    await vi.advanceTimersByTimeAsync(boundMs);
     await new Promise((resolve) => realSetTimeout(resolve, 50));
     return Promise.race([pending, Promise.resolve(STILL_WAITING)]);
   }
 
+  function silencedWarnings() {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    return () => warn.mock.calls.flat().map(String).join(" ");
+  }
+
   afterEach(() => {
     vi.useRealTimers();
+    vi.restoreAllMocks();
   });
 
   it("answers 502 when a JavaScript asset stalls mid-body", async () => {
     vi.useFakeTimers();
-    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const warnings = silencedWarnings();
     vi.stubGlobal("fetch", stalledUpstream("application/javascript"));
     const outcome = await outcomeAfterBound(handleCdnAssetProxy(req(ASSET_PATH), ON));
     expect(outcome).not.toBe(STILL_WAITING);
     expect((outcome as Response | undefined)?.status).toBe(502);
+    expect(warnings()).toContain(
+      "cdn asset proxy body failed for archive/abc/vite_dist/assets/Card.js",
+    );
   });
 
   it("errors a streamed asset's body when it stalls mid-body", async () => {
     vi.useFakeTimers();
-    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const warnings = silencedWarnings();
     vi.stubGlobal("fetch", stalledUpstream("font/woff2"));
+    const res = await handleCdnAssetProxy(req(`/cdn-asset/${FONT_PATH}`), ON);
+    expect(res?.status).toBe(200);
+    const read = res!.text().then(
+      () => "read whole",
+      () => "aborted",
+    );
+    expect(await outcomeAfterBound(read)).toBe("aborted");
+    expect(warnings()).toContain(
+      `cdn asset proxy response stream failed after 13B for ${FONT_PATH}`,
+    );
+  });
+
+  it("serves a streamed asset whole to a client that reads slower than the bound", async () => {
+    vi.useFakeTimers();
+    const warnings = silencedWarnings();
+    const chunks = ['{"type":', '"FeatureCollection",', '"features":[]}'];
+    vi.stubGlobal("fetch", healthyUpstream("application/json", chunks));
     const res = await handleCdnAssetProxy(
-      req("/cdn-asset/archive/abc/fonts/google/geist/geist.woff2"),
+      req("/cdn-asset/archive/abc/geo/countries_features.json"),
+      ON,
+    );
+    const reader = res!.body!.getReader();
+    const received: string[] = [];
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      received.push(new TextDecoder().decode(value));
+      await vi.advanceTimersByTimeAsync(UPSTREAM_TIMEOUT_MS - 1_000);
+    }
+    expect(received.join("")).toBe(chunks.join(""));
+    expect(warnings()).toBe("");
+  });
+
+  it("errors the data route's body when it stalls mid-body", async () => {
+    vi.useFakeTimers();
+    const warnings = silencedWarnings();
+    vi.stubGlobal("fetch", stalledUpstream("application/json"));
+    const res = await handleEmbedDataProxy(
+      new Request(`https://mcp.tako.com/embed-data/${PUB_ID}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: '{"config_type":"x"}',
+      }),
       ON,
     );
     expect(res?.status).toBe(200);
@@ -1728,17 +1804,21 @@ describe("the upstream bound covers the body, not only the headers", () => {
       () => "read whole",
       () => "aborted",
     );
-    expect(await outcomeAfterBound(read)).toBe("aborted");
+    expect(await outcomeAfterBound(read, DATA_UPSTREAM_TIMEOUT_MS)).toBe("aborted");
+    expect(warnings()).toContain(
+      `embed data proxy response stream failed after 13B for ${PUB_ID}`,
+    );
   });
 
   it("answers 502 when the embed page stalls mid-body", async () => {
     vi.useFakeTimers();
-    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const warnings = silencedWarnings();
     vi.stubGlobal("fetch", stalledUpstream("text/html; charset=utf-8"));
     const outcome = await outcomeAfterBound(
       handleEmbedProxy(req(`/embed-html/${PUB_ID}`), ON),
     );
     expect(outcome).not.toBe(STILL_WAITING);
     expect((outcome as Response | undefined)?.status).toBe(502);
+    expect(warnings()).toContain(`embed proxy upstream body failed for ${PUB_ID}`);
   });
 });
