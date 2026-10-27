@@ -203,10 +203,10 @@ describe("committed ChatGPT plugin listing", () => {
     for (const prompt of listing.defaultPrompt) expect(prompt.length).toBeLessThanOrEqual(128);
   });
 
-  it("declares only the connected server, over Streamable HTTP with no headers", () => {
-    expect(Object.values(committedMcpConfig().mcpServers)).toEqual([
-      { type: "streamable-http", url: CONNECTED_SERVER_URL },
-    ]);
+  it("declares only the tako server at the connected URL, over Streamable HTTP with no headers", () => {
+    expect(committedMcpConfig().mcpServers).toEqual({
+      tako: { type: "streamable-http", url: CONNECTED_SERVER_URL },
+    });
   });
 
   it("keeps the connected server URL on the chatgpt surface", () => {
