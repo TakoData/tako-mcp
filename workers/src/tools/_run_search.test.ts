@@ -12,6 +12,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Env } from "../env.js";
 import { jsonResponse, mockFetchSequence, noopSendProgress, requestFrom } from "./__test_helpers.js";
 import { runSearch } from "./_run_search.js";
+import { WITHHELD_CELLS_GUIDANCE } from "./_search_results.js";
 import type { ToolContext } from "./types.js";
 
 const ENV: Env = { DJANGO_BASE_URL: "https://staging.trytako.com" };
@@ -133,14 +134,19 @@ describe("runSearch withheld-cells guidance", () => {
     title: "Jane Doe",
     content: { cost: 0.001, total_rows: 2, truncated: false, premium: false, premium_rows: { person_contact: 2 } },
   };
-  const search = (registeredTools: ReadonlySet<string>) => {
+  const search = (registeredTools: ReadonlySet<string>, surface: ToolContext["surface"] = "generic") => {
     mockFetchSequence([jsonResponse(200, { cards: [peopleCard], web_results: [], request_id: "r" })]);
-    return runSearch({ endpoint: "search", body: { query: "Jane Doe" } }, null, { ...CTX, registeredTools }, "tako_search");
+    return runSearch({ endpoint: "search", body: { query: "Jane Doe" } }, null, { ...CTX, surface, registeredTools }, "tako_search");
   };
 
   it("points to tako_contents premium when the connection registers tako_contents", async () => {
     const out = await search(new Set(["tako_search", "tako_contents"]));
-    expect(out.guidance).toMatch(/`tako_contents` with `premium: true`/);
+    expect(out.guidance).toBe(WITHHELD_CELLS_GUIDANCE);
+  });
+
+  it("gives /mcp/chatgpt the same premium guidance as /mcp", async () => {
+    const out = await search(new Set(["tako_search", "tako_contents"]), "chatgpt");
+    expect(out.guidance).toBe(WITHHELD_CELLS_GUIDANCE);
   });
 
   it("names no tako_contents on a connection that registers tako_search alone", async () => {

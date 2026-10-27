@@ -68,13 +68,15 @@ const card = (over: Record<string, unknown> = {}) => ({
 });
 
 describe("tako_contents input schema", () => {
-  it("takes four parameters — urls, max_rows, max_chars, query", () => {
+  it("takes six parameters — urls, max_rows, max_chars, query, offset, premium", () => {
     // The `/mcp/chatgpt` schema. `mode` and `content_format` are server
     // decisions there (see `fixedInputs`), and the deprecated single `url`
     // went with them.
     expect(Object.keys(chatgptInputSchema.shape).sort()).toEqual([
       "max_chars",
       "max_rows",
+      "offset",
+      "premium",
       "query",
       "urls",
     ]);
@@ -827,9 +829,9 @@ describe("tako_contents delivery and format", () => {
     expect(sentBody(0).content_format).toBe("json_compact");
   });
 
-  it("chatgpt input schema is unchanged", () => {
-    expect(Object.keys(chatgptInputSchema.shape)).toEqual(["urls", "max_rows", "max_chars", "query"]);
-    expect(chatgptInputSchema.shape.max_rows.unwrap().maxValue).toBe(2000);
+  it("chatgpt keeps max_rows at 2,000, since it has no download link", () => {
+    expect(chatgptInputSchema.safeParse({ urls: [cardUrl], max_rows: 2000 }).success).toBe(true);
+    expect(chatgptInputSchema.safeParse({ urls: [cardUrl], max_rows: 2001 }).success).toBe(false);
   });
 });
 
@@ -1034,21 +1036,64 @@ describe("tako_contents premium and offset", () => {
     expect(out.results[0]).not.toHaveProperty("note");
   });
 
-  it("names the withheld cells and the rows that hold them, and points to premium", async () => {
+  it("names the premium cells and the rows that hold them, and points to premium", async () => {
     vi.mocked(djangoPost).mockResolvedValue(peopleCard({ work_email: [0, 1], phone: [0] }));
     const out = await tool.handler(tool.inputSchema.parse({ urls: [cardUrl] }), ctx);
     expect(out.results[0]!.note).toBe(
-      "Tako withheld `work_email`, `phone` in 2 rows. To get them, call again with `premium: true`, which bills each of those rows.",
+      "Tako returned the premium cells in `work_email`, `phone` as `null` in 2 rows. To get them, call again with `premium: true`, which bills each of those rows.",
     );
   });
 
-  it("names the withheld cells on chatgpt without pointing to an input it doesn't have", async () => {
+  it("names the CSV marker, not null, for premium cells in a link download", async () => {
+    vi.mocked(djangoPost).mockResolvedValue({
+      contents: [
+        {
+          content_format: "csv",
+          url: "https://s3/people.csv",
+          expires_at: "2026-10-23T20:00:00+00:00",
+          total_rows: 2,
+          cost: 0.01,
+          source_url: cardUrl,
+          redacted_cells: { phone: [0, 1] },
+        },
+      ],
+      request_id: "r",
+    });
+    const out = await tool.handler(tool.inputSchema.parse({ urls: [cardUrl], delivery: "link" }), ctx);
+    expect(out.results[0]!.note).toBe(
+      "Tako returned the premium cells in `phone` as `[premium: withheld]` in 2 rows. To get them, call again with `premium: true`, which bills each of those rows.",
+    );
+  });
+
+  it("names the premium cells on chatgpt and points to premium", async () => {
     vi.mocked(djangoPost).mockResolvedValue(peopleCard({ phone: [1] }));
     const out = await tool.handler(
       tool.inputSchemaBySurface!.chatgpt!.parse({ urls: [cardUrl] }),
       { ...ctx, surface: "chatgpt" as const },
     );
-    expect(out.results[0]!.note).toBe("Tako withheld `phone` in 1 row.");
+    expect(out.results[0]!.note).toBe(
+      "Tako returned the premium cells in `phone` as `null` in 1 row. To get them, call again with `premium: true`, which bills each of those rows.",
+    );
+  });
+
+  it("refuses premium without max_rows on chatgpt too", () => {
+    const chatgpt = tool.inputSchemaBySurface!.chatgpt!;
+    const parsed = chatgpt.safeParse({ urls: [cardUrl], premium: true });
+    expect(parsed.success).toBe(false);
+    expect(parsed.error!.issues[0]!.path).toEqual(["max_rows"]);
+  });
+
+  it("sends premium and offset to Tako from chatgpt", async () => {
+    vi.mocked(djangoPost).mockResolvedValue(
+      card({ ...peopleCard(null).contents[0], premium: true, premium_rows: { person_contact: 1 }, offset: 2 }),
+    );
+    const out = await tool.handler(
+      tool.inputSchemaBySurface!.chatgpt!.parse({ urls: [cardUrl], premium: true, offset: 2, max_rows: 1 }),
+      { ...ctx, surface: "chatgpt" as const },
+    );
+    const body = vi.mocked(djangoPost).mock.calls[0]![3] as Record<string, unknown>;
+    expect(body).toMatchObject({ premium: true, offset: 2, max_rows: 1 });
+    expect(out.results[0]!.note).toContain(PREMIUM_REVEAL_NOTE);
   });
 
   it("adds no note when nothing was withheld", async () => {

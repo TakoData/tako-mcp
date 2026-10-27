@@ -1346,7 +1346,7 @@ export function withheldDataGuidance(cards: ReadonlyArray<TakoCard>): string | u
 }
 
 export const WITHHELD_CELLS_GUIDANCE =
-  "A card withholds cells, such as each person's email and phone. When the user asks for them, `tako_contents` with `premium: true` returns them and bills each row that holds one.";
+  "A card shows premium cells as 🔒. When the user asks for them, `tako_contents` with `premium: true` returns them and bills each row that holds one.";
 
 export function withheldCellsGuidance(cards: ReadonlyArray<TakoCard>): string | undefined {
   const withholds = cards.some((card) => {

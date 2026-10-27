@@ -228,7 +228,7 @@ describe("buildSearchOutput — withheld cells", () => {
     expect(out.guidance).toBe(WITHHELD_CELLS_GUIDANCE);
   });
 
-  it("says nothing on a surface whose tako_contents has no premium input", () => {
+  it("says nothing on a connection without tako_contents", () => {
     const out = buildSearchOutput([peopleCard(false, { person_contact: 2 })], [], "r", null, ENV, false, "authenticated", {
       ...OPTS,
       canRequestPremium: false,

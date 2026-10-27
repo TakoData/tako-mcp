@@ -11,7 +11,6 @@ import { z } from "zod";
 import { djangoPost } from "../django.js";
 import { AnswerRequest, AnswerResponse, SearchRequest, SearchResponse } from "../generated/schemas.js";
 import { logWireGuardFailure } from "./_log.js";
-import { contentsAcceptsPremium } from "./_surface.js";
 import {
   buildSearchOutput,
   type SearchOutputExtras,
@@ -156,7 +155,7 @@ export async function runSearch(
     ctx.env,
     strictPin,
     ctx.tier ?? "authenticated",
-    { rowCap, keepWebText, toolName, canRequestPremium: contentsAcceptsPremium(ctx.surface) && ctx.registeredTools?.has("tako_contents") === true },
+    { rowCap, keepWebText, toolName, canRequestPremium: ctx.registeredTools?.has("tako_contents") === true },
     extras,
   );
 }
