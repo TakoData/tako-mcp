@@ -6,7 +6,7 @@ description: |
   The data covers finance, markets, company KPIs, economics, website
   traffic, sports, prediction markets, demographics, energy, real estate,
   and more.
-version: 1.5.0
+version: 1.6.0
 license: MIT
 author:
   name: Tako
@@ -82,12 +82,12 @@ tools:
   - name: tako_company_agent
     description: >-
       Run Tako's Company Agent to build a list of companies or people, such as
-      companies by location, industry, status, founding date, funding stage,
-      or size, or the officers, directors, owners, or employees of those
-      companies. It returns a cited answer plus list cards. Opt-in: add the
-      `company_agent` token to the server URL's ?tools= allowlist. The
-      allowlist replaces the default listing, so name the other tools you want
-      too (?tools=search,available_data,company_agent).
+      companies by location, industry, status, founding date, funding stage, or
+      size, or the officers, directors, owners, or employees of those companies.
+      It returns a cited answer plus list cards. Opt-in: add the `company_agent`
+      token to the server URL's ?tools= allowlist. The allowlist replaces the
+      default listing, so name the other tools you want too
+      (?tools=search,available_data,company_agent).
   - name: tako_graph_related
     description: >-
       Explore what a Tako graph node connects to — its metrics, the entities a
