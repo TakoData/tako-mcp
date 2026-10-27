@@ -1040,7 +1040,7 @@ describe("tako_contents premium and offset", () => {
     vi.mocked(djangoPost).mockResolvedValue(peopleCard({ work_email: [0, 1], phone: [0] }));
     const out = await tool.handler(tool.inputSchema.parse({ urls: [cardUrl] }), ctx);
     expect(out.results[0]!.note).toBe(
-      "Tako returned the premium cells in `work_email`, `phone` as `null` in 2 rows. To get them, call again with `premium: true`, which bills each of those rows.",
+      "Tako returned the premium cells in `work_email`, `phone` as `null` in 2 rows. To get them, call again with `premium: true`. Charges scale with those rows.",
     );
   });
 
@@ -1061,7 +1061,7 @@ describe("tako_contents premium and offset", () => {
     });
     const out = await tool.handler(tool.inputSchema.parse({ urls: [cardUrl], delivery: "link" }), ctx);
     expect(out.results[0]!.note).toBe(
-      "Tako returned the premium cells in `phone` as `[premium: withheld]` in 2 rows. To get them, call again with `premium: true`, which bills each of those rows.",
+      "Tako returned the premium cells in `phone` as `[premium: withheld]` in 2 rows. To get them, call again with `premium: true`. Charges scale with those rows.",
     );
   });
 
@@ -1072,7 +1072,7 @@ describe("tako_contents premium and offset", () => {
       { ...ctx, surface: "chatgpt" as const },
     );
     expect(out.results[0]!.note).toBe(
-      "Tako returned the premium cells in `phone` as `null` in 1 row. To get them, call again with `premium: true`, which bills each of those rows.",
+      "Tako returned the premium cells in `phone` as `null` in 1 row. To get them, call again with `premium: true`. Charges scale with those rows.",
     );
   });
 

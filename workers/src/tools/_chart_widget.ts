@@ -132,6 +132,8 @@ export function appUiResourceUri(env: Env): string {
   return safe === "" ? APP_UI_RESOURCE_URI : `${APP_UI_RESOURCE_URI}-${safe}`;
 }
 export const APP_UI_RESOURCE_NAME = "open_chart_ui_widget";
+export const CHART_WIDGET_DESCRIPTION =
+  "Shows a Tako card inline: an interactive chart or a list, with its title, its source, and a link to its page on Tako.";
 
 /**
  * URI template (RFC 6570) for the dynamic-resource variant. Each
@@ -3657,6 +3659,7 @@ export function buildChartAppUiResource(
     // per-call URI overrides.
     uri: appUiResourceUri(env),
     name: APP_UI_RESOURCE_NAME,
+    widgetDescription: CHART_WIDGET_DESCRIPTION,
     // Pin the embed iframe to the env's public web origin — derived from the
     // same value `buildChartUrls` writes into `embed_url`, so the widget's
     // origin check and the URLs it receives cannot disagree. `new URL().origin`

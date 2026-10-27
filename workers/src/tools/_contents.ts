@@ -149,7 +149,7 @@ export function withheldNote(item: ContentsWireItem): string | undefined {
   if (columns.length === 0) return undefined;
   const rowCount = new Set(columns.flatMap((column) => redactedCells[column] ?? [])).size;
   const placeholder = item.content_format === "csv" ? "`[premium: withheld]`" : "`null`";
-  return `Tako returned the premium cells in ${columns.map((column) => `\`${column}\``).join(", ")} as ${placeholder} in ${rowCount} ${rowCount === 1 ? "row" : "rows"}. To get them, call again with \`premium: true\`, which bills each of those rows.`;
+  return `Tako returned the premium cells in ${columns.map((column) => `\`${column}\``).join(", ")} as ${placeholder} in ${rowCount} ${rowCount === 1 ? "row" : "rows"}. To get them, call again with \`premium: true\`. Charges scale with those rows.`;
 }
 
 export const PREMIUM_REVEAL_NOTE =
