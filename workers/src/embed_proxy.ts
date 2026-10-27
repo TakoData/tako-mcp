@@ -157,9 +157,10 @@ export const UPSTREAM_DATA_PATH = "/knowledge/get_data/";
  * Upstream bound for the embed page and CDN assets. A buffered body (the page,
  * JavaScript) must arrive whole within it, headers included. A streamed asset
  * gets it per upstream read, so a stalled CDN aborts mid-body but a client that
- * reads slowly never does. The widget shows the PNG until the page resolves,
- * so a slow page costs an upgrade, never the chart. Deliberately below the ~8 s
- * the widget's own paths use, since this is a page fetch and not a render.
+ * reads slowly never does. A page that misses it fails the live card, and the
+ * widget shows "Couldn't load this chart." with a link to Tako. Deliberately
+ * below the widget's 7 s fetch bound (`PROXIED_CARD_FETCH_TIMEOUT_MS`), so the
+ * proxy's error reaches the widget before the widget's own timeout fires.
  */
 export const UPSTREAM_TIMEOUT_MS = 6_000;
 
