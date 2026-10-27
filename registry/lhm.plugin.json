@@ -129,7 +129,7 @@
             "maximum": 100000
           },
           "premium": {
-            "description": "Tako cards only: `true` returns premium cells, shown as 🔒 and listed in `note`. Charges scale with the rows that hold one, so set it only when the user asks, with `offset` and `max_rows` on just the rows they want.",
+            "description": "Tako cards only: `true` returns premium cells, shown as 🔒 in `tako_search` and listed in `note`. Charges scale with the rows that hold one, so set it only when the user asks, with `offset` and `max_rows` set to only the rows they want.",
             "type": "boolean"
           }
         },
@@ -155,7 +155,7 @@
               "data",
               "web"
             ],
-            "description": "Which corpora to search; default is both. `data` is Tako's knowledge graph, curated from authoritative data sources; `web` is the open web. Keep both unless the user asks for one.",
+            "description": "Which corpora to search; default is both. `data` is Tako's data graph, curated from authoritative data sources; `web` is the open web. Keep both unless the user asks for one.",
             "minItems": 1,
             "type": "array",
             "items": {

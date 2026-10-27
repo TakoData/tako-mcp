@@ -2,6 +2,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { CfWorkerJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/cfworker";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 
 vi.mock("../django.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../django.js")>();
@@ -69,6 +70,12 @@ describe("tako_company_agent", () => {
     expect(tool.description).toContain("Start a run only when the user asks for one: they name Tako's agent or ask for deep or multi-step research with Tako.");
     expect(tool.description).toContain("Otherwise, use `tako_search`, even for a list that search can't fully filter.");
     expect(tool.description).toContain("an ask for Tako's agent to build a list of companies or of their professionals");
+  });
+
+  it("the sources description keeps both corpora unless the user asks for one", () => {
+    const sources = (z.toJSONSchema(tool.inputSchema, { io: "input" }) as { properties: Record<string, { description?: string }> }).properties.sources?.description;
+    expect(sources).toContain("`data` is Tako's data graph, curated from authoritative data sources; `web` is the open web.");
+    expect(sources).toContain("Keep both unless the user asks for one.");
   });
 
   it("posts to the company runs path with cards true and no effort when omitted", async () => {

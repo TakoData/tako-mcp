@@ -5,7 +5,7 @@ Answer this question using Tako: {{args}}
 
 Tako searches proprietary structured data and the full web in the same call (`sources`
 defaults to both), so this works for a curated metric and for anything only the web has.
-Leave `sources` at its default unless you have a confirmed reason to narrow it.
+Keep `sources` at its default unless the user asks for one source.
 
 How to do it:
 

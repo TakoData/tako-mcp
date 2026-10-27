@@ -51,7 +51,7 @@
         },
         "sources": {
           "type": "array",
-          "description": "Which corpora to search; default is both. `data` is Tako's knowledge graph, curated from authoritative data sources; `web` is the open web. Keep both unless the user asks for one. A thread keeps its sources, so omit this on a follow-up."
+          "description": "Which corpora to search; default is both. `data` is Tako's data graph, curated from authoritative data sources; `web` is the open web. Keep both unless the user asks for one. A thread keeps its sources, so omit this on a follow-up."
         },
         "thread_id": {
           "type": "string",
@@ -131,7 +131,7 @@
         },
         "sources": {
           "type": "array",
-          "description": "Which sources to research: `data` for Tako's curated data, `web` for the open web. A new thread uses both. A thread keeps its sources, so omit this on a follow-up."
+          "description": "Which sources to research. `data` is Tako's data graph, curated from authoritative data sources; `web` is the open web. A new thread uses both. Keep both unless the user asks for one. A thread keeps its sources, so omit this on a follow-up."
         },
         "thread_id": {
           "type": "string",
@@ -198,7 +198,7 @@
         },
         "premium": {
           "type": "boolean",
-          "description": "Tako cards only: `true` returns premium cells, shown as 🔒 and listed in `note`. Charges scale with the rows that hold one, so set it only when the user asks, with `offset` and `max_rows` on just the rows they want."
+          "description": "Tako cards only: `true` returns premium cells, shown as 🔒 in `tako_search` and listed in `note`. Charges scale with the rows that hold one, so set it only when the user asks, with `offset` and `max_rows` set to only the rows they want."
         }
       },
       "annotations": {
@@ -275,7 +275,7 @@
         },
         "sources": {
           "type": "array",
-          "description": "Which corpora to search; default is both. `data` is Tako's knowledge graph, curated from authoritative data sources; `web` is the open web. Keep both unless the user asks for one.",
+          "description": "Which corpora to search; default is both. `data` is Tako's data graph, curated from authoritative data sources; `web` is the open web. Keep both unless the user asks for one.",
           "default": [
             "data",
             "web"

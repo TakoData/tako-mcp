@@ -980,6 +980,12 @@ describe("tako_contents premium and offset", () => {
       redacted_cells: redacted,
     });
 
+  it("the premium description scopes a reveal to the rows the user wants", () => {
+    expect((z.toJSONSchema(tool.inputSchema, { io: "input" }) as { properties: Record<string, { description?: string }> }).properties.premium?.description).toContain(
+      "set it only when the user asks, with `offset` and `max_rows` set to only the rows they want.",
+    );
+  });
+
   it("sends premium and offset for a Tako url, and neither for a web url in the same batch", async () => {
     vi.mocked(djangoPost).mockResolvedValueOnce(peopleCard(null)).mockResolvedValueOnce(page("web text"));
     await tool.handler(
@@ -1040,7 +1046,7 @@ describe("tako_contents premium and offset", () => {
     vi.mocked(djangoPost).mockResolvedValue(peopleCard({ work_email: [0, 1], phone: [0] }));
     const out = await tool.handler(tool.inputSchema.parse({ urls: [cardUrl] }), ctx);
     expect(out.results[0]!.note).toBe(
-      "Tako returned the premium cells in `work_email`, `phone` as `null` in 2 rows. To get them, call again with `premium: true`. Charges scale with those rows.",
+      "Tako returned the premium cells in `work_email`, `phone` as `null` in 2 rows. To get them, call again with `premium: true`, and `offset` and `max_rows` set to only the rows the user wants. Charges scale with those rows.",
     );
   });
 
@@ -1061,7 +1067,7 @@ describe("tako_contents premium and offset", () => {
     });
     const out = await tool.handler(tool.inputSchema.parse({ urls: [cardUrl], delivery: "link" }), ctx);
     expect(out.results[0]!.note).toBe(
-      "Tako returned the premium cells in `phone` as `[premium: withheld]` in 2 rows. To get them, call again with `premium: true`. Charges scale with those rows.",
+      "Tako returned the premium cells in `phone` as `[premium: withheld]` in 2 rows. To get them, call again with `premium: true`, and `offset` and `max_rows` set to only the rows the user wants. Charges scale with those rows.",
     );
   });
 
@@ -1072,7 +1078,7 @@ describe("tako_contents premium and offset", () => {
       { ...ctx, surface: "chatgpt" as const },
     );
     expect(out.results[0]!.note).toBe(
-      "Tako returned the premium cells in `phone` as `null` in 1 row. To get them, call again with `premium: true`. Charges scale with those rows.",
+      "Tako returned the premium cells in `phone` as `null` in 1 row. To get them, call again with `premium: true`, and `offset` and `max_rows` set to only the rows the user wants. Charges scale with those rows.",
     );
   });
 

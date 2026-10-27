@@ -29,7 +29,7 @@ import { agentRunOutputShape, type AgentRunOutput } from "./_agent_run.js";
 import { buildChartAppUiResourceFromOutputPubId } from "./_chart_widget.js";
 import { looseArray } from "./_loose_array.js";
 import { renderAgentRunMarkdown } from "./_render_markdown.js";
-import { AGENT_SOURCES_THREAD_RULE } from "./_shared_prose.js";
+import { AGENT_SOURCES_THREAD_RULE, SOURCES_CORPORA_SENTENCE, SOURCES_KEEP_BOTH_SENTENCE } from "./_shared_prose.js";
 import type { AppUiResource, ToolModule } from "./types.js";
 
 const DESCRIPTION = [
@@ -40,7 +40,7 @@ const DESCRIPTION = [
   AGENT_DESCRIPTION_LAST_LINE,
 ].join("\n");
 
-const COMPANY_SOURCES_DESCRIBE = `Which sources to research: \`data\` for Tako's curated data, \`web\` for the open web. A new thread uses both. ${AGENT_SOURCES_THREAD_RULE}`;
+const COMPANY_SOURCES_DESCRIBE = `Which sources to research. ${SOURCES_CORPORA_SENTENCE} A new thread uses both. ${SOURCES_KEEP_BOTH_SENTENCE} ${AGENT_SOURCES_THREAD_RULE}`;
 
 export const inputSchema = z.object({
   query: agentQueryInput,

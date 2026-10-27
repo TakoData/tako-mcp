@@ -12,6 +12,11 @@
  * A tool whose text must differ writes its own constant.
  */
 
+export const SOURCES_CORPORA_SENTENCE =
+  "`data` is Tako's data graph, curated from authoritative data sources; `web` is the open web.";
+
+export const SOURCES_KEEP_BOTH_SENTENCE = "Keep both unless the user asks for one.";
+
 /**
  * `sources` on `tako_search` and `tako_agent`. Both take the same two-corpus
  * enum and route the same way, so the sentence is one string. `tako_agent`
@@ -21,8 +26,7 @@
  * whenever they guess the graph can't hold the answer, for website traffic,
  * a role at a company, or a contact, and Tako's graph holds all three.
  */
-export const SOURCES_DESCRIBE =
-  "Which corpora to search; default is both. `data` is Tako's knowledge graph, curated from authoritative data sources; `web` is the open web. Keep both unless the user asks for one.";
+export const SOURCES_DESCRIBE = `Which corpora to search; default is both. ${SOURCES_CORPORA_SENTENCE} ${SOURCES_KEEP_BOTH_SENTENCE}`;
 
 /** The `sources` rule both agent tools share: a thread's sources are fixed. */
 export const AGENT_SOURCES_THREAD_RULE =

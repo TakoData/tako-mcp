@@ -134,6 +134,12 @@ describe("tako_search is the SIMPLE tool (spec D4)", () => {
     });
   });
 
+  it("the sources description keeps both corpora unless the user asks for one", () => {
+    const sources = (z.toJSONSchema(tako_search.inputSchema, { io: "input" }) as { properties: Record<string, { description?: string }> }).properties.sources?.description;
+    expect(sources).toContain("`data` is Tako's data graph, curated from authoritative data sources; `web` is the open web.");
+    expect(sources).toContain("Keep both unless the user asks for one.");
+  });
+
   it('rejects the retired "tako" source alias', () => {
     expect(tako_search.inputSchema.safeParse({ query: "x", sources: ["tako"] }).success).toBe(false);
     expect(tako_search.inputSchema.safeParse({ query: "x", sources: ["data"] }).success).toBe(true);

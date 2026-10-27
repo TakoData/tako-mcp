@@ -2,6 +2,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { CfWorkerJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/cfworker";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 
 vi.mock("../django.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../django.js")>();
@@ -387,6 +388,12 @@ describe("tako_agent input schema", () => {
       "data",
       "web",
     ]);
+  });
+
+  it("the sources description keeps both corpora unless the user asks for one", () => {
+    const sources = (z.toJSONSchema(tool.inputSchema, { io: "input" }) as { properties: Record<string, { description?: string }> }).properties.sources?.description;
+    expect(sources).toContain("`data` is Tako's data graph, curated from authoritative data sources; `web` is the open web.");
+    expect(sources).toContain("Keep both unless the user asks for one.");
   });
 
   it('rejects the retired "tako" source alias', () => {
