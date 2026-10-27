@@ -1839,6 +1839,7 @@ const WIDGET_HTML = `<!doctype html>
         iframe.setAttribute("scrolling", "no");
         iframe.setAttribute("frameborder", "0");
         iframe.setAttribute("allow", "fullscreen; clipboard-write");
+        iframe.setAttribute("sandbox", "allow-scripts allow-popups allow-popups-to-escape-sandbox");
         iframe.setAttribute("title", slide.title);
         var objectUrl = URL.createObjectURL(new Blob([patched], { type: "text/html" }));
         iframe.src = objectUrl;
@@ -1967,6 +1968,7 @@ const WIDGET_HTML = `<!doctype html>
     var unsettled = carouselSlides.filter(function (s) { return !s.settled; });
     if (unsettled.length === 0) {
       document.removeEventListener("securitypolicyviolation", onCarouselViolation);
+      document.removeEventListener("securitypolicyviolation", onLiveCardViolation);
     }
   }
 

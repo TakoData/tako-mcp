@@ -1897,6 +1897,9 @@ describe("live cards (no window.openai)", () => {
     const frames = m.widgetWin.document.querySelectorAll("#tako-carousel iframe");
     expect(frames).toHaveLength(1);
     expect(mountedFrame(m, 0).getAttribute("src")?.startsWith("blob:")).toBe(true);
+    expect(mountedFrame(m, 0).getAttribute("sandbox")).toBe(
+      "allow-scripts allow-popups allow-popups-to-escape-sandbox",
+    );
     expect(navButton(m, "tako-prev").classList.contains("hidden")).toBe(true);
     expect(navButton(m, "tako-next").classList.contains("hidden")).toBe(true);
     expect(fetchedUrls(stubs)).not.toContain(charts[0]?.image_url);
