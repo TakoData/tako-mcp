@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { Env } from "./env.js";
 import worker from "./index.js";
 import { SERVER_VERSION } from "./mcp.js";
+import { CHART_WIDGET_DESCRIPTION } from "./tools/_chart_widget.js";
 import { CHATGPT_CLOSED_WORLD_TOOLS } from "./tools/_surface.js";
 import { PLUGIN_TOOL_NAMES } from "../scripts/plugin-tool-url.js";
 
@@ -1045,6 +1046,7 @@ describe("worker routing", () => {
     // a different concept we don't need.
     expect(widget?._meta).toMatchObject({
       ui: { csp: { frameDomains: ["http://localhost:8000"] } },
+      "openai/widgetDescription": CHART_WIDGET_DESCRIPTION,
     });
     // Pin `resourceDomains` present for ChatGPT explicitly. This is the
     // one ADDITIVE change to ChatGPT's wire surface in the Claude-widget
@@ -1096,6 +1098,7 @@ describe("worker routing", () => {
     // stays empty and the inner iframe is blocked by the host's CSP.
     expect(item._meta).toMatchObject({
       ui: { csp: { frameDomains: ["http://localhost:8000"] } },
+      "openai/widgetDescription": CHART_WIDGET_DESCRIPTION,
     });
     // Sanity-check the bundle's wire protocol: it MUST listen for the
     // `ui/notifications/tool-result` JSON-RPC method (the post-message

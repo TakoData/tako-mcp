@@ -572,6 +572,13 @@ function registerTool(
     if (Object.keys(csp).length > 0) {
       uiMeta.csp = csp;
     }
+    const resourceMeta: Record<string, unknown> = {
+      ...(Object.keys(uiMeta).length > 0 ? { ui: uiMeta } : {}),
+      ...(ui.widgetDescription !== undefined
+        ? { "openai/widgetDescription": ui.widgetDescription }
+        : {}),
+    };
+    const hasResourceMeta = Object.keys(resourceMeta).length > 0;
     // Resource registration. CSP-allowed iframe domains live on
     // `_meta.ui.csp.frameDomains` (open MCP Apps spec); its sibling
     // `_meta.ui.csp.resourceDomains` allow-lists the origins the
@@ -608,7 +615,7 @@ function registerTool(
           // exact MIME type. Plain "text/html" is treated as a normal
           // resource and won't be sandbox-rendered as a widget.
           mimeType: APP_UI_MIME_TYPE,
-          ...(Object.keys(uiMeta).length > 0 ? { _meta: { ui: uiMeta } } : {}),
+          ...(hasResourceMeta ? { _meta: resourceMeta } : {}),
         },
         // Static bundle — no per-request templating. The widget reads its
         // chart-specific data (pub_id, embed_url, dark_mode, …) from each
@@ -626,8 +633,8 @@ function registerTool(
             mimeType: APP_UI_MIME_TYPE,
             text: ui.html,
           };
-          if (Object.keys(uiMeta).length > 0) {
-            contentItem._meta = { ui: uiMeta };
+          if (hasResourceMeta) {
+            contentItem._meta = resourceMeta;
           }
           return { contents: [contentItem] };
         },
@@ -655,7 +662,7 @@ function registerTool(
         new ResourceTemplate(dynamic.uriPattern, { list: undefined }),
         {
           mimeType: APP_UI_MIME_TYPE,
-          ...(Object.keys(uiMeta).length > 0 ? { _meta: { ui: uiMeta } } : {}),
+          ...(hasResourceMeta ? { _meta: resourceMeta } : {}),
         },
         async (uri, variables) => {
           const html = await dynamic.renderHtml(variables, ctx);
@@ -669,8 +676,8 @@ function registerTool(
             mimeType: APP_UI_MIME_TYPE,
             text: html,
           };
-          if (Object.keys(uiMeta).length > 0) {
-            contentItem._meta = { ui: uiMeta };
+          if (hasResourceMeta) {
+            contentItem._meta = resourceMeta;
           }
           return { contents: [contentItem] };
         },

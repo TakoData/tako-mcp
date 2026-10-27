@@ -239,6 +239,11 @@ export interface AppUiResource {
    */
   connectDomains?: string[];
   /**
+   * What the widget shows, as `_meta["openai/widgetDescription"]` on the
+   * resource. Every tool that renders this widget shares it.
+   */
+  widgetDescription?: string;
+  /**
    * Optional dynamic-resource variant — registered as a `ResourceTemplate`
    * (one URI per per-call substitution). Used when the widget needs to
    * have call-specific data (chart image, dimensions) baked into the HTML
