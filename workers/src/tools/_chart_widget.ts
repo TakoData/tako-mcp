@@ -1978,15 +1978,20 @@ const WIDGET_HTML = `<!doctype html>
       setIframeHeight(slide.iframe, h);
       slide.iframe.classList.remove("veiled");
     }
-    growCarouselHeight();
+    fitCarouselHeight(slide.live === true);
   }
 
-  function growCarouselHeight() {
+  var notifiedCarouselHeight = 0;
+  function fitCarouselHeight(shrinkable) {
     var tallest = 0;
     carouselSlides.forEach(function (s) {
       if (s.revealed && s.height > tallest) tallest = s.height;
     });
-    if (tallest > highestNotifiedHeight) {
+    var resized = shrinkable
+      ? tallest > 0 && tallest !== notifiedCarouselHeight
+      : tallest > highestNotifiedHeight;
+    if (resized) {
+      notifiedCarouselHeight = tallest;
       notifyHeight(tallest);
       log("carousel resized", { height: tallest });
     }
