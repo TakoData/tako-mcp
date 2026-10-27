@@ -16,7 +16,7 @@
         "idempotentHint": true
       },
       "justifications": {
-        "read_only_justification": "Searches Tako's data index and the live web and returns matching cards and links; it modifies no record and no external state.",
+        "read_only_justification": "Searches Tako's data index and the web and returns matching cards and links; it modifies no record and no external state.",
         "open_world_justification": "Reaches the live public web on every call, a system outside Tako's first-party context; it only reads from it and publishes nothing.",
         "destructive_justification": "Read-only: deletes, overwrites, sends, and publishes nothing, so there is no outcome to undo.",
         "idempotent_justification": "Repeating the same search returns results and changes nothing; no additional effect on any state."

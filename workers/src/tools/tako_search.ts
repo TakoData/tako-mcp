@@ -35,7 +35,7 @@ import { type SearchOutput, withTopChartDims } from "./_search_results.js";
 import type { AppUiResource, ToolContentBlock, ToolContext, ToolModule } from "./types.js";
 
 const DESCRIPTION = [
-  "Search Tako's data graph and the live web in one call: many results at once, as structured cards plus web results. The first card's chart renders inline; some hosts also show every other card's chart, in search's order.",
+  "Search Tako's data graph and the web in one call: many results at once, as structured cards plus web results. The first card's chart renders inline; some hosts also show every other card's chart, in search's order.",
   "",
   "It finds results; `tako_contents` fetches what's behind them. Each card carries a headline value, node ids, and a url — pass the url to `tako_contents` for rows (`exportable: true` cards) or a web result's full page text. When `exportable` is false the rows are locked — read the headline value from the card's `description`.",
   "",

@@ -2001,7 +2001,7 @@ NVIDIA Corporation operates as a data center scale AI infrastructure company. Th
 
 Description:
 
-Search Tako's data graph and the live web in one call: many results at once, as structured cards plus web results. The first card's chart renders inline; some hosts also show every other card's chart, in search's order.
+Search Tako's data graph and the web in one call: many results at once, as structured cards plus web results. The first card's chart renders inline; some hosts also show every other card's chart, in search's order.
 
 It finds results; `tako_contents` fetches what's behind them. Each card carries a headline value, node ids, and a url — pass the url to `tako_contents` for rows (`exportable: true` cards) or a web result's full page text. When `exportable` is false the rows are locked — read the headline value from the card's `description`.
 
@@ -2594,7 +2594,7 @@ usage: $0.015
 
 Description:
 
-Get one citation-backed answer (`include_answer: true`), or search Tako's data graph and the live web with the whole v3 request: per-source counts, inline card rows, graph pins, web domain and category filters, and the deep effort tier.
+Get one citation-backed answer (`include_answer: true`), or search Tako's data graph and the web with the whole v3 request: per-source counts, inline card rows, graph pins, web domain and category filters, and the deep effort tier.
 
 Only `query` is required; an omitted field takes the server default its description names. Naming a source block (even `{}`) selects it; omit both to search data and web. `data.include_contents` inlines each card's rows, billed per card — cap with `data.max_rows`, or fetch a card's rows with `tako_contents` instead.
 

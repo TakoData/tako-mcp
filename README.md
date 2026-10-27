@@ -372,12 +372,12 @@ Step 2: Add this Claude skill
 ---
 name: tako-search
 description: >-
-  Use when you need to look something up: current events, facts, figures, or pages on any topic. Also use it when the answer needs a calculation over real-world data. Tako searches the live web and a knowledge graph of licensed data in one call, and returns web results, plus a structured, cited card when the graph has one.
+  Use when you need to look something up: current events, facts, figures, or pages on any topic. Also use it when the answer needs a calculation over real-world data. Tako searches the web and a knowledge graph of licensed data in one call, and returns web results, plus a structured, cited card when the graph has one.
 ---
 
 # Tako
 
-Tako searches the live web and a knowledge graph of licensed and public data in one call. The graph covers companies, business professionals, markets, economies, sports, weather, prediction markets, websites, and more, and refreshes much of it during the day. When the graph has the answer, the result leads with a card: a headline value, its source, and a chart. Every search also returns web results. All tools below live on the Tako MCP server installed in Step 1.
+Tako searches the web and a knowledge graph of licensed and public data in one call. The graph covers companies, business professionals, markets, economies, sports, weather, prediction markets, websites, and more, and refreshes much of it during the day. When the graph has the answer, the result leads with a card: a headline value, its source, and a chart. Every search also returns web results. All tools below live on the Tako MCP server installed in Step 1.
 
 ## Look something up
 
