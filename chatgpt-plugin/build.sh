@@ -9,12 +9,12 @@ output="$package_dir/dist/tako-chatgpt-plugin-$version.zip"
 staging="$(mktemp -d)"
 trap 'rm -rf "$staging"' EXIT
 
-(cd "$repo_root/workers" && npx tsx scripts/chatgpt-plugin.ts "$staging/plugin.json")
+(cd "$repo_root/workers" && npx tsx scripts/chatgpt-plugin.ts "$staging")
 mkdir -p "$staging/skills"
 cp -R "$repo_root/skills/." "$staging/skills/"
 cp -R "$package_dir/assets" "$staging/assets"
 
 mkdir -p "$package_dir/dist"
 rm -f "$output"
-(cd "$staging" && zip -qrX "$output" plugin.json skills assets)
+(cd "$staging" && zip -qrX "$output" .)
 echo "$output"

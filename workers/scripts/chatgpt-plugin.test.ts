@@ -1,14 +1,21 @@
-import { existsSync, readFileSync, statSync } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { surfaceForPath } from "../src/surface.js";
 import {
+  CONNECTED_SERVER_URL,
+  MCP_CONFIG_PATH,
   PLUGIN_DIR,
   PLUGIN_MANIFEST_PATH,
   SUBMISSION_PATH,
   packagedManifest,
+  packagedMcpConfig,
   reviewTestCases,
+  writePackageManifests,
+  type McpConfig,
   type PluginManifest,
   type Submission,
   type SubmissionTestCase,
@@ -72,6 +79,18 @@ function committedSubmission(): Submission {
   return JSON.parse(readFileSync(SUBMISSION_PATH, "utf8")) as Submission;
 }
 
+function committedMcpConfig(): McpConfig {
+  return JSON.parse(readFileSync(MCP_CONFIG_PATH, "utf8")) as McpConfig;
+}
+
+function mcpConfig(urls: string[]): McpConfig {
+  return {
+    mcpServers: Object.fromEntries(
+      urls.map((url, index) => [`server${index}`, { type: "streamable-http", url }]),
+    ),
+  };
+}
+
 describe("reviewTestCases", () => {
   it("renames the submission fields to the package's review fields", () => {
     expect(reviewTestCases(submission())).toEqual({
@@ -128,6 +147,44 @@ describe("packagedManifest", () => {
   });
 });
 
+describe("packagedMcpConfig", () => {
+  it("accepts one server at the connected URL", () => {
+    const config = mcpConfig([CONNECTED_SERVER_URL]);
+    expect(packagedMcpConfig(config)).toEqual(config);
+  });
+
+  it("refuses a config with no servers", () => {
+    expect(() => packagedMcpConfig(mcpConfig([]))).toThrow(/exactly one/);
+  });
+
+  it("refuses a config with two servers", () => {
+    expect(() =>
+      packagedMcpConfig(mcpConfig([CONNECTED_SERVER_URL, "https://mcp.tako.com/mcp"])),
+    ).toThrow(/exactly one/);
+  });
+
+  it("refuses a server at another URL", () => {
+    expect(() => packagedMcpConfig(mcpConfig(["https://mcp.tako.com/mcp/openai"]))).toThrow(
+      /OpenAI support/,
+    );
+  });
+});
+
+describe("writePackageManifests", () => {
+  it("writes plugin.json and mcp.json at the package root", () => {
+    const stagingDir = mkdtempSync(join(tmpdir(), "chatgpt-plugin-"));
+    try {
+      writePackageManifests(stagingDir);
+      expect(readdirSync(stagingDir).sort()).toEqual(["mcp.json", "plugin.json"]);
+      expect(JSON.parse(readFileSync(join(stagingDir, "mcp.json"), "utf8"))).toEqual(
+        committedMcpConfig(),
+      );
+    } finally {
+      rmSync(stagingDir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("committed ChatGPT plugin listing", () => {
   const listing = committedManifest().extensions["com.openai"].interface;
 
@@ -144,6 +201,19 @@ describe("committed ChatGPT plugin listing", () => {
     expect(listing.longDescription.length).toBeLessThanOrEqual(4000);
     expect(listing.defaultPrompt.length).toBeLessThanOrEqual(3);
     for (const prompt of listing.defaultPrompt) expect(prompt.length).toBeLessThanOrEqual(128);
+  });
+
+  it("declares only the tako server at the connected URL, over Streamable HTTP with no headers", () => {
+    expect(committedMcpConfig().mcpServers).toEqual({
+      tako: { type: "streamable-http", url: CONNECTED_SERVER_URL },
+    });
+  });
+
+  it("keeps the connected server URL on the chatgpt surface", () => {
+    expect(
+      surfaceForPath(new URL(CONNECTED_SERVER_URL).pathname),
+      "OpenAI can't move the connected server through an upload; keep this path in MCP_PATHS",
+    ).toBe("chatgpt");
   });
 
   it("points every screenshot at a packaged 2x PNG under 5 MiB", () => {
