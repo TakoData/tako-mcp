@@ -2,7 +2,7 @@
   "name": "Tako",
   "description": "Premium live data from authoritative providers and web search in one call. Search returns cited charts and web results, and Tako also reports what data it holds on an entity or metric, fetches the rows or page text behind a result, and explores its data graph. Tako's Answer Agent, Company Agent, chart creation, and synthesized answers are opt-in; each skill below names the URL that turns it on.",
   "url": "https://mcp.tako.com/mcp",
-  "version": "1.6.0",
+  "version": "1.6.1",
   "capabilities": {
     "streaming": true,
     "pushNotifications": false
