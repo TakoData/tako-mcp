@@ -41,6 +41,13 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/BaseAPIError'
+        '403':
+          description: 'The request sent `zdr: true`, and the account isn''t enabled
+            for zero data retention. To turn it on, contact support@tako.com.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BaseAPIError'
         '408':
           description: The request exceeded the processing time limit.
           content:
@@ -115,6 +122,13 @@ paths:
                 $ref: '#/components/schemas/BaseAPIError'
         '401':
           description: Missing or invalid API key.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BaseAPIError'
+        '403':
+          description: 'The request sent `zdr: true`, and the account isn''t enabled
+            for zero data retention. To turn it on, contact support@tako.com.'
           content:
             application/json:
               schema:
@@ -506,9 +520,11 @@ paths:
               schema:
                 $ref: '#/components/schemas/BaseAPIError'
         '403':
-          description: Action not permitted for this resource. For a data export,
+          description: 'Action not permitted for this resource. For a data export,
             either a data provider does not permit export, or Tako cannot confirm
-            the data sources for the card. The message states which.
+            the data sources for the card. Or the request sent `zdr: true`, and the
+            account isn''t enabled for zero data retention; contact support@tako.com
+            to turn it on. The message states which.'
           content:
             application/json:
               schema:
@@ -2011,6 +2027,16 @@ components:
             a description and no data points. An account that isn't served variable-cost
             data always gets placeholders, whatever it sends. To get a placeholder's
             data, request the card's URL from POST /api/v1/contents.
+        zdr:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Zdr
+          description: Request zero data retention. Set it to true and Tako keeps
+            no copy of the query in its logs or saved cards, and limits web retrieval
+            to its zero-data-retention provider. Available only to accounts that Tako
+            has enabled; any other account gets a 403. To turn it on, contact support@tako.com.
+            Omit it for standard retention.
         output_schema:
           anyOf:
           - additionalProperties: true
@@ -3031,6 +3057,16 @@ components:
             joined with ' … ', and max_chars doesn't apply. Tako card URLs reject
             it, and so do accounts whose web provider can't return highlights. It
             bills at the same flat rate as full text.
+        zdr:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Zdr
+          description: Request zero data retention. Set it to true and Tako keeps
+            no copy of the URL in its logs, and fetches a web page only through its
+            zero-data-retention provider. Available only to accounts that Tako has
+            enabled; any other account gets a 403. To turn it on, contact support@tako.com.
+            Omit it for standard retention.
       additionalProperties: false
       type: object
       required:
@@ -3421,6 +3457,7 @@ components:
       - Football Conferences
       - Football Divisions
       - Ice Hockey Teams
+      - Ice Hockey Players
       - Ice Hockey Conferences
       - Ice Hockey Divisions
       - Sports
@@ -4990,6 +5027,16 @@ components:
             a description and no data points. An account that isn't served variable-cost
             data always gets placeholders, whatever it sends. To get a placeholder's
             data, request the card's URL from POST /api/v1/contents.
+        zdr:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Zdr
+          description: Request zero data retention. Set it to true and Tako keeps
+            no copy of the query in its logs or saved cards, and limits web retrieval
+            to its zero-data-retention provider. Available only to accounts that Tako
+            has enabled; any other account gets a 403. To turn it on, contact support@tako.com.
+            Omit it for standard retention.
       additionalProperties: false
       type: object
       required:
