@@ -34,7 +34,7 @@ import {
 import { AgentInputError, runIdInputSchema } from "./_agent_product.js";
 import { agentRunOutputShape, type AgentRunOutput } from "./_agent_run.js";
 import { buildChartAppUiResourceFromOutputPubId } from "./_chart_widget.js";
-import { type Source, pinnedField, soleSource } from "./_input_pins.js";
+import { type InputPins, SOURCE_VALUES, type Source, pinnedField, soleSource } from "./_input_pins.js";
 import { looseArray } from "./_loose_array.js";
 import { renderAgentRunMarkdown } from "./_render_markdown.js";
 import { AGENT_SOURCES_THREAD_RULE, SOURCES_DESCRIBE } from "./_shared_prose.js";
@@ -69,7 +69,7 @@ export const inputSchema = z.object({
   // _loose_array.ts.
   sources: looseArray(
     z
-      .array(z.enum(["data", "web"]))
+      .array(z.enum(SOURCE_VALUES))
       .min(1)
       .optional()
       .describe(`${SOURCES_DESCRIBE} ${AGENT_SOURCES_THREAD_RULE}`),
@@ -118,7 +118,9 @@ const takoAgent = {
   name: "tako_agent",
   description: DESCRIPTION,
   inputSchema,
-  inputPins: { sources: pinnedField("sources", describeAnswerAgent) },
+  inputPins: { sources: pinnedField("sources") },
+  describeForPins: (pins: InputPins) =>
+    pins.sources === undefined ? DESCRIPTION : describeAnswerAgent(pins.sources),
   // Advertised schema = the PROJECTED shape, typed field by field
   // (`_agent_run.ts`). `agentRunSchema` stays the internal shape the wait
   // validates the wire against; `projectAgentRun` maps it to this one, so no

@@ -79,7 +79,7 @@ import {
   renderSearchMarkdown,
   searchAdvancedOutputShape,
 } from "./_render_markdown.js";
-import { type InputPinApplier, type Source, soleSource } from "./_input_pins.js";
+import { type InputPinApplier, type InputPins, type Source, soleSource } from "./_input_pins.js";
 import type { SearchOutput } from "./_search_results.js";
 import { runSearch, type SearchCall, type SearchEndpoint } from "./_run_search.js";
 import type { ToolModule } from "./types.js";
@@ -106,24 +106,31 @@ const advancedDescription = (lead: string, usage: string): string =>
     "Best for: a written answer (`include_answer` puts it in `answer`), or a call `tako_search` can't express. `output_schema` fills a JSON Schema from the evidence into `structured_output`.",
   ].join("\n");
 
+const advancedLead = (searched: string, features: string): string =>
+  `Get one citation-backed answer (\`include_answer: true\`), or search ${searched} with the whole v3 request: ${features}, and the deep effort tier.`;
+
+const DATA_FEATURES = "per-source counts, inline card rows, graph pins";
+const WEB_FEATURES = "web domain and category filters";
+const BOTH_SOURCES_LEAD = advancedLead("Tako's data graph and the web", `${DATA_FEATURES}, ${WEB_FEATURES}`);
+
 const DESCRIPTION = advancedDescription(
-  "Get one citation-backed answer (`include_answer: true`), or search Tako's data graph and the web with the whole v3 request: per-source counts, inline card rows, graph pins, web domain and category filters, and the deep effort tier.",
+  BOTH_SOURCES_LEAD,
   `${QUERY_REQUIRED_SENTENCE} Naming a source block (even \`{}\`) selects it; omit both to search data and web. ${INCLUDE_CONTENTS_SENTENCE}`,
 );
 
 const PINNED_DESCRIPTIONS: Record<Source, string> = {
   data: advancedDescription(
-    "Get one citation-backed answer (`include_answer: true`), or search Tako's data graph with the whole v3 request: per-source counts, inline card rows, graph pins, and the deep effort tier.",
+    advancedLead("Tako's data graph", DATA_FEATURES),
     `${QUERY_REQUIRED_SENTENCE} This connection searches Tako data only. ${INCLUDE_CONTENTS_SENTENCE}`,
   ),
   web: advancedDescription(
-    "Get one citation-backed answer (`include_answer: true`), or search the web with the whole v3 request: web domain and category filters, and the deep effort tier.",
+    advancedLead("the web", WEB_FEATURES),
     `${QUERY_REQUIRED_SENTENCE} This connection searches the web only.`,
   ),
 };
 
 const BOTH_PINNED_DESCRIPTION = advancedDescription(
-  "Get one citation-backed answer (`include_answer: true`), or search Tako's data graph and the web with the whole v3 request: per-source counts, inline card rows, graph pins, web domain and category filters, and the deep effort tier.",
+  BOTH_SOURCES_LEAD,
   `${QUERY_REQUIRED_SENTENCE} Every call searches data and web; a block sets that source's options. ${INCLUDE_CONTENTS_SENTENCE}`,
 );
 
@@ -323,6 +330,11 @@ const outputSettingsBlock = z
   .optional()
   .describe(SearchRequest.shape.output_settings.unwrap().description ?? "");
 
+const LOCATION_DESCRIBE =
+  "End-user coordinates, for queries whose location is implicit (weather). A location named in the query wins";
+const DATA_BLOCK_DESCRIBE = "Tako data (card) source settings";
+const WEB_BLOCK_DESCRIBE = "Web source settings";
+
 const inputObject = z
   .object({
     // DERIVED, like every other field here. Re-authoring it as
@@ -356,16 +368,10 @@ const inputObject = z
     variable_cost: topLevel.variable_cost.describe(
       "Web traffic and SEO data, which adds a per-unit charge. Default true; false gets placeholders.",
     ),
-    location: topLevel.location.describe(
-      "End-user coordinates, for queries whose location is implicit (weather). A location named in the query wins; web results follow country_code.",
-    ),
+    location: topLevel.location.describe(`${LOCATION_DESCRIBE}; web results follow country_code.`),
     output_settings: outputSettingsBlock,
-    data: dataBlock
-      .optional()
-      .describe("Tako data (card) source settings; naming it selects the data graph."),
-    web: webBlock
-      .optional()
-      .describe("Web source settings; naming it selects the web."),
+    data: dataBlock.optional().describe(`${DATA_BLOCK_DESCRIBE}; naming it selects the data graph.`),
+    web: webBlock.optional().describe(`${WEB_BLOCK_DESCRIBE}; naming it selects the web.`),
     // An INTEGER, 1-20 — the maximum number of suggestions — and search-only.
     // `/v1/answer` accepts the field and returns no `related`, verified against
     // staging on 2026-08-31, so an `include_answer` call that sets it gets
@@ -441,8 +447,17 @@ const withRequestChecks = <S extends z.ZodObject<z.ZodRawShape> & z.ZodType<Requ
 const inputSchema = withRequestChecks(inputObject);
 
 const PINNED_SCHEMAS: Record<Source, z.ZodObject<z.ZodRawShape>> = {
-  data: withRequestChecks(inputObject.omit({ web: true })),
-  web: withRequestChecks(inputObject.omit({ data: true })),
+  data: withRequestChecks(
+    inputObject.omit({ web: true }).extend({
+      location: topLevel.location.describe(`${LOCATION_DESCRIBE}.`),
+      data: dataBlock.optional().describe(`${DATA_BLOCK_DESCRIBE}.`),
+    }),
+  ),
+  web: withRequestChecks(
+    inputObject.omit({ data: true, variable_cost: true }).extend({
+      web: webBlock.optional().describe(`${WEB_BLOCK_DESCRIBE}.`),
+    }),
+  ),
 };
 
 const sourcesPin: InputPinApplier<readonly Source[]> = {
@@ -455,7 +470,6 @@ const sourcesPin: InputPinApplier<readonly Source[]> = {
       ...Object.entries(input),
       ...sources.filter((source) => input[source] === undefined).map((source) => [source, {}]),
     ]),
-  description: describeSearchAdvanced,
   note: "Pins the sources for the whole connection: an unpinned source's block leaves this tool's schema, and every call searches each pinned source.",
 };
 
@@ -547,6 +561,8 @@ const tako_search_advanced = {
   description: DESCRIPTION,
   inputSchema,
   inputPins: { sources: sourcesPin },
+  describeForPins: (pins: InputPins) =>
+    pins.sources === undefined ? DESCRIPTION : describeSearchAdvanced(pins.sources),
   outputSchema,
   annotations: {
     title: "Tako: Search (advanced)",

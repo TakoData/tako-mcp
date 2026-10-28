@@ -49,6 +49,9 @@ describe("instructions on a connection that pins sources", () => {
     );
     expect(text).not.toContain("Default sources");
     expect(text).not.toContain("`tako_search` finds cards");
+    expect(text).toMatch(/^Tako searches the web\. /);
+    expect(text).not.toContain("knowledge graph");
+    expect(text).not.toContain("Coverage includes");
   });
 
   it("states a data,web pin", () => {

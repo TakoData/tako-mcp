@@ -6,14 +6,14 @@ description: >-
 
 # Tako
 
-Tako searches the web and a knowledge graph of licensed and public data in one call. The graph covers companies, business professionals, markets, economies, sports, weather, prediction markets, websites, and more, and refreshes much of it during the day. When the graph has the answer, the result leads with a card: a headline value, its source, and a chart. Every search also returns web results. All tools below live on the Tako MCP server (server name `tako`).
+Tako searches the web and a knowledge graph of licensed and public data in one call. The graph covers companies, business professionals, markets, economies, sports, weather, prediction markets, websites, and more, and refreshes much of it during the day. When the graph has the answer, the result leads with a card: a headline value, its source, and a chart. A search also returns web results unless the connection searches Tako data only. All tools below live on the Tako MCP server (server name `tako`).
 
 ## Look something up
 
 1. Search first. Call `tako_search` once per question, naming the entity and what you want: "Apple revenue", "Lakers last game score", "US CPI inflation", "EU AI Act timeline". For a comparison, name both entities in one query: "Nvidia vs AMD gross margin". Run independent searches in parallel.
 2. Query website traffic by domain: "netflix.com monthly visits", not "Netflix website visits".
 3. If a card comes back, check that it answers the question: the same entity, metric, and unit. For example, operating income isn't operating margin. Read the value from the card's `description`. To compute something from the card's rows, such as a growth rate, an average, or a correlation, follow **Compute over a series**.
-4. If no card answers the question, answer from the web results. To read a page in full, pass its url to `tako_contents`.
+4. If no card answers the question, answer from the web results. To read a page in full, pass its url to `tako_contents`. If there are no web results either, tell the user that Tako found nothing for it.
 5. If a name is ambiguous, such as "Costco" or "Coca-Cola", and the question doesn't settle which entity, ask before quoting a number.
 
 If the user asks for Tako's agent and the `tako-agent` skill is installed, follow `tako-agent` instead.
@@ -44,7 +44,7 @@ Then read the list:
 3. Each row's `tako_url` opens that one person or company in Tako. Link it.
 4. Tako withholds premium cells, such as business contact fields. A list card shows each one as 🔒, and the result's `note` names the withheld columns. Don't tell the user that a withheld field is empty. When the user asks for those fields, call `tako_contents` again with `premium: true` for only the rows they want, because Tako bills each of those rows. For one row, pass that row's `tako_url` with `max_rows: 1`, and Tako returns only that row. For several rows, set `offset` and `max_rows` instead. The row order can change between calls, so check the name on each row you get.
 5. A list can't filter on revenue, investors, registry status, or a company's officers and directors. If the question needs one of those, say so. If the `tako-agent` skill is installed, offer Tako's company agent.
-6. If no list card comes back, tell the user that Tako found no list. If the `tako-agent` skill is installed, offer Tako's company agent.
+6. If no list card comes back, follow the result's `guidance` when it has one. Otherwise, tell the user that Tako found no list. If the `tako-agent` skill is installed, offer Tako's company agent.
 
 ## Compute over a series
 

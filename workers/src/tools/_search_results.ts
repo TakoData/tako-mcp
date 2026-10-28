@@ -1332,6 +1332,16 @@ export const STRICT_PIN_GUIDANCE = [
 ].join(" ");
 
 /**
+ * Guidance for a search with no cards on a connection whose URL pins `sources`
+ * to the web. The model can't see the pin in the result, and zero cards there
+ * says nothing about Tako's coverage.
+ */
+export const WEB_PIN_GUIDANCE = [
+  "No data cards: this connection searches the web only, so zero cards says nothing about Tako's coverage.",
+  "Don't tell the user that Tako has no data for it.",
+].join(" ");
+
+/**
  * Guidance for a keyless search that returned a placeholder card. A keyless
  * connection never opts in to variable-cost sources (`buildSearchBody`), so the
  * backend withholds those cards' data, and the placeholder text says only that

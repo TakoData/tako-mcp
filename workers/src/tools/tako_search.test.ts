@@ -27,6 +27,7 @@ import type { Env } from "../env.js";
 import { SearchRequest } from "../generated/schemas.js";
 import type { AnyToolModule, ToolContext } from "./types.js";
 import tako_search, { buildSearchBody, describeSearch } from "./tako_search.js";
+import { inputSchemaForConnection } from "./_input_pins.js";
 import tako_search_advanced from "./tako_search_advanced.js";
 import { GENERIC_SIGN_IN_HINT } from "./_shared_prose.js";
 import {
@@ -792,5 +793,12 @@ describe("describeSearch for a connection that pins sources", () => {
 
   it("keeps the default description for a data,web pin", () => {
     expect(describeSearch(["data", "web"])).toBe(tako_search.description);
+  });
+
+  it("drops the website-traffic query hint on a web pin", () => {
+    const queryOn = (sources: readonly ("data" | "web")[]) =>
+      inputPropertyDescription(inputSchemaForConnection(tako_search, "generic", { sources }), "query");
+    expect(queryOn(["web"])).not.toContain("Website-traffic");
+    expect(queryOn(["data"])).toBe(inputPropertyDescription(tako_search.inputSchema, "query"));
   });
 });

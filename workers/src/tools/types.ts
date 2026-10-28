@@ -435,6 +435,11 @@ export interface ToolModule<
   /** Inputs a `/mcp` URL parameter can pin for the whole connection, keyed by MCP input name. */
   inputPins?: InputPinAppliers;
   /**
+   * The description on a connection that applies `pins`. Returns `description`
+   * when no pin changes what this tool can reach.
+   */
+  describeForPins?: (pins: InputPins) => string;
+  /**
    * Answer this tool's calls over SSE on the generic surface so
    * `ctx.sendProgress` reaches the client. The chatgpt surface, and every
    * other tool's calls, get a buffered JSON response.
@@ -567,6 +572,8 @@ export interface AnyToolModule {
   fixedInputs?: ReadonlyArray<FixedInput>;
   /** URL-pinnable inputs — see {@link ToolModule.inputPins}. */
   inputPins?: InputPinAppliers;
+  /** Pin-aware description — see {@link ToolModule.describeForPins}. */
+  describeForPins?: (pins: InputPins) => string;
   /** SSE responses for progress — see {@link ToolModule.streamsProgress}. */
   streamsProgress?: true;
   /** Anonymous-input gate — see {@link ToolModule.anonymousInputRejects}. */

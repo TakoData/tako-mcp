@@ -231,11 +231,17 @@ export function createMcpServer(
     );
   }
   const tier = options.tier ?? ctx.tier ?? "authenticated";
-  const listedTools = resolveToolSet(options.surface, options.requestedToolNames ?? null);
-  const pins = effectivePins(
-    TOOL_REGISTRY.filter((tool) => listedTools.has(tool.name)),
-    options.inputPins ?? NO_PINS,
-  );
+  // Which tools appear on which surface lives in `tools/_surface.ts`,
+  // shared with `gen-registry.ts` so the `chatgpt-app-submission.json`
+  // parity check and `docs/TOOLS.md` describe the exact set this loop
+  // registers.
+  const surface = options.surface;
+  const requestedToolNames = options.requestedToolNames ?? null;
+  // Resolved ONCE, and handed to every tool: `registerTool` stamps it onto
+  // the per-call context so a tool result cannot name a tool this loop did
+  // not register. Same call that drives `isToolOnSurface` below.
+  const registeredTools = resolveToolSet(surface, requestedToolNames);
+  const pins = connectionPins(surface, registeredTools, options.inputPins ?? NO_PINS);
 
   const server = new McpServer(
     {
@@ -254,7 +260,7 @@ export function createMcpServer(
       // connection cannot call (see `serverInstructionsFor`). NOT by tier:
       // the host loads this string once, so a tier-specific variant would
       // outlive a mid-conversation sign-in (see `instructions.ts`).
-      instructions: serverInstructionsFor(listedTools, pins),
+      instructions: serverInstructionsFor(registeredTools, pins),
     },
   );
 
@@ -278,17 +284,6 @@ export function createMcpServer(
   // `registerResource` call after the first.
   const registeredResourceUris = new Set<string>();
   const registeredTemplateNames = new Set<string>();
-
-  // Which tools appear on which surface lives in `tools/_surface.ts`,
-  // shared with `gen-registry.ts` so the `chatgpt-app-submission.json`
-  // parity check and `docs/TOOLS.md` describe the exact set this loop
-  // registers.
-  const surface = options.surface;
-  const requestedToolNames = options.requestedToolNames ?? null;
-  // Resolved ONCE, and handed to every tool: `registerTool` stamps it onto
-  // the per-call context so a tool result cannot name a tool this loop did
-  // not register. Same call that drives `isToolOnSurface` below.
-  const registeredTools = resolveToolSet(surface, requestedToolNames);
 
   for (const tool of TOOL_REGISTRY) {
     // Deliberately tier-blind: the listing is auth-invariant (spec D4);
@@ -317,7 +312,7 @@ export function createMcpServer(
     });
   }
 
-  registerSkills(server, skillsForSurface(surface, registeredTools, undefined, pins));
+  registerSkills(server, skillsForSurface(surface, registeredTools));
 
   return server;
 }
@@ -488,7 +483,7 @@ function registerTool(
   // the wire" is the guard.
   const config: Record<string, unknown> = {
     title: tool.annotations.title,
-    description: descriptionForConnection(tool, options.surface, options.pins),
+    description: descriptionForConnection(tool, options.pins),
     inputSchema: inputSchemaForConnection(tool, options.surface, options.pins),
     annotations: toolAnnotationsForSurface(tool, options.surface),
   };
@@ -849,12 +844,7 @@ function registerTool(
       // `isMeteredJsonRpcBody` reads THIS SAME hook so the per-IP limiter does
       // not charge for a call that never runs. Rebuilding that later is far
       // more expensive than keeping ten dormant lines.
-      const pinnedInput = applyInputPins(
-        tool,
-        options.surface,
-        options.pins,
-        input as Record<string, unknown>,
-      );
+      const pinnedInput = applyInputPins(tool, options.pins, input as Record<string, unknown>);
       if (callCtx.tier === "free" && tool.anonymousInputRejects !== undefined) {
         const reason = tool.anonymousInputRejects(pinnedInput);
         if (reason !== undefined) {
@@ -1677,8 +1667,12 @@ export async function handleMcpRequest(
         }`,
       );
     }
+    const registeredTools = resolveToolSet(surface, requestedToolNames);
+    const pins = connectionPins(surface, registeredTools, inputPins);
     if (Object.keys(inputPins).length > 0) {
-      console.log(`[mcp] pins ${describePins(inputPins)} surface=${surface}`);
+      console.log(
+        `[mcp] pins param=${describePins(inputPins)} surface=${surface} resolved=${describePins(pins)}`,
+      );
     }
     const peekedBody = await peekJsonBody(request);
     const declaredUi =
@@ -1698,11 +1692,10 @@ export async function handleMcpRequest(
       surface,
       clientRendersUi,
       requestedToolNames,
-      inputPins,
+      inputPins: pins,
       tier,
     });
-    const registeredTools = resolveToolSet(surface, requestedToolNames);
-    logToolInputRejections(peekedBody, registeredTools, surface, inputPins);
+    logToolInputRejections(peekedBody, registeredTools, surface, pins);
     const streamingTool = streamingToolCallName(peekedBody);
     const surfaceRendersProgress = surface !== "chatgpt";
     const streamsProgress =
@@ -1794,6 +1787,19 @@ function invalidInputPinResponse(message: string): Response {
   return new Response(
     JSON.stringify({ jsonrpc: "2.0", id: null, error: { code: -32602, message } }),
     { status: 400, headers: { "Content-Type": "application/json; charset=utf-8" } },
+  );
+}
+
+/** The pins a connection applies to its registered tools; `/mcp/chatgpt` applies none. */
+function connectionPins(
+  surface: Surface,
+  registeredTools: ReadonlySet<string>,
+  pins: InputPins,
+): InputPins {
+  return effectivePins(
+    TOOL_REGISTRY.filter((tool) => registeredTools.has(tool.name)),
+    surface,
+    pins,
   );
 }
 

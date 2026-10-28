@@ -21,6 +21,7 @@ import {
   projectCandidate,
   projectMatch,
   promotionEligible,
+  searchReachFor,
   searchToolFor,
   selectCoverage,
   topOfEachKind,
@@ -216,6 +217,16 @@ describe("searchToolFor", () => {
     // Non-HTTP callers (tests, scripts) have no surface; the defaults carry
     // tako_search, so that is the answer rather than a null handle.
     expect(searchToolFor(undefined)).toBe("tako_search");
+  });
+});
+
+describe("searchReachFor", () => {
+  it("leaves the source a pin removes without a search tool", () => {
+    const registered = new Set(["tako_available_data", "tako_search"]);
+    expect(searchReachFor(registered, undefined)).toEqual({ cards: "tako_search", web: "tako_search" });
+    expect(searchReachFor(registered, { sources: ["data"] })).toEqual({ cards: "tako_search", web: null });
+    expect(searchReachFor(registered, { sources: ["web"] })).toEqual({ cards: null, web: "tako_search" });
+    expect(searchReachFor(new Set(["tako_available_data"]), undefined)).toEqual({ cards: null, web: null });
   });
 });
 

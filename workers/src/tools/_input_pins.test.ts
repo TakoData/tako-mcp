@@ -5,6 +5,7 @@ import {
   describePins,
   descriptionForConnection,
   effectivePins,
+  everySinglePin,
   inputSchemaForConnection,
   NO_PINS,
   pinnedField,
@@ -72,10 +73,11 @@ describe("connection resolvers", () => {
     query: z.string(),
     sources: z.array(z.enum(SOURCE_VALUES)).optional(),
   });
-  const pinnable = {
+  const pinnable: Pick<AnyToolModule, "description" | "inputSchema" | "inputPins" | "describeForPins"> = {
     description: "unpinned",
     inputSchema: schema,
-    inputPins: { sources: pinnedField("sources", (v) => `pinned ${v.join(",")}`) },
+    inputPins: { sources: pinnedField("sources") },
+    describeForPins: (pins) => (pins.sources === undefined ? "unpinned" : `pinned ${pins.sources.join(",")}`),
   };
   const unpinnable: Pick<AnyToolModule, "description" | "inputSchema" | "inputPins"> = {
     description: "plain",
@@ -91,35 +93,32 @@ describe("connection resolvers", () => {
 
   it("replaces a model-supplied value with the pinned one", () => {
     expect(
-      applyInputPins(pinnable, "generic", { sources: ["data"] }, { query: "q", sources: ["web"] }),
+      applyInputPins(pinnable, { sources: ["data"] }, { query: "q", sources: ["web"] }),
     ).toEqual({ query: "q", sources: ["data"] });
   });
 
   it("describes the tool for the pinned value", () => {
-    expect(descriptionForConnection(pinnable, "generic", { sources: ["web"] })).toBe("pinned web");
-    expect(descriptionForConnection(pinnable, "generic", NO_PINS)).toBe("unpinned");
+    expect(descriptionForConnection(pinnable, { sources: ["web"] })).toBe("pinned web");
+    expect(descriptionForConnection(pinnable, NO_PINS)).toBe("unpinned");
+    expect(descriptionForConnection(unpinnable, { sources: ["web"] })).toBe("plain");
   });
 
-  it("ignores pins on the chatgpt surface", () => {
-    const pins = { sources: ["data"] as const };
-    expect(inputSchemaForConnection(pinnable, "chatgpt", pins)).toBe(schema);
-    expect(descriptionForConnection(pinnable, "chatgpt", pins)).toBe("unpinned");
-    expect(applyInputPins(pinnable, "chatgpt", pins, { query: "q", sources: ["web"] })).toEqual({
-      query: "q",
-      sources: ["web"],
-    });
+  it("applies no pins on the chatgpt surface", () => {
+    expect(effectivePins([pinnable], "chatgpt", { sources: ["data"] })).toEqual(NO_PINS);
   });
 
   it("ignores pins a tool doesn't declare", () => {
     expect(inputSchemaForConnection(unpinnable, "generic", { sources: ["data"] })).toBe(schema);
-    expect(applyInputPins(unpinnable, "generic", { sources: ["data"] }, { query: "q" })).toEqual({
+    expect(applyInputPins(unpinnable, { sources: ["data"] }, { query: "q" })).toEqual({
       query: "q",
     });
   });
 
   it("keeps only pins that a listed tool declares", () => {
-    expect(effectivePins([unpinnable], { sources: ["data"] })).toEqual({});
-    expect(effectivePins([unpinnable, pinnable], { sources: ["data"] })).toEqual({ sources: ["data"] });
+    expect(effectivePins([unpinnable], "generic", { sources: ["data"] })).toEqual({});
+    expect(effectivePins([unpinnable, pinnable], "generic", { sources: ["data"] })).toEqual({
+      sources: ["data"],
+    });
   });
 });
 
@@ -139,8 +138,8 @@ describe("sources pin parity with each tool's own schema", () => {
   it("accepts every value the URL accepts", () => {
     for (const tool of declaring) {
       const field = tool.inputSchema.shape.sources!;
-      for (const value of [["data"], ["web"], ["data", "web"]]) {
-        expect(z.safeParse(field, value).success, `${tool.name} ${value.join(",")}`).toBe(true);
+      for (const { sources } of everySinglePin()) {
+        expect(z.safeParse(field, sources).success, `${tool.name} ${String(sources)}`).toBe(true);
       }
     }
   });

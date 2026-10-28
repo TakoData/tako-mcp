@@ -2,7 +2,8 @@
  * The `initialize` instructions: the one string the host puts in the
  * model's system prompt. ONE string for every tier; what narrows it is the
  * RESOLVED TOOLSET — `?tools=` and the surface's own default listing — which
- * drops sentences naming tools this connection does not register.
+ * drops sentences naming tools this connection does not register, and the
+ * connection's URL pins, which state the sources it searches.
  *
  * TIER-INVARIANT ON PURPOSE. A free-tier variant used to say "this connection
  * is anonymous: X and Y are the tools that run here" and that `tako_contents`
@@ -165,15 +166,16 @@ const DEFAULT_SOURCES_SENTENCE =
 const COVERAGE_SENTENCE =
   "Coverage includes finance, markets, company KPIs, economics, website traffic, sports, weather, elections, prediction markets, demographics, energy, real estate, health, and more.";
 
-const PINNED_SOURCE_SENTENCES: Record<Source, { lead: string; sources: string }> = {
-  data: {
-    lead: "Tako searches a proprietary knowledge graph of live structured data.",
-    sources: "On this connection, searches and agent runs use Tako data only and return no web results.",
-  },
-  web: {
-    lead: INSTRUCTION_LEAD,
-    sources: "On this connection, searches and agent runs use the web only and return no Tako data cards.",
-  },
+const PINNED_SOURCE_SENTENCES: Record<Source, readonly string[]> = {
+  data: [
+    "Tako searches a proprietary knowledge graph of live structured data.",
+    "On this connection, searches and agent runs use Tako data only and return no web results.",
+    COVERAGE_SENTENCE,
+  ],
+  web: [
+    "Tako searches the web.",
+    "On this connection, searches and agent runs use the web only and return no Tako data cards.",
+  ],
 };
 
 const BOTH_PINNED_SOURCES_SENTENCE =
@@ -182,11 +184,11 @@ const BOTH_PINNED_SOURCES_SENTENCE =
 function sharedInstructionParagraph(sources: readonly Source[] | undefined): string {
   if (sources === undefined) return [INSTRUCTION_LEAD, DEFAULT_SOURCES_SENTENCE, COVERAGE_SENTENCE].join(" ");
   const only = soleSource(sources);
-  const { lead, sources: sourcesSentence } =
+  const sentences =
     only === undefined
-      ? { lead: INSTRUCTION_LEAD, sources: BOTH_PINNED_SOURCES_SENTENCE }
+      ? [INSTRUCTION_LEAD, BOTH_PINNED_SOURCES_SENTENCE, COVERAGE_SENTENCE]
       : PINNED_SOURCE_SENTENCES[only];
-  return [lead, sourcesSentence, COVERAGE_SENTENCE].join(" ");
+  return sentences.join(" ");
 }
 
 /**

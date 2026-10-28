@@ -317,7 +317,7 @@ claude mcp add tako --transport http "https://mcp.tako.com/mcp?tools=search,avai
 - **Claude Code plugin and Gemini CLI extension:** each pins the default surface plus `tako_agent`, `tako_company_agent`, and `tako_visualize` (`?tools=search,available_data,contents,graph_related,agent,company_agent,visualize`), and its URL isn't user-editable. For a different set, add the server yourself with `claude mcp add` as above, and keep only one Tako connection active so you don't get two copies of every tool. Claude Code stores a sign-in for each server URL, so after you update the Claude Code plugin from 1.5.0 or earlier, sign in again: run `/mcp`, select `tako`, and choose **Authenticate**.
 - **`/mcp/chatgpt` ignores `?tools=`**: its listing is fixed — `tako_search`, `tako_available_data`, `tako_contents`, `tako_visualize`, `tako_graph_related`, `tako_agent`, `tako_company_agent`.
 
-**`?sources=` fixes the sources for the whole connection.** Use it to evaluate Tako data on its own. `?sources=data` searches Tako data only, `?sources=web` searches the web only, and `?sources=data,web` always searches both. It applies to `tako_search`, `tako_search_advanced`, `tako_agent`, and `tako_company_agent`: the `sources` input (or, on `tako_search_advanced`, the other source's block) leaves the tool's schema, and every call sends the fixed value, agent thread follow-ups included. `tako_contents`, `tako_available_data`, and `tako_graph_related` aren't affected, so for web only, combine it with `?tools=`: `?tools=search&sources=web`.
+**`?sources=` pins the sources for the whole connection.** Use it to evaluate Tako data on its own. `?sources=data` searches Tako data only, `?sources=web` searches the web only, and `?sources=data,web` always searches both. It applies to `tako_search`, `tako_search_advanced`, `tako_agent`, and `tako_company_agent`: the `sources` input (or, on `tako_search_advanced`, the other source's block) leaves the tool's schema, and every call sends the pinned value, agent thread follow-ups included. `tako_contents`, `tako_available_data`, and `tako_graph_related` take no `sources` input. For web only, you can also drop the graph tools with `?tools=`: `?tools=search&sources=web`.
 
 ```bash
 claude mcp add tako --transport http "https://mcp.tako.com/mcp?sources=data"
@@ -389,14 +389,14 @@ description: >-
 
 # Tako
 
-Tako searches the web and a knowledge graph of licensed and public data in one call. The graph covers companies, business professionals, markets, economies, sports, weather, prediction markets, websites, and more, and refreshes much of it during the day. When the graph has the answer, the result leads with a card: a headline value, its source, and a chart. Every search also returns web results. All tools below live on the Tako MCP server installed in Step 1.
+Tako searches the web and a knowledge graph of licensed and public data in one call. The graph covers companies, business professionals, markets, economies, sports, weather, prediction markets, websites, and more, and refreshes much of it during the day. When the graph has the answer, the result leads with a card: a headline value, its source, and a chart. A search also returns web results unless the connection searches Tako data only. All tools below live on the Tako MCP server installed in Step 1.
 
 ## Look something up
 
 1. Search first. Call `tako_search` once per question, naming the entity and what you want: "Apple revenue", "Lakers last game score", "US CPI inflation", "EU AI Act timeline". For a comparison, name both entities in one query: "Nvidia vs AMD gross margin". Run independent searches in parallel.
 2. Query website traffic by domain: "netflix.com monthly visits", not "Netflix website visits".
 3. If a card comes back, check that it answers the question: the same entity, metric, and unit. For example, operating income isn't operating margin. Read the value from the card's `description`. To compute something from the card's rows, such as a growth rate, an average, or a correlation, follow **Compute over a series**.
-4. If no card answers the question, answer from the web results. To read a page in full, pass its url to `tako_contents`.
+4. If no card answers the question, answer from the web results. To read a page in full, pass its url to `tako_contents`. If there are no web results either, tell the user that Tako found nothing for it.
 5. If a name is ambiguous, such as "Costco" or "Coca-Cola", and the question doesn't settle which entity, ask before quoting a number.
 
 If the user asks for Tako's agent and the `tako-agent` skill is installed, follow `tako-agent` instead.
@@ -427,7 +427,7 @@ Then read the list:
 3. Each row's `tako_url` opens that one person or company in Tako. Link it.
 4. Tako withholds premium cells, such as business contact fields. A list card shows each one as 🔒, and the result's `note` names the withheld columns. Don't tell the user that a withheld field is empty. When the user asks for those fields, call `tako_contents` again with `premium: true` for only the rows they want, because Tako bills each of those rows. For one row, pass that row's `tako_url` with `max_rows: 1`, and Tako returns only that row. For several rows, set `offset` and `max_rows` instead. The row order can change between calls, so check the name on each row you get.
 5. A list can't filter on revenue, investors, registry status, or a company's officers and directors. If the question needs one of those, say so. If the `tako-agent` skill is installed, offer Tako's company agent.
-6. If no list card comes back, tell the user that Tako found no list. If the `tako-agent` skill is installed, offer Tako's company agent.
+6. If no list card comes back, follow the result's `guidance` when it has one. Otherwise, tell the user that Tako found no list. If the `tako-agent` skill is installed, offer Tako's company agent.
 
 ## Compute over a series
 

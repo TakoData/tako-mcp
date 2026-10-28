@@ -210,7 +210,16 @@ describe("tako_company_agent on a connection that pins sources", () => {
       "searches company registries and business profiles over several steps",
     );
     expect(describeCompanyAgent(["web"])).toContain("searches the web over several steps");
+    expect(describeCompanyAgent(["web"])).not.toContain("registries");
     expect(describeCompanyAgent(["data", "web"])).toBe(tool.description);
+  });
+
+  it("names only the pinned source in the low-effort text", () => {
+    const effortOn = (sources: readonly ("data" | "web")[]) =>
+      inputPropertyDescription(inputSchemaForConnection(tool, "generic", { sources }), "effort");
+    expect(effortOn(["data"])).toContain("`low` answers from the company registry only");
+    expect(effortOn(["web"])).toContain("`low` answers from the web only");
+    expect(effortOn(["data", "web"])).toBe(inputPropertyDescription(tool.inputSchema, "effort"));
   });
 
   it("sends the pinned sources on a thread follow-up", () => {
@@ -219,7 +228,7 @@ describe("tako_company_agent on a connection that pins sources", () => {
       query: "and in Texas?",
       thread_id: "cde6ed80-ab7d-464b-baa9-793fcb418a62",
     });
-    const input = applyInputPins(tool, "generic", pins, parsed) as Parameters<typeof buildCompanyAgentBody>[0];
+    const input = applyInputPins(tool, pins, parsed) as Parameters<typeof buildCompanyAgentBody>[0];
     expect(buildCompanyAgentBody(input).source_indexes).toEqual(["data"]);
   });
 });

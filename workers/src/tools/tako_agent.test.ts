@@ -445,7 +445,7 @@ describe("tako_agent on a connection that pins sources", () => {
       query: "and in 2024?",
       thread_id: "6f1c1d2e-3a4b-4c5d-8e9f-0a1b2c3d4e5f",
     });
-    const input = applyInputPins(tool, "generic", pins, parsed) as Parameters<typeof buildAgentBody>[0];
+    const input = applyInputPins(tool, pins, parsed) as Parameters<typeof buildAgentBody>[0];
     expect(buildAgentBody(input).source_indexes).toEqual(["data"]);
   });
 });

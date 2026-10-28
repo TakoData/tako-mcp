@@ -3065,6 +3065,17 @@ describe("URL-pinned sources", () => {
     expect(body.error.message).toContain('"sources"');
   });
 
+  it("applies a valid value to the listing it serves", async () => {
+    const res = await postToolsList("/mcp?sources=data");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      result: { tools: Array<{ name: string; description: string; inputSchema: { properties: object } }> };
+    };
+    const search = body.result.tools.find((tool) => tool.name === "tako_search");
+    expect(search?.inputSchema.properties).not.toHaveProperty("sources");
+    expect(search?.description).toContain("This connection returns no web results.");
+  });
+
   it("ignores the parameter on the chatgpt surface", async () => {
     expect((await postToolsList("/mcp/chatgpt?sources=dta")).status).not.toBe(400);
   });
@@ -3107,11 +3118,12 @@ describe("URL-pinned sources in instructions and skills", () => {
     }
   }
 
-  it("states a data pin in the instructions and the skills", async () => {
-    const { instructions, skillTexts } = await connectWith({ inputPins: { sources: ["data"] } });
-    expect(instructions).toContain("use Tako data only");
-    expect(skillTexts.length).toBeGreaterThan(0);
-    expect(skillTexts.every((text) => text.includes("pinned to Tako data"))).toBe(true);
+  it("states a data pin in the instructions and serves the skills unchanged", async () => {
+    const pinned = await connectWith({ inputPins: { sources: ["data"] } });
+    const unpinned = await connectWith({});
+    expect(pinned.instructions).toContain("use Tako data only");
+    expect(pinned.skillTexts.length).toBeGreaterThan(0);
+    expect(pinned.skillTexts).toEqual(unpinned.skillTexts);
   });
 
   it("says nothing about a pin no listed tool declares", async () => {
@@ -3120,6 +3132,6 @@ describe("URL-pinned sources in instructions and skills", () => {
       requestedToolNames: new Set(["tako_contents"]),
     });
     expect(instructions).not.toContain("On this connection");
-    expect(skillTexts.some((text) => text.includes("pinned"))).toBe(false);
+    expect(skillTexts).toEqual((await connectWith({ requestedToolNames: new Set(["tako_contents"]) })).skillTexts);
   });
 });

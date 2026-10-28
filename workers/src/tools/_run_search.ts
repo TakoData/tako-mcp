@@ -10,6 +10,7 @@ import { z } from "zod";
 
 import { djangoPost } from "../django.js";
 import { AnswerRequest, AnswerResponse, SearchRequest, SearchResponse } from "../generated/schemas.js";
+import { reachesSource } from "./_input_pins.js";
 import { logWireGuardFailure } from "./_log.js";
 import {
   buildSearchOutput,
@@ -18,6 +19,7 @@ import {
   webResultSchema,
   type SearchOutput,
   type SearchToolName,
+  WEB_PIN_GUIDANCE,
 } from "./_search_results.js";
 import type { ToolContext } from "./types.js";
 
@@ -147,7 +149,7 @@ export async function runSearch(
   // step now — the passthrough slimmers it replaced are deleted, so there is no
   // second path a future caller can pick by mistake
   // (spec: 2026-08-26-model-facing-surface-redesign).
-  return buildSearchOutput(
+  const output = buildSearchOutput(
     cards.data,
     webResults.data,
     wire.request_id,
@@ -158,4 +160,7 @@ export async function runSearch(
     { rowCap, keepWebText, toolName, canRequestPremium: ctx.registeredTools?.has("tako_contents") === true },
     extras,
   );
+  return output.cards.length === 0 && !reachesSource(ctx.pins, "data")
+    ? { ...output, guidance: WEB_PIN_GUIDANCE }
+    : output;
 }

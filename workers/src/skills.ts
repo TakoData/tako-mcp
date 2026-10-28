@@ -1,12 +1,9 @@
-import { createHash } from "node:crypto";
-
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 
 import { SKILLS, type GeneratedSkill } from "./generated/skills.js";
 import type { Surface } from "./surface.js";
-import { type InputPins, NO_PINS, type Source, soleSource } from "./tools/_input_pins.js";
 
 const SKILLS_EXTENSION = "io.modelcontextprotocol/skills";
 const SKILL_MIME_TYPE = "text/markdown";
@@ -31,34 +28,12 @@ export function skillsForTools(
 }
 
 /** The skills a surface serves over MCP; `/mcp/chatgpt` serves none, because ChatGPT installs them from the plugin zip. */
-const PINNED_SOURCE_NOTES: Record<Source, string> = {
-  data: "> This connection is pinned to Tako data: searches and agent runs return no web results. Skip any step below that relies on web results.",
-  web: "> This connection is pinned to the web: searches and agent runs return no Tako data cards. Skip any step below that relies on cards.",
-};
-
-const FRONTMATTER_CLOSE = "\n---\n";
-
-function withNote(skill: GeneratedSkill, note: string): GeneratedSkill {
-  const bodyStart = skill.text.indexOf(FRONTMATTER_CLOSE, 1) + FRONTMATTER_CLOSE.length;
-  const text = `${skill.text.slice(0, bodyStart)}${note}\n\n${skill.text.slice(bodyStart)}`;
-  return {
-    ...skill,
-    text,
-    digest: `sha256:${createHash("sha256").update(text, "utf8").digest("hex")}`,
-    size: new TextEncoder().encode(text).byteLength,
-  };
-}
-
 export function skillsForSurface(
   surface: Surface,
   registered: ReadonlySet<string>,
   skills: readonly GeneratedSkill[] = SKILLS,
-  pins: InputPins = NO_PINS,
 ): GeneratedSkill[] {
-  if (surface !== "generic") return [];
-  const served = skillsForTools(registered, skills);
-  const only = pins.sources === undefined ? undefined : soleSource(pins.sources);
-  return only === undefined ? served : served.map((skill) => withNote(skill, PINNED_SOURCE_NOTES[only]));
+  return surface === "generic" ? skillsForTools(registered, skills) : [];
 }
 
 function skillEntry(skill: GeneratedSkill) {

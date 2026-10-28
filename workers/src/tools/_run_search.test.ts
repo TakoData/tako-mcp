@@ -12,7 +12,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Env } from "../env.js";
 import { jsonResponse, mockFetchSequence, noopSendProgress, requestFrom } from "./__test_helpers.js";
 import { runSearch } from "./_run_search.js";
-import { WITHHELD_CELLS_GUIDANCE } from "./_search_results.js";
+import { WEB_PIN_GUIDANCE, WITHHELD_CELLS_GUIDANCE } from "./_search_results.js";
 import type { ToolContext } from "./types.js";
 
 const ENV: Env = { DJANGO_BASE_URL: "https://staging.trytako.com" };
@@ -125,6 +125,23 @@ describe("runSearch on the answer endpoint", () => {
     ]);
     const out = await runSearch({ endpoint: "answer", body: { query: "q" } }, null, CTX, "tako_search_advanced");
     expect(out.cards.map((c) => c.title)).toEqual(["Stale", "Fresh"]);
+  });
+});
+
+describe("runSearch on a connection that pins sources", () => {
+  const search = async (pins: ToolContext["pins"], cards: unknown[] = []) => {
+    mockFetchSequence([jsonResponse(200, { cards, web_results: [], request_id: "r" })]);
+    return runSearch({ endpoint: "search", body: { query: "hotel RevPAR Q3" } }, null, { ...CTX, pins }, "tako_search");
+  };
+
+  it("says zero cards on a web pin is about the connection, not Tako's coverage", async () => {
+    expect((await search({ sources: ["web"] })).guidance).toBe(WEB_PIN_GUIDANCE);
+  });
+
+  it("adds nothing to zero cards on a data pin, a data,web pin, or no pin", async () => {
+    for (const pins of [{ sources: ["data"] as const }, { sources: ["data", "web"] as const }, undefined]) {
+      expect((await search(pins)).guidance, JSON.stringify(pins)).toBeUndefined();
+    }
   });
 });
 

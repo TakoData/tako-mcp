@@ -15,7 +15,8 @@ How to do it:
 - If the question is **broad or multi-part**, decompose it into narrow single
   entity + metric searches and fire `tako_search` for each concurrently, then synthesize
   the results yourself. One entity, one metric per call.
-- If no card answers the question, answer from the web results already in the response.
+- If no card answers the question, answer from the web results already in the response. If
+  there are none, tell the user that Tako found nothing for it.
 - Need the full text behind a web result rather than its excerpt? Call `tako_contents` on
   the url, and set `query` to a question to get only the passages that answer it.
 

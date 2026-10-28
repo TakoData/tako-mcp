@@ -11,7 +11,13 @@ import {
   WebSourceSettings,
 } from "../generated/schemas.js";
 import { PARAM_MAX_CHARS } from "../../scripts/gen-registry.js";
-import { jsonResponse, mockFetchSequence, noopSendProgress, requestFrom } from "./__test_helpers.js";
+import {
+  inputPropertyDescription,
+  jsonResponse,
+  mockFetchSequence,
+  noopSendProgress,
+  requestFrom,
+} from "./__test_helpers.js";
 import {
   CHATGPT_TOOL_NAMES,
   FREE_TIER_TOOL_NAMES,
@@ -939,6 +945,18 @@ describe("tako_search_advanced on a connection that pins sources", () => {
 
   it("drops the data block from a web-pinned schema", () => {
     expect(Object.keys(pin.schema(schema, ["web"]).shape)).not.toContain("data");
+  });
+
+  it("drops the data-only cost input from a web-pinned schema", () => {
+    expect(Object.keys(pin.schema(schema, ["web"]).shape)).not.toContain("variable_cost");
+  });
+
+  it("describes a pinned block without offering a choice of source", () => {
+    const data = pin.schema(schema, ["data"]);
+    const web = pin.schema(schema, ["web"]);
+    expect(inputPropertyDescription(data, "data")).toBe("Tako data (card) source settings.");
+    expect(inputPropertyDescription(web, "web")).toBe("Web source settings.");
+    expect(inputPropertyDescription(data, "location")).not.toContain("web results");
   });
 
   it("keeps both blocks on a data,web pin", () => {

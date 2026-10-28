@@ -163,33 +163,3 @@ describe("registerSkills", () => {
     ).toBe(-32601);
   });
 });
-
-describe("skillsForSurface on a connection that pins sources", () => {
-  const dataNote =
-    "> This connection is pinned to Tako data: searches and agent runs return no web results. Skip any step below that relies on web results.";
-  const webNote =
-    "> This connection is pinned to the web: searches and agent runs return no Tako data cards. Skip any step below that relies on cards.";
-  const served = (sources: readonly ("data" | "web")[]) =>
-    skillsForSurface("generic", CLAUDE_PLUGIN_TOOLS, SKILLS, { sources });
-  const searchIn = (skills: readonly GeneratedSkill[]) => skills.find((skill) => skill.name === "tako-search")!;
-
-  it("adds the data note right after the frontmatter", () => {
-    const unpinned = skillNamed("tako-search");
-    const pinned = searchIn(served(["data"]));
-    const closing = unpinned.text.indexOf("\n---\n", 4) + "\n---\n".length;
-    expect(pinned.text).toBe(`${unpinned.text.slice(0, closing)}${dataNote}\n\n${unpinned.text.slice(closing)}`);
-    expect(pinned.size).toBe(new TextEncoder().encode(pinned.text).byteLength);
-    expect(pinned.digest).toMatch(/^sha256:[0-9a-f]{64}$/);
-    expect(pinned.digest).not.toBe(unpinned.digest);
-    expect(pinned.frontmatter).toEqual(unpinned.frontmatter);
-    expect(pinned.uri).toBe(unpinned.uri);
-  });
-
-  it("adds the web note", () => {
-    expect(searchIn(served(["web"])).text).toContain(`\n---\n${webNote}\n\n`);
-  });
-
-  it("serves the skills unchanged on a data,web pin", () => {
-    expect(served(["data", "web"])).toEqual(skillsForSurface("generic", CLAUDE_PLUGIN_TOOLS));
-  });
-});
