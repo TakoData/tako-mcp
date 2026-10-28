@@ -34,18 +34,30 @@ import {
 import { AgentInputError, runIdInputSchema } from "./_agent_product.js";
 import { agentRunOutputShape, type AgentRunOutput } from "./_agent_run.js";
 import { buildChartAppUiResourceFromOutputPubId } from "./_chart_widget.js";
+import { type InputPins, SOURCE_VALUES, type Source, pinnedField, soleSource } from "./_input_pins.js";
 import { looseArray } from "./_loose_array.js";
 import { renderAgentRunMarkdown } from "./_render_markdown.js";
 import { AGENT_SOURCES_THREAD_RULE, SOURCES_DESCRIBE } from "./_shared_prose.js";
 import type { AppUiResource, ToolModule } from "./types.js";
 
-const DESCRIPTION = [
-  `Run Tako's Answer Agent. It plans, queries the data graph and the web over several steps, and returns a written \`answer\` with numbered citations plus the chart \`cards\` it built. ${AGENT_EXPLICIT_ASK_SENTENCE} Otherwise, use \`tako_search\`.`,
-  "",
-  "Best for: an ask for Tako's agent whose answer is a chart or a written finding, not a list of companies or people.",
-  "",
-  AGENT_DESCRIPTION_LAST_LINE,
-].join("\n");
+const answerAgentDescription = (researched: string): string =>
+  [
+    `Run Tako's Answer Agent. It plans, queries ${researched} over several steps, and returns a written \`answer\` with numbered citations plus the chart \`cards\` it built. ${AGENT_EXPLICIT_ASK_SENTENCE} Otherwise, use \`tako_search\`.`,
+    "",
+    "Best for: an ask for Tako's agent whose answer is a chart or a written finding, not a list of companies or people.",
+    "",
+    AGENT_DESCRIPTION_LAST_LINE,
+  ].join("\n");
+
+const DESCRIPTION = answerAgentDescription("the data graph and the web");
+
+const PINNED_RESEARCH: Record<Source, string> = { data: "the data graph", web: "the web" };
+
+/** The description on a connection whose URL pins `sources`. */
+export function describeAnswerAgent(sources: readonly Source[]): string {
+  const only = soleSource(sources);
+  return only === undefined ? DESCRIPTION : answerAgentDescription(PINNED_RESEARCH[only]);
+}
 
 export const inputSchema = z.object({
   query: agentQueryInput,
@@ -57,7 +69,7 @@ export const inputSchema = z.object({
   // _loose_array.ts.
   sources: looseArray(
     z
-      .array(z.enum(["data", "web"]))
+      .array(z.enum(SOURCE_VALUES))
       .min(1)
       .optional()
       .describe(`${SOURCES_DESCRIBE} ${AGENT_SOURCES_THREAD_RULE}`),
@@ -106,6 +118,9 @@ const takoAgent = {
   name: "tako_agent",
   description: DESCRIPTION,
   inputSchema,
+  inputPins: { sources: pinnedField("sources") },
+  describeForPins: (pins: InputPins) =>
+    pins.sources === undefined ? DESCRIPTION : describeAnswerAgent(pins.sources),
   // Advertised schema = the PROJECTED shape, typed field by field
   // (`_agent_run.ts`). `agentRunSchema` stays the internal shape the wait
   // validates the wire against; `projectAgentRun` maps it to this one, so no

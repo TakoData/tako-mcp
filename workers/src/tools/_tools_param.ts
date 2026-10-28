@@ -24,7 +24,20 @@ export const TOOL_NAME_PREFIX = "tako_";
  * defaults before, via `parseToolsParam("")`.
  */
 export function readToolsParam(url: URL): string | null {
-  return url.searchParams.getAll("tools").join(",") || null;
+  return readListParam(url, "tools");
+}
+
+/** Every value of a repeatable list parameter, joined with commas: `null` when it's absent or empty. */
+export function readListParam(url: URL, name: string): string | null {
+  return url.searchParams.getAll(name).join(",") || null;
+}
+
+/** Split a joined list parameter into trimmed, lowercased tokens, dropping empty ones. */
+export function listParamTokens(raw: string): string[] {
+  return raw
+    .split(",")
+    .map((token) => token.trim().toLowerCase())
+    .filter((token) => token !== "");
 }
 
 /**
@@ -50,9 +63,7 @@ export function parseToolsParam(
 ): ReadonlySet<string> | null {
   if (param === null) return null;
   const requested = new Set<string>();
-  for (const rawToken of param.split(",")) {
-    const token = rawToken.trim().toLowerCase();
-    if (token === "") continue;
+  for (const token of listParamTokens(param)) {
     const name = token.startsWith(TOOL_NAME_PREFIX)
       ? token
       : `${TOOL_NAME_PREFIX}${token}`;

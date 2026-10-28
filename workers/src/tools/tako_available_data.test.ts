@@ -117,6 +117,22 @@ describe("tako_available_data", () => {
     expect(out.guidance).toContain('Nothing in Tako\'s graph resolves "zzz"');
   });
 
+  it("doesn't point at web search on a data-pinned connection", async () => {
+    mockFetchSequence([jsonResponse(200, { results: [] })]);
+    const out = await takoAvailableData.handler({ q: "zzz" }, { ...CTX, pins: { sources: ["data"] } });
+    expect(out.guidance).toContain('Nothing in Tako\'s graph resolves "zzz"');
+    expect(out.guidance).not.toContain("Search the web");
+  });
+
+  it("describes a web-pinned connection without treating search as the card check", () => {
+    const web = takoAvailableData.describeForPins({ sources: ["web"] });
+    expect(web).toContain("This connection's search returns no Tako cards");
+    expect(web).not.toContain("say Tako has no card");
+    expect(web).not.toContain("next_call");
+    expect(takoAvailableData.describeForPins({ sources: ["data"] })).toBe(takoAvailableData.description);
+    expect(takoAvailableData.describeForPins({})).toBe(takoAvailableData.description);
+  });
+
   it("forwards q + limit + optional types/label to graph/search", async () => {
     const fetchMock = mockFetchSequence([jsonResponse(200, { results: [] })]);
     await takoAvailableData.handler({ q: "apple", types: "entity", label: "ORG" }, CTX);

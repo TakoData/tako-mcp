@@ -23,6 +23,7 @@ import {
 } from "./_graph.js";
 import { logWireGuardFailure } from "./_log.js";
 import { graphRelatedSlimOutputShape, renderGraphRelatedMarkdown } from "./_render_markdown.js";
+import { type InputPins, reachesSource } from "./_input_pins.js";
 import type { ToolModule } from "./types.js";
 
 const NER_LABELS = [
@@ -30,13 +31,22 @@ const NER_LABELS = [
   "MONEY", "METRIC", "STOCK_TICKER", "WEBSITE",
 ] as const;
 
-const DESCRIPTION = [
-  "Explore what a graph node connects to — its metrics, the entities a metric covers, competitors, industry, index membership, and sources.",
-  "",
-  `Two modes. Pass \`node_id\` alone for the map: every relation group with its key, label, total, and its first ${String(OVERVIEW_PREVIEW_N)} names. Pass \`relation\` to page one group, where each item comes back with the id that explores it. Read a key off the map rather than guessing — an unknown key returns an empty group, not an error.`,
-  "",
-  "Best for: expanding a node you already resolved. Resolve a name to a node id with `tako_available_data` first. A metric listed here means the graph tracks it, not that a card exists — `tako_search` is the final check.",
-].join("\n");
+const graphRelatedDescription = (cardCheck: string): string =>
+  [
+    "Explore what a graph node connects to — its metrics, the entities a metric covers, competitors, industry, index membership, and sources.",
+    "",
+    `Two modes. Pass \`node_id\` alone for the map: every relation group with its key, label, total, and its first ${String(OVERVIEW_PREVIEW_N)} names. Pass \`relation\` to page one group, where each item comes back with the id that explores it. Read a key off the map rather than guessing — an unknown key returns an empty group, not an error.`,
+    "",
+    `Best for: expanding a node you already resolved. Resolve a name to a node id with \`tako_available_data\` first. ${cardCheck}`,
+  ].join("\n");
+
+const DESCRIPTION = graphRelatedDescription(
+  "A metric listed here means the graph tracks it, not that a card exists — `tako_search` is the final check.",
+);
+
+const NO_CARDS_DESCRIPTION = graphRelatedDescription(
+  "A metric listed here means the graph tracks it. This connection's search returns no Tako cards, so it can't check for one.",
+);
 
 const inputSchema = z.object({
   node_id: z.string().min(1).describe(
@@ -86,6 +96,7 @@ type Output = z.infer<typeof outputSchema>;
 const tako_graph_related = {
   name: "tako_graph_related",
   description: DESCRIPTION,
+  describeForPins: (pins: InputPins) => (reachesSource(pins, "data") ? DESCRIPTION : NO_CARDS_DESCRIPTION),
   inputSchema,
   outputSchema,
   annotations: {

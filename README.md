@@ -317,6 +317,18 @@ claude mcp add tako --transport http "https://mcp.tako.com/mcp?tools=search,avai
 - **Claude Code plugin and Gemini CLI extension:** each pins the default surface plus `tako_agent`, `tako_company_agent`, and `tako_visualize` (`?tools=search,available_data,contents,graph_related,agent,company_agent,visualize`), and its URL isn't user-editable. For a different set, add the server yourself with `claude mcp add` as above, and keep only one Tako connection active so you don't get two copies of every tool. Claude Code stores a sign-in for each server URL, so after you update the Claude Code plugin from 1.5.0 or earlier, sign in again: run `/mcp`, select `tako`, and choose **Authenticate**.
 - **`/mcp/chatgpt` ignores `?tools=`**: its listing is fixed — `tako_search`, `tako_available_data`, `tako_contents`, `tako_visualize`, `tako_graph_related`, `tako_agent`, `tako_company_agent`.
 
+**`?sources=` pins the sources for the whole connection.** Use it to evaluate Tako data on its own. `?sources=data` searches Tako data only, `?sources=web` searches the web only, and `?sources=data,web` always searches both. It applies to `tako_search`, `tako_search_advanced`, `tako_agent`, and `tako_company_agent`: the `sources` input (or, on `tako_search_advanced`, the other source's block) leaves the tool's schema, and every call sends the pinned value, agent thread follow-ups included. `tako_contents`, `tako_available_data`, and `tako_graph_related` take no `sources` input. For web only, you can also drop the graph tools with `?tools=`: `?tools=search&sources=web`.
+
+```bash
+claude mcp add tako --transport http "https://mcp.tako.com/mcp?sources=data"
+```
+
+- An invalid value, such as `?sources=dta` or an empty `?sources=`, fails the connection with an HTTP 400 that names the parameter. Other unknown parameters are ignored.
+- To confirm the setting applied, read the server instructions, which state it, or check that `sources` is missing from `tako_search`'s input schema. A misspelled name, such as `?source=data`, connects with the default sources.
+- An agent follow-up on a thread that started with different sources fails. Start a new thread.
+- It doesn't turn off your client's own web search tool. Turn that off in the client.
+- `/mcp/chatgpt` ignores `?sources=`.
+
 <details>
 <summary><b>Getting values vs. getting pointers</b></summary>
 
@@ -377,7 +389,7 @@ description: >-
 
 # Tako
 
-Tako searches the web and a knowledge graph of licensed and public data in one call. The graph covers companies, business professionals, markets, economies, sports, weather, prediction markets, websites, and more, and refreshes much of it during the day. When the graph has the answer, the result leads with a card: a headline value, its source, and a chart. Every search also returns web results. All tools below live on the Tako MCP server installed in Step 1.
+Tako searches the web and a knowledge graph of licensed and public data in one call. The graph covers companies, business professionals, markets, economies, sports, weather, prediction markets, websites, and more, and refreshes much of it during the day. When the graph has the answer, the result leads with a card: a headline value, its source, and a chart. A search also returns web results unless the connection searches Tako data only. All tools below live on the Tako MCP server installed in Step 1.
 
 ## Look something up
 
@@ -415,7 +427,7 @@ Then read the list:
 3. Each row's `tako_url` opens that one person or company in Tako. Link it.
 4. Tako withholds premium cells, such as business contact fields. A list card shows each one as 🔒, and the result's `note` names the withheld columns. Don't tell the user that a withheld field is empty. When the user asks for those fields, call `tako_contents` again with `premium: true` for only the rows they want, because Tako bills each of those rows. For one row, pass that row's `tako_url` with `max_rows: 1`, and Tako returns only that row. For several rows, set `offset` and `max_rows` instead. The row order can change between calls, so check the name on each row you get.
 5. A list can't filter on revenue, investors, registry status, or a company's officers and directors. If the question needs one of those, say so. If the `tako-agent` skill is installed, offer Tako's company agent.
-6. If no list card comes back, tell the user that Tako found no list. If the `tako-agent` skill is installed, offer Tako's company agent.
+6. If no list card comes back, follow the result's `guidance` when it has one. Otherwise, tell the user that Tako found no list. If the `tako-agent` skill is installed, offer Tako's company agent.
 
 ## Compute over a series
 

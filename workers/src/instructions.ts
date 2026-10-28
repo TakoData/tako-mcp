@@ -2,7 +2,8 @@
  * The `initialize` instructions: the one string the host puts in the
  * model's system prompt. ONE string for every tier; what narrows it is the
  * RESOLVED TOOLSET — `?tools=` and the surface's own default listing — which
- * drops sentences naming tools this connection does not register.
+ * drops sentences naming tools this connection does not register, and the
+ * connection's URL pins, which state the sources it searches.
  *
  * TIER-INVARIANT ON PURPOSE. A free-tier variant used to say "this connection
  * is anonymous: X and Y are the tools that run here" and that `tako_contents`
@@ -30,6 +31,7 @@
  * this text reaches every connection, including the ones that do not
  * register that tool.
  */
+import { type InputPins, NO_PINS, type Source, soleSource } from "./tools/_input_pins.js";
 import { GENERIC_DEFAULT_TOOL_NAMES } from "./tools/_surface.js";
 
 /**
@@ -157,9 +159,37 @@ import { GENERIC_DEFAULT_TOOL_NAMES } from "./tools/_surface.js";
  * whole surface. Watch routing on questions Tako cannot serve; if misrouting
  * shows up, this hedge is the first thing to restore.
  */
-const SHARED_INSTRUCTION_PARAGRAPHS = [
-  "Tako searches the web and a proprietary knowledge graph of live structured data in the same call. Default sources are data + web, so one call answers a question that mixes a figure with context. Coverage includes finance, markets, company KPIs, economics, website traffic, sports, weather, elections, prediction markets, demographics, energy, real estate, health, and more.",
-];
+const INSTRUCTION_LEAD =
+  "Tako searches the web and a proprietary knowledge graph of live structured data in the same call.";
+const DEFAULT_SOURCES_SENTENCE =
+  "Default sources are data + web, so one call answers a question that mixes a figure with context.";
+const COVERAGE_SENTENCE =
+  "Coverage includes finance, markets, company KPIs, economics, website traffic, sports, weather, elections, prediction markets, demographics, energy, real estate, health, and more.";
+
+const PINNED_SOURCE_SENTENCES: Record<Source, readonly string[]> = {
+  data: [
+    "Tako searches a proprietary knowledge graph of live structured data.",
+    "On this connection, searches and agent runs use Tako data only and return no web results.",
+    COVERAGE_SENTENCE,
+  ],
+  web: [
+    "Tako searches the web.",
+    "On this connection, searches and agent runs use the web only and return no Tako data cards.",
+  ],
+};
+
+const BOTH_PINNED_SOURCES_SENTENCE =
+  "On this connection, searches and agent runs always use both Tako data and the web, so one call answers a question that mixes a figure with context.";
+
+function sharedInstructionParagraph(sources: readonly Source[] | undefined): string {
+  if (sources === undefined) return [INSTRUCTION_LEAD, DEFAULT_SOURCES_SENTENCE, COVERAGE_SENTENCE].join(" ");
+  const only = soleSource(sources);
+  const sentences =
+    only === undefined
+      ? [INSTRUCTION_LEAD, BOTH_PINNED_SOURCES_SENTENCE, COVERAGE_SENTENCE]
+      : PINNED_SOURCE_SENTENCES[only];
+  return sentences.join(" ");
+}
 
 /**
  * One instruction sentence and the tools it NAMES. A sentence is served only
@@ -177,6 +207,7 @@ const SHARED_INSTRUCTION_PARAGRAPHS = [
 type ToolSentence = {
   readonly tools: readonly string[];
   readonly text: string;
+  readonly textForSoleSource?: Readonly<Record<Source, string>>;
 };
 
 const TOOL_SENTENCES: readonly ToolSentence[] = [
@@ -185,6 +216,10 @@ const TOOL_SENTENCES: readonly ToolSentence[] = [
     // vocabulary the tool descriptions share (spec, field vocabulary).
     tools: ["tako_search"],
     text: "`tako_search` finds cards and web links.",
+    textForSoleSource: {
+      data: "`tako_search` finds cards.",
+      web: "`tako_search` finds web links.",
+    },
   },
   {
     tools: ["tako_contents"],
@@ -220,15 +255,18 @@ const TOOL_SENTENCES: readonly ToolSentence[] = [
 function assembleInstructions(
   sentences: readonly ToolSentence[],
   registered: ReadonlySet<string>,
+  pins: InputPins,
 ): string {
+  const only = pins.sources === undefined ? undefined : soleSource(pins.sources);
   const kept = sentences.filter((s) => s.tools.every((name) => registered.has(name)));
-  const paragraph = kept.map((s) => s.text).join(" ");
-  return paragraph === ""
-    ? SHARED_INSTRUCTION_PARAGRAPHS.join("\n")
-    : [...SHARED_INSTRUCTION_PARAGRAPHS, "", paragraph].join("\n");
+  const paragraph = kept
+    .map((s) => (only === undefined ? undefined : s.textForSoleSource?.[only]) ?? s.text)
+    .join(" ");
+  const shared = sharedInstructionParagraph(pins.sources);
+  return paragraph === "" ? shared : [shared, "", paragraph].join("\n");
 }
 
-export const SERVER_INSTRUCTIONS = assembleInstructions(TOOL_SENTENCES, GENERIC_DEFAULT_TOOL_NAMES);
+export const SERVER_INSTRUCTIONS = assembleInstructions(TOOL_SENTENCES, GENERIC_DEFAULT_TOOL_NAMES, NO_PINS);
 
 /**
  * The `initialize` instructions for a connection's resolved toolset.
@@ -237,6 +275,9 @@ export const SERVER_INSTRUCTIONS = assembleInstructions(TOOL_SENTENCES, GENERIC_
  * `?tools=` connection is never told about a tool it cannot call. There is no
  * tier parameter — see the module comment for why there must not be one.
  */
-export function serverInstructionsFor(registered: ReadonlySet<string>): string {
-  return assembleInstructions(TOOL_SENTENCES, registered);
+export function serverInstructionsFor(
+  registered: ReadonlySet<string>,
+  pins: InputPins = NO_PINS,
+): string {
+  return assembleInstructions(TOOL_SENTENCES, registered, pins);
 }

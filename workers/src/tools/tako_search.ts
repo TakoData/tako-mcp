@@ -24,6 +24,14 @@ import {
   buildChartExtraMeta,
   fetchPngContentBlock,
 } from "./_chart_widget.js";
+import {
+  type InputPinApplier,
+  type InputPins,
+  SOURCE_VALUES,
+  type Source,
+  pinnedField,
+  soleSource,
+} from "./_input_pins.js";
 import { looseArray } from "./_loose_array.js";
 import {
   renderSearchMarkdown,
@@ -35,23 +43,60 @@ import { SOURCES_DESCRIBE } from "./_shared_prose.js";
 import { type SearchOutput, liveCardCharts, withTopChartDims } from "./_search_results.js";
 import type { AppUiResource, ToolContentBlock, ToolContext, ToolModule } from "./types.js";
 
-const DESCRIPTION = [
-  "Search Tako's data graph and the web in one call: many results at once, as structured cards plus web results. The first card's chart renders inline; some hosts also show every other card's chart, in search's order.",
-  "",
-  "It finds results; `tako_contents` fetches what's behind them. Each card carries a headline value, node ids, and a url — pass the url to `tako_contents` for rows (`exportable: true` cards) or a web result's full page text. When `exportable` is false the rows are locked — read the headline value from the card's `description`.",
-  "",
-  // `Best for:` verbatim: AGENTS.md's tool-description rule, and the form the
-  // other three default tools already use in docs/TOOLS.md.
-  'Best for: breadth — fan out several narrow queries in parallel. Each query answers one question — one metric for one entity, a comparison set ("Apple revenue", "Nvidia vs AMD gross margin"), one news or web lookup ("EU AI Act timeline"), or one list of companies, or of business professionals by role and place, for prospecting or recruiting ("fintechs in London", "CFOs in Austin"); several metrics or topics in one query retrieve poorly.',
-].join("\n");
+const CHART_SENTENCE =
+  "The first card's chart renders inline; some hosts also show every other card's chart, in search's order.";
+const CARD_URL_CLAUSE =
+  "Each card carries a headline value, node ids, and a url — pass the url to `tako_contents` for rows (`exportable: true` cards)";
+const LOCKED_ROWS_SENTENCE =
+  "When `exportable` is false the rows are locked — read the headline value from the card's `description`.";
+const DATA_QUESTIONS =
+  'one metric for one entity, a comparison set ("Apple revenue", "Nvidia vs AMD gross margin")';
+const WEB_QUESTION = 'one news or web lookup ("EU AI Act timeline")';
+const LIST_QUESTION =
+  'one list of companies, or of business professionals by role and place, for prospecting or recruiting ("fintechs in London", "CFOs in Austin")';
+
+// `Best for:` verbatim: AGENTS.md's tool-description rule, and the form the
+// other three default tools already use in docs/TOOLS.md.
+const bestFor = (questions: string, crowded: string): string =>
+  `Best for: breadth — fan out several narrow queries in parallel. Each query answers one question — ${questions}; ${crowded} in one query retrieve poorly.`;
+
+const searchDescription = (lead: string, contents: string, best: string): string =>
+  [lead, "", contents, "", best].join("\n");
+
+const DESCRIPTION = searchDescription(
+  `Search Tako's data graph and the web in one call: many results at once, as structured cards plus web results. ${CHART_SENTENCE}`,
+  `It finds results; \`tako_contents\` fetches what's behind them. ${CARD_URL_CLAUSE} or a web result's full page text. ${LOCKED_ROWS_SENTENCE}`,
+  bestFor(`${DATA_QUESTIONS}, ${WEB_QUESTION}, or ${LIST_QUESTION}`, "several metrics or topics"),
+);
+
+const PINNED_DESCRIPTIONS: Record<Source, string> = {
+  data: searchDescription(
+    `Search Tako's data graph: many results at once, as structured cards. This connection returns no web results. ${CHART_SENTENCE}`,
+    `It finds results; \`tako_contents\` fetches what's behind them. ${CARD_URL_CLAUSE}. ${LOCKED_ROWS_SENTENCE}`,
+    bestFor(`${DATA_QUESTIONS}, or ${LIST_QUESTION}`, "several metrics or topics"),
+  ),
+  web: searchDescription(
+    "Search the web: many results at once, as web results. This connection returns no Tako cards.",
+    "It finds results; `tako_contents` fetches a web result's full page text.",
+    bestFor(WEB_QUESTION, "several topics"),
+  ),
+};
+
+/** The description on a connection whose URL pins `sources`. */
+export function describeSearch(sources: readonly Source[]): string {
+  const only = soleSource(sources);
+  return only === undefined ? DESCRIPTION : PINNED_DESCRIPTIONS[only];
+}
+
+const QUERY_DESCRIBE =
+  'Natural-language search query (e.g. "US GDP growth", "Intel vs Nvidia revenue"). Double-quote a multi-word name to keep it one entity ("tesla motors" club revenue); an unpaired quote disables quoting.';
+const TRAFFIC_QUERY_SENTENCE =
+  'Website-traffic data is keyed by domain — query "openai.com monthly visits", not "OpenAI website visits".';
+
+const queryInput = (describe: string) => z.string().min(1).describe(describe);
 
 const inputSchema = z.object({
-  query: z
-    .string()
-    .min(1)
-    .describe(
-      'Natural-language search query (e.g. "US GDP growth", "Intel vs Nvidia revenue"). Double-quote a multi-word name to keep it one entity ("tesla motors" club revenue); an unpaired quote disables quoting. Website-traffic data is keyed by domain — query "openai.com monthly visits", not "OpenAI website visits".',
-    ),
+  query: queryInput(`${QUERY_DESCRIBE} ${TRAFFIC_QUERY_SENTENCE}`),
   // looseArray: hosts that stringify the array they meant to send (observed
   // from OpenBB Copilot) get it coerced instead of a -32602. `commaSeparated` is
   // safe here and ONLY here: the item domain is a closed enum, no member of
@@ -62,7 +107,7 @@ const inputSchema = z.object({
   // per-source blocks to build. It is never forwarded to the API as a value.
   sources: looseArray(
     z
-      .array(z.enum(["data", "web"]))
+      .array(z.enum(SOURCE_VALUES))
       .min(1)
       .default(["data", "web"])
       // Shared with tako_agent, whole and unmodified (spec D2.10).
@@ -147,10 +192,23 @@ export function buildSearchBody(input: Input, tier: Tier): z.input<typeof Search
 }
 
 
+const sourcesPin: InputPinApplier<readonly Source[]> = {
+  ...pinnedField("sources"),
+  schema: (schema, sources) => {
+    const withoutSources = schema.omit({ sources: true });
+    return soleSource(sources) === "web"
+      ? withoutSources.extend({ query: queryInput(QUERY_DESCRIBE) })
+      : withoutSources;
+  },
+};
+
 const tako_search = {
   name: "tako_search",
   description: DESCRIPTION,
   inputSchema,
+  inputPins: { sources: sourcesPin },
+  describeForPins: (pins: InputPins) =>
+    pins.sources === undefined ? DESCRIPTION : describeSearch(pins.sources),
   outputSchema,
   // The chart widget fields exist only where a widget reads them.
   outputSchemaBySurface: { chatgpt: searchChatgptOutputShape },

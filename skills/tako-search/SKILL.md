@@ -6,7 +6,7 @@ description: >-
 
 # Tako
 
-Tako searches the web and a knowledge graph of licensed and public data in one call. The graph covers companies, business professionals, markets, economies, sports, weather, prediction markets, websites, and more, and refreshes much of it during the day. When the graph has the answer, the result leads with a card: a headline value, its source, and a chart. Every search also returns web results. All tools below live on the Tako MCP server (server name `tako`).
+Tako searches the web and a knowledge graph of licensed and public data in one call. The graph covers companies, business professionals, markets, economies, sports, weather, prediction markets, websites, and more, and refreshes much of it during the day. When the graph has the answer, the result leads with a card: a headline value, its source, and a chart. A search also returns web results unless the connection searches Tako data only. All tools below live on the Tako MCP server (server name `tako`).
 
 ## Look something up
 
@@ -44,7 +44,7 @@ Then read the list:
 3. Each row's `tako_url` opens that one person or company in Tako. Link it.
 4. Tako withholds premium cells, such as business contact fields. A list card shows each one as 🔒, and the result's `note` names the withheld columns. Don't tell the user that a withheld field is empty. When the user asks for those fields, call `tako_contents` again with `premium: true` for only the rows they want, because Tako bills each of those rows. For one row, pass that row's `tako_url` with `max_rows: 1`, and Tako returns only that row. For several rows, set `offset` and `max_rows` instead. The row order can change between calls, so check the name on each row you get.
 5. A list can't filter on revenue, investors, registry status, or a company's officers and directors. If the question needs one of those, say so. If the `tako-agent` skill is installed, offer Tako's company agent.
-6. If no list card comes back, tell the user that Tako found no list. If the `tako-agent` skill is installed, offer Tako's company agent.
+6. If no list card comes back, follow the result's `guidance` when it has one. Otherwise, tell the user that Tako found no list. If the `tako-agent` skill is installed, offer Tako's company agent.
 
 ## Compute over a series
 

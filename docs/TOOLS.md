@@ -76,6 +76,26 @@ Best for: an ask for Tako's agent whose answer is a chart or a written finding, 
 
 A call returns within 45 s. If `status` is `running`, call again with `run_id`; don't start a new run. In your reply, link each card's `url`; the full list or chart lives on that page.
 
+<details><summary>Description on `/mcp?sources=data`</summary>
+
+Run Tako's Answer Agent. It plans, queries the data graph over several steps, and returns a written `answer` with numbered citations plus the chart `cards` it built. Start a run only when the user asks for one: they name Tako's agent or ask for deep or multi-step research with Tako. Otherwise, use `tako_search`.
+
+Best for: an ask for Tako's agent whose answer is a chart or a written finding, not a list of companies or people.
+
+A call returns within 45 s. If `status` is `running`, call again with `run_id`; don't start a new run. In your reply, link each card's `url`; the full list or chart lives on that page.
+
+</details>
+
+<details><summary>Description on `/mcp?sources=web`</summary>
+
+Run Tako's Answer Agent. It plans, queries the web over several steps, and returns a written `answer` with numbered citations plus the chart `cards` it built. Start a run only when the user asks for one: they name Tako's agent or ask for deep or multi-step research with Tako. Otherwise, use `tako_search`.
+
+Best for: an ask for Tako's agent whose answer is a chart or a written finding, not a list of companies or people.
+
+A call returns within 45 s. If `status` is `running`, call again with `run_id`; don't start a new run. In your reply, link each card's `url`; the full list or chart lives on that page.
+
+</details>
+
 Parameters:
 
 | Name | Type | Required | Default | Description |
@@ -92,6 +112,10 @@ _none_
 Fixed worker-side settings (not request fields):
 
 - `call window` = `45 s` — A call returns within the window; resume a running run with run_id.
+
+URL-pinnable inputs (set on the /mcp URL):
+
+- `?sources=` — Pins `sources` for the whole connection: the input leaves this tool's schema, and every call sends the pinned value.
 
 Annotations:
 
@@ -431,6 +455,16 @@ Find what data Tako holds on an entity or a metric, and the canonical name it ho
 Best for: questions about what Tako covers. Put a company, person, or place in `q` to list the metrics tracked on it; put a metric in `q` to list the entities it covers. Add `metric` when you know the measure — you get the resolved pair and a ready-to-run `next_call`.
 
 Search on the canonical names it returns, not your own phrasing — `tako_search` matches the graph's names, not yours. A name here means the graph tracks it, not that a card exists. If the follow-up search comes back empty, say Tako has no card for it rather than rephrasing the query. Hand a node id to `tako_graph_related` to see what else connects to it.
+
+<details><summary>Description on `/mcp?sources=web`</summary>
+
+Find what data Tako holds on an entity or a metric, and the canonical name it holds it under.
+
+Best for: questions about what Tako covers. Put a company, person, or place in `q` to list the metrics tracked on it; put a metric in `q` to list the entities it covers. Add `metric` when you know the measure — you get the resolved pair.
+
+A name here means the graph tracks it. This connection's search returns no Tako cards, so it can't confirm a card, and an empty search doesn't mean Tako lacks the data. Hand a node id to `tako_graph_related` to see what else connects to it.
+
+</details>
 
 Parameters:
 
@@ -887,6 +921,26 @@ Best for: an ask for Tako's Company Agent, or an ask for Tako's agent to build a
 
 A call returns within 45 s. If `status` is `running`, call again with `run_id`; don't start a new run. In your reply, link each card's `url`; the full list or chart lives on that page.
 
+<details><summary>Description on `/mcp?sources=data`</summary>
+
+Run Tako's Company Agent. It searches company registries and business profiles over several steps, and returns a written `answer` with numbered citations plus the list `cards` it built. Start a run only when the user asks for one: they name Tako's agent or ask for deep or multi-step research with Tako. Otherwise, use `tako_search`, even for a list that search can't fully filter.
+
+Best for: an ask for Tako's Company Agent, or an ask for Tako's agent to build a list of companies or of their professionals, for prospecting or hiring. It filters companies by location, industry, status, founding date, funding stage, or size, and their executives by role, seniority, or department, and finds the officers, directors, and controllers in company registries.
+
+A call returns within 45 s. If `status` is `running`, call again with `run_id`; don't start a new run. In your reply, link each card's `url`; the full list or chart lives on that page.
+
+</details>
+
+<details><summary>Description on `/mcp?sources=web`</summary>
+
+Run Tako's Company Agent. It searches the web over several steps, and returns a written `answer` with numbered citations plus the list `cards` it built. Start a run only when the user asks for one: they name Tako's agent or ask for deep or multi-step research with Tako. Otherwise, use `tako_search`, even for a list that search can't fully filter.
+
+Best for: an ask for Tako's Company Agent, or an ask for Tako's agent to build a list of companies or of their professionals, for prospecting or hiring. It filters companies by location, industry, status, founding date, funding stage, or size, and their executives by role, seniority, or department.
+
+A call returns within 45 s. If `status` is `running`, call again with `run_id`; don't start a new run. In your reply, link each card's `url`; the full list or chart lives on that page.
+
+</details>
+
 Parameters:
 
 | Name | Type | Required | Default | Description |
@@ -904,6 +958,10 @@ Fixed request inputs (the caller cannot change these):
 Fixed worker-side settings (not request fields):
 
 - `call window` = `45 s` — A call returns within the window; resume a running run with run_id.
+
+URL-pinnable inputs (set on the /mcp URL):
+
+- `?sources=` — Pins `sources` for the whole connection: the input leaves this tool's schema, and every call sends the pinned value.
 
 Annotations:
 
@@ -1704,6 +1762,16 @@ Two modes. Pass `node_id` alone for the map: every relation group with its key, 
 
 Best for: expanding a node you already resolved. Resolve a name to a node id with `tako_available_data` first. A metric listed here means the graph tracks it, not that a card exists — `tako_search` is the final check.
 
+<details><summary>Description on `/mcp?sources=web`</summary>
+
+Explore what a graph node connects to — its metrics, the entities a metric covers, competitors, industry, index membership, and sources.
+
+Two modes. Pass `node_id` alone for the map: every relation group with its key, label, total, and its first 3 names. Pass `relation` to page one group, where each item comes back with the id that explores it. Read a key off the map rather than guessing — an unknown key returns an empty group, not an error.
+
+Best for: expanding a node you already resolved. Resolve a name to a node id with `tako_available_data` first. A metric listed here means the graph tracks it. This connection's search returns no Tako cards, so it can't check for one.
+
+</details>
+
 Parameters:
 
 | Name | Type | Required | Default | Description |
@@ -2017,6 +2085,26 @@ It finds results; `tako_contents` fetches what's behind them. Each card carries 
 
 Best for: breadth — fan out several narrow queries in parallel. Each query answers one question — one metric for one entity, a comparison set ("Apple revenue", "Nvidia vs AMD gross margin"), one news or web lookup ("EU AI Act timeline"), or one list of companies, or of business professionals by role and place, for prospecting or recruiting ("fintechs in London", "CFOs in Austin"); several metrics or topics in one query retrieve poorly.
 
+<details><summary>Description on `/mcp?sources=data`</summary>
+
+Search Tako's data graph: many results at once, as structured cards. This connection returns no web results. The first card's chart renders inline; some hosts also show every other card's chart, in search's order.
+
+It finds results; `tako_contents` fetches what's behind them. Each card carries a headline value, node ids, and a url — pass the url to `tako_contents` for rows (`exportable: true` cards). When `exportable` is false the rows are locked — read the headline value from the card's `description`.
+
+Best for: breadth — fan out several narrow queries in parallel. Each query answers one question — one metric for one entity, a comparison set ("Apple revenue", "Nvidia vs AMD gross margin"), or one list of companies, or of business professionals by role and place, for prospecting or recruiting ("fintechs in London", "CFOs in Austin"); several metrics or topics in one query retrieve poorly.
+
+</details>
+
+<details><summary>Description on `/mcp?sources=web`</summary>
+
+Search the web: many results at once, as web results. This connection returns no Tako cards.
+
+It finds results; `tako_contents` fetches a web result's full page text.
+
+Best for: breadth — fan out several narrow queries in parallel. Each query answers one question — one news or web lookup ("EU AI Act timeline"); several topics in one query retrieve poorly.
+
+</details>
+
 Parameters:
 
 | Name | Type | Required | Default | Description |
@@ -2030,6 +2118,10 @@ Fixed request inputs (the caller cannot change these):
 
 - `variable_cost (signed-in connections)` = `true` — Website-traffic and SEO cards return their data and add a per-unit charge. A keyless connection doesn't send it and gets those cards as placeholders. The API default is false.
 - `sources.web.highlights` = `true` — Query-relevant highlight passages per web result, so the excerpt supports choosing a url to fetch. The API default is false.
+
+URL-pinnable inputs (set on the /mcp URL):
+
+- `?sources=` — Pins `sources` for the whole connection: the input leaves this tool's schema, and every call sends the pinned value.
 
 Annotations:
 
@@ -2610,6 +2702,36 @@ Only `query` is required; an omitted field takes the server default its descript
 
 Best for: a written answer (`include_answer` puts it in `answer`), or a call `tako_search` can't express. `output_schema` fills a JSON Schema from the evidence into `structured_output`.
 
+<details><summary>Description on `/mcp?sources=data`</summary>
+
+Get one citation-backed answer (`include_answer: true`), or search Tako's data graph with the whole v3 request: per-source counts, inline card rows, graph pins, and the deep effort tier.
+
+Only `query` is required; an omitted field takes the server default its description names. This connection searches Tako data only. `data.include_contents` inlines each card's rows, billed per card — cap with `data.max_rows`, or fetch a card's rows with `tako_contents` instead.
+
+Best for: a written answer (`include_answer` puts it in `answer`), or a call `tako_search` can't express. `output_schema` fills a JSON Schema from the evidence into `structured_output`.
+
+</details>
+
+<details><summary>Description on `/mcp?sources=web`</summary>
+
+Get one citation-backed answer (`include_answer: true`), or search the web with the whole v3 request: web domain and category filters, and the deep effort tier.
+
+Only `query` is required; an omitted field takes the server default its description names. This connection searches the web only.
+
+Best for: a written answer (`include_answer` puts it in `answer`), or a call `tako_search` can't express. `output_schema` fills a JSON Schema from the evidence into `structured_output`.
+
+</details>
+
+<details><summary>Description on `/mcp?sources=data,web`</summary>
+
+Get one citation-backed answer (`include_answer: true`), or search Tako's data graph and the web with the whole v3 request: per-source counts, inline card rows, graph pins, web domain and category filters, and the deep effort tier.
+
+Only `query` is required; an omitted field takes the server default its description names. Every call searches data and web; a block sets that source's options. `data.include_contents` inlines each card's rows, billed per card — cap with `data.max_rows`, or fetch a card's rows with `tako_contents` instead.
+
+Best for: a written answer (`include_answer` puts it in `answer`), or a call `tako_search` can't express. `output_schema` fills a JSON Schema from the evidence into `structured_output`.
+
+</details>
+
 Parameters:
 
 | Name | Type | Required | Default | Description |
@@ -2631,6 +2753,10 @@ Parameters:
 Fixed request inputs (the caller cannot change these):
 
 _none_
+
+URL-pinnable inputs (set on the /mcp URL):
+
+- `?sources=` — Pins the sources for the whole connection: an unpinned source's block leaves this tool's schema, and every call searches each pinned source.
 
 Annotations:
 

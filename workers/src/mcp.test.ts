@@ -2952,3 +2952,186 @@ describe("chart widget or PNG per connection on /mcp", () => {
     });
   });
 });
+
+describe("URL-pinned sources", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  async function withClient<T>(
+    options: Partial<Parameters<typeof createMcpServer>[1]>,
+    run: (client: Client) => Promise<T>,
+    tier?: "free",
+  ): Promise<T> {
+    const ctx: ToolContext = {
+      token: "sk-test",
+      env: { DJANGO_BASE_URL: "https://staging.trytako.com" } as Env,
+      sendProgress: noopSendProgress,
+      surface: "generic",
+      ...(tier !== undefined ? { tier } : {}),
+    };
+    const server = createMcpServer(ctx, {
+      ...options,
+      surface: options.surface ?? "generic",
+      clientRendersUi: false,
+      ...(tier !== undefined ? { tier } : {}),
+    });
+    const client = new Client(
+      { name: "pins-test", version: "0.0.0" },
+      { jsonSchemaValidator: new CfWorkerJsonSchemaValidator() },
+    );
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    try {
+      return await run(client);
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  }
+
+  function captureSearchBodies(): Array<Record<string, unknown>> {
+    const bodies: Array<Record<string, unknown>> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(async (input, init) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        if (request.method !== "POST") return new Response("", { status: 404 });
+        bodies.push((await request.json()) as Record<string, unknown>);
+        return new Response(
+          JSON.stringify({ cards: [], web_results: [], request_id: "req-1" }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }),
+    );
+    return bodies;
+  }
+
+  it("removes sources from tako_search's listed schema and describes the pin", async () => {
+    const pinned = await withClient({ inputPins: { sources: ["data"] } }, (c) => c.listTools());
+    const search = pinned.tools.find((t) => t.name === "tako_search")!;
+    expect(search.inputSchema.properties).not.toHaveProperty("sources");
+    expect(search.description).toMatch(/^Search Tako's data graph:/);
+
+    const unpinned = await withClient({}, (c) => c.listTools());
+    expect(unpinned.tools.find((t) => t.name === "tako_search")!.inputSchema.properties).toHaveProperty(
+      "sources",
+    );
+  });
+
+  it("sends the pinned sources instead of the model's", async () => {
+    const bodies = captureSearchBodies();
+    await withClient({ inputPins: { sources: ["data"] } }, (c) =>
+      c.callTool({ name: "tako_search", arguments: { query: "q", sources: ["web"] } }),
+    );
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]!.sources).toEqual({ data: {} });
+  });
+
+  it("sends the pinned sources on an anonymous connection", async () => {
+    const bodies = captureSearchBodies();
+    await withClient(
+      { inputPins: { sources: ["data"] } },
+      (c) => c.callTool({ name: "tako_search", arguments: { query: "q" } }),
+      "free",
+    );
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]!.sources).toEqual({ data: {} });
+  });
+
+  async function postToolsList(path: string): Promise<Response> {
+    return worker.fetch(
+      new Request(`https://mcp.tako.com${path}`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+          authorization: "Bearer raw-tako-token-no-dots",
+        },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+      }),
+      { DJANGO_BASE_URL: "http://localhost:8000" } as unknown as Env,
+    );
+  }
+
+  it("rejects an invalid value with a 400 that names the parameter", async () => {
+    const res = await postToolsList("/mcp?sources=dta");
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { jsonrpc: string; id: null; error: { code: number; message: string } };
+    expect(body.jsonrpc).toBe("2.0");
+    expect(body.error.code).toBe(-32602);
+    expect(body.error.message).toContain('"sources"');
+  });
+
+  it("applies a valid value to the listing it serves", async () => {
+    const res = await postToolsList("/mcp?sources=data");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      result: { tools: Array<{ name: string; description: string; inputSchema: { properties: object } }> };
+    };
+    const search = body.result.tools.find((tool) => tool.name === "tako_search");
+    expect(search?.inputSchema.properties).not.toHaveProperty("sources");
+    expect(search?.description).toContain("This connection returns no web results.");
+  });
+
+  it("ignores the parameter on the chatgpt surface", async () => {
+    expect((await postToolsList("/mcp/chatgpt?sources=dta")).status).not.toBe(400);
+  });
+
+  it("ignores an unknown parameter name", async () => {
+    const res = await postToolsList("/mcp?source=data");
+    expect(res.status).toBe(200);
+  });
+});
+
+describe("URL-pinned sources in instructions and skills", () => {
+  async function connectWith(
+    options: Partial<Parameters<typeof createMcpServer>[1]>,
+  ): Promise<{ instructions: string | undefined; skillTexts: string[] }> {
+    const ctx: ToolContext = {
+      token: "sk-test",
+      env: { DJANGO_BASE_URL: "https://staging.trytako.com" } as Env,
+      sendProgress: noopSendProgress,
+      surface: "generic",
+    };
+    const server = createMcpServer(ctx, { ...options, surface: "generic", clientRendersUi: false });
+    const client = new Client(
+      { name: "pins-instructions-test", version: "0.0.0" },
+      { jsonSchemaValidator: new CfWorkerJsonSchemaValidator() },
+    );
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    try {
+      const resources = client.getServerCapabilities()?.resources === undefined ? [] : (await client.listResources()).resources;
+      const skillTexts: string[] = [];
+      for (const resource of resources.filter((r) => r.uri.startsWith("skill://"))) {
+        const { contents } = await client.readResource({ uri: resource.uri });
+        for (const content of contents) if ("text" in content) skillTexts.push(content.text as string);
+      }
+      return { instructions: client.getInstructions(), skillTexts };
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  }
+
+  it("states a data pin in the instructions and serves the skills unchanged", async () => {
+    const pinned = await connectWith({ inputPins: { sources: ["data"] } });
+    const unpinned = await connectWith({});
+    expect(pinned.instructions).toContain("use Tako data only");
+    expect(pinned.skillTexts.length).toBeGreaterThan(0);
+    expect(pinned.skillTexts).toEqual(unpinned.skillTexts);
+  });
+
+  it("says nothing about a pin no listed tool declares", async () => {
+    const { instructions, skillTexts } = await connectWith({
+      inputPins: { sources: ["data"] },
+      requestedToolNames: new Set(["tako_contents"]),
+    });
+    expect(instructions).not.toContain("On this connection");
+    expect(skillTexts).toEqual((await connectWith({ requestedToolNames: new Set(["tako_contents"]) })).skillTexts);
+  });
+});

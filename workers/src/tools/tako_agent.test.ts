@@ -10,7 +10,8 @@ vi.mock("../django.js", async (importOriginal) => {
 import { djangoPost, djangoGet } from "../django.js";
 import type { Env } from "../env.js";
 import { createMcpServer } from "../mcp.js";
-import tool, { buildAgentBody } from "./tako_agent.js";
+import tool, { buildAgentBody, describeAnswerAgent } from "./tako_agent.js";
+import { applyInputPins, inputSchemaForConnection } from "./_input_pins.js";
 import { refusalGuidance } from "./_agent_run.js";
 import { AnswerAgentRunRequest } from "../generated/schemas.js";
 import { AGENT_CALL_WINDOW_MS } from "./_agent_wait.js";
@@ -430,3 +431,21 @@ describe("tako_agent contract guards", () => {
   });
 });
 
+
+describe("tako_agent on a connection that pins sources", () => {
+  it("describes the pinned sources", () => {
+    expect(describeAnswerAgent(["data"])).toContain("queries the data graph over several steps");
+    expect(describeAnswerAgent(["web"])).toContain("queries the web over several steps");
+    expect(describeAnswerAgent(["data", "web"])).toBe(tool.description);
+  });
+
+  it("sends the pinned sources on a thread follow-up", () => {
+    const pins = { sources: ["data"] as const };
+    const parsed = inputSchemaForConnection(tool, "generic", pins).parse({
+      query: "and in 2024?",
+      thread_id: "6f1c1d2e-3a4b-4c5d-8e9f-0a1b2c3d4e5f",
+    });
+    const input = applyInputPins(tool, pins, parsed) as Parameters<typeof buildAgentBody>[0];
+    expect(buildAgentBody(input).source_indexes).toEqual(["data"]);
+  });
+});

@@ -241,6 +241,15 @@ describe("tako_graph_related", () => {
 });
 
 
+describe("tako_graph_related on a connection that pins sources", () => {
+  it("doesn't call search the card check on a web pin", () => {
+    const web = takoGraphRelated.describeForPins({ sources: ["web"] });
+    expect(web).toContain("This connection's search returns no Tako cards");
+    expect(web).not.toContain("final check");
+    expect(takoGraphRelated.describeForPins({ sources: ["data"] })).toBe(takoGraphRelated.description);
+  });
+});
+
 describe("tako_graph_related output projection", () => {
   const fatItem = (i: number) => ({
     id: `ent::co${i}::1`,

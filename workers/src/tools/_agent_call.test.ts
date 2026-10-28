@@ -441,6 +441,20 @@ describe("runAgentCall", () => {
     }
   });
 
+  it("tells the model to start a new thread when the connection pins sources", async () => {
+    vi.mocked(djangoPost).mockRejectedValue(
+      httpError(409, JSON.stringify({ code: "source_indexes_mismatch", message: "x" })),
+    );
+    const pinned = { ...ctx, pins: { sources: ["data"] as const } };
+    const err = (await runAgentCall(pinned, "answer", { query: "q" }, startBody).catch(
+      (e: unknown) => e,
+    )) as Error & { modelGuidance?: string };
+
+    expect(err.modelGuidance).toBe(
+      "This thread's sources are fixed, and this connection pins `sources`. Omit `thread_id` to start a new thread.",
+    );
+  });
+
   it("maps thread_product_mismatch to the other tool's name when the connection registered it", async () => {
     const body = JSON.stringify({ code: "thread_product_mismatch", message: "x" });
     const registered = { ...ctx, registeredTools: new Set(["tako_agent", "tako_company_agent"]) };

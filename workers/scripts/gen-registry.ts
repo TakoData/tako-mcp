@@ -80,6 +80,7 @@ import {
 import { graphRelatedOutputShape, graphSearchOutputShape, projectRelated } from "../src/tools/_graph.js";
 import type { Env } from "../src/env.js";
 import { skillsForSurface } from "../src/skills.js";
+import { describePins, everySinglePin } from "../src/tools/_input_pins.js";
 import type { Surface } from "../src/surface.js";
 import type { ToolAnnotations, ToolModule } from "../src/tools/types.js";
 import { readSkills, renderSkillsModule, skillMarkdownPaths } from "./gen-skills.js";
@@ -1208,6 +1209,11 @@ export function buildToolsDoc(input: ToolsDocInput): string {
       "",
     );
     out.push("Description:", "", m.description, "");
+    for (const pins of everySinglePin()) {
+      const pinned = m.describeForPins?.(pins);
+      if (pinned === undefined || pinned === m.description) continue;
+      out.push(`<details><summary>Description on \`/mcp?${describePins(pins)}\`</summary>`, "", pinned, "", "</details>", "");
+    }
     out.push("Parameters:", "");
     const params = Object.entries(reg.parameters);
     if (params.length === 0) {
@@ -1240,6 +1246,12 @@ export function buildToolsDoc(input: ToolsDocInput): string {
     if (workerRows.length > 0) {
       out.push("Fixed worker-side settings (not request fields):", "");
       for (const f of workerRows) out.push(`- \`${f.field}\` = \`${f.value}\` — ${f.note}`);
+      out.push("");
+    }
+    const pinnable = Object.entries(m.inputPins ?? {});
+    if (pinnable.length > 0) {
+      out.push("URL-pinnable inputs (set on the /mcp URL):", "");
+      for (const [name, applier] of pinnable) out.push(`- \`?${name}=\` — ${applier.note}`);
       out.push("");
     }
     out.push("Annotations:", "");

@@ -48,7 +48,8 @@ import {
   projectCandidate,
   projectMatch,
   projectRef,
-  searchToolFor,
+  type SearchReach,
+  searchReachFor,
   RENDER_FULL_N,
   SELECT_TOP_N,
   SHELL_COVERAGE_MAX,
@@ -91,6 +92,7 @@ import {
 } from "./_render_markdown.js";
 import type { graphNodeSchema, graphRelationSchema } from "./_graph.js";
 import { logWireGuardFailure } from "./_log.js";
+import { type InputPins, reachesSource } from "./_input_pins.js";
 import type { ToolModule } from "./types.js";
 
 /** One drilled coverage page (graph/related's `relation` group). */
@@ -112,13 +114,24 @@ const NER_LABELS = [
 // closest names "probably NOT what you asked for". The aggregate measurement
 // (9 of 15) stands and predates that rule; any replacement example has to be
 // re-measured against the equality gate before it goes in here.
-const DESCRIPTION = [
-  "Find what data Tako holds on an entity or a metric, and the canonical name it holds it under.",
-  "",
-  "Best for: questions about what Tako covers. Put a company, person, or place in `q` to list the metrics tracked on it; put a metric in `q` to list the entities it covers. Add `metric` when you know the measure — you get the resolved pair and a ready-to-run `next_call`.",
-  "",
-  "Search on the canonical names it returns, not your own phrasing — `tako_search` matches the graph's names, not yours. A name here means the graph tracks it, not that a card exists. If the follow-up search comes back empty, say Tako has no card for it rather than rephrasing the query. Hand a node id to `tako_graph_related` to see what else connects to it.",
-].join("\n");
+const availableDataDescription = (pairResult: string, cardCheck: string): string =>
+  [
+    "Find what data Tako holds on an entity or a metric, and the canonical name it holds it under.",
+    "",
+    `Best for: questions about what Tako covers. Put a company, person, or place in \`q\` to list the metrics tracked on it; put a metric in \`q\` to list the entities it covers. Add \`metric\` when you know the measure — you get ${pairResult}.`,
+    "",
+    `${cardCheck} Hand a node id to \`tako_graph_related\` to see what else connects to it.`,
+  ].join("\n");
+
+const DESCRIPTION = availableDataDescription(
+  "the resolved pair and a ready-to-run `next_call`",
+  "Search on the canonical names it returns, not your own phrasing — `tako_search` matches the graph's names, not yours. A name here means the graph tracks it, not that a card exists. If the follow-up search comes back empty, say Tako has no card for it rather than rephrasing the query.",
+);
+
+const NO_CARDS_DESCRIPTION = availableDataDescription(
+  "the resolved pair",
+  "A name here means the graph tracks it. This connection's search returns no Tako cards, so it can't confirm a card, and an empty search doesn't mean Tako lacks the data.",
+);
 
 const inputSchema = z.object({
   q: z.string().min(2).describe(
@@ -176,16 +189,16 @@ function guidanceForPair(
   metricQuery: string,
   metricConfident: boolean,
   verified: PairVerdict | undefined,
-  searchTool: "tako_search" | "tako_search_advanced" | null,
+  reach: SearchReach,
 ): { guidance?: string } {
   if (pair.entity === null) {
-    return { guidance: guidanceEntityUnresolved(entityQuery, searchTool) };
+    return { guidance: guidanceEntityUnresolved(entityQuery, reach.web) };
   }
   if (pair.metric === null || !metricConfident) {
     return { guidance: guidanceMetricUnresolved(pair.entity.name, metricQuery) };
   }
   if (verified === "unlinked") {
-    return { guidance: guidanceUnlinked(pair.entity.name, pair.metric.name, searchTool) };
+    return { guidance: guidanceUnlinked(pair.entity.name, pair.metric.name, reach.cards) };
   }
   return {};
 }
@@ -200,18 +213,19 @@ function guidanceForPair(
  */
 function guidanceForDrilled(
   matches: readonly CoverageMatch[],
-  searchTool: "tako_search" | "tako_search_advanced" | null,
+  reach: SearchReach,
 ): { guidance?: string } {
   const first = matches[0];
   if (first === undefined) return {};
   if (first.unavailable === true) return { guidance: guidanceUnavailable(first.name) };
   if (matches.some(hasLiveCoverage)) return {};
-  return { guidance: guidanceNoCoverage(first.name, first.coverage.kind, searchTool) };
+  return { guidance: guidanceNoCoverage(first.name, first.coverage.kind, reach.web) };
 }
 
 const tako_available_data = {
   name: "tako_available_data",
   description: DESCRIPTION,
+  describeForPins: (pins: InputPins) => (reachesSource(pins, "data") ? DESCRIPTION : NO_CARDS_DESCRIPTION),
   inputSchema,
   outputSchema,
   annotations: {
@@ -259,7 +273,7 @@ const tako_available_data = {
     // The search tool THIS connection registers, resolved once. Every handle
     // and every guidance sentence below names it rather than a constant —
     // `?tools=available_data,search_advanced` registers no `tako_search`.
-    const searchTool = searchToolFor(ctx.registeredTools);
+    const reach = searchReachFor(ctx.registeredTools, ctx.pins);
     // One `graph/search` probe. Extracted because the LOOKUP path runs two of
     // them (entity + metric) in parallel; the discovery path runs one.
     //
@@ -831,7 +845,7 @@ const tako_available_data = {
           metricQuery,
           pinnedConfident,
           pair.entity === null ? undefined : verified,
-          searchTool,
+          reach,
         ),
         matches: matches.map(projectMatch),
         candidates: [],
@@ -845,7 +859,7 @@ const tako_available_data = {
         // the precondition where the reader can see it, next to a `found` that
         // can now be true with no metric at all.
         next_call:
-          pair.metric !== null && pinnedConfident ? buildPairNextCall(pair, searchTool) : null,
+          pair.metric !== null && pinnedConfident ? buildPairNextCall(pair, reach.cards) : null,
         entity: pair.entity === null ? null : projectRef(pair.entity),
         metric: pair.metric === null ? null : projectRef(pair.metric),
         entity_candidates: pair.entity_alternates.map(projectRef),
@@ -861,7 +875,7 @@ const tako_available_data = {
     if (results.length === 0) {
       return {
         found: false,
-        guidance: guidanceNoMatch(input.q, searchTool),
+        guidance: guidanceNoMatch(input.q, reach.web),
         matches: [],
         candidates: [],
         next_call: null,
@@ -890,7 +904,7 @@ const tako_available_data = {
         // Nothing was drilled here — these nodes are resolutions the summary is
         // about to disclaim, so claiming a coverage check would overstate it.
         verified: "resolution",
-        guidance: guidanceLowConfidence(input.q, searchTool),
+        guidance: guidanceLowConfidence(input.q, reach.web),
         // `matches` stays EMPTY here. These nodes were resolved and then
         // disclaimed, and shipping them as matches is what let the structured
         // channel report coverage on a response whose prose said the names are
@@ -1105,14 +1119,14 @@ const tako_available_data = {
       // Only where the fields cannot state the verdict: a drilled node that
       // genuinely holds nothing, or one whose lookup failed. The happy path
       // gets no guidance — `matches` and `coverage` already say it.
-      ...guidanceForDrilled(matches, searchTool),
+      ...guidanceForDrilled(matches, reach),
       matches: matches.map(projectMatch),
       candidates: other_matches.map(projectCandidate),
       // The discovery-to-fetch handle: agents that stop at prose re-derive a
       // query and often miss; this is the same example the summary names, in
       // directly runnable form. Gated on a coverage list small enough to make
       // the target unambiguous — see buildNextCall.
-      next_call: buildNextCall(matches, searchTool),
+      next_call: buildNextCall(matches, reach.cards),
     };
   },
   renderText(output, _ctx) {

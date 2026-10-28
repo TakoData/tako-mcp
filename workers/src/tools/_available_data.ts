@@ -21,6 +21,8 @@
 import type { z } from "zod";
 
 import type { graphNodeSchema, graphRelationSchema } from "./_graph.js";
+import { type InputPins, reachesSource } from "./_input_pins.js";
+import type { SearchToolName } from "./_search_results.js";
 import { sameTokens } from "./_match_gate.js";
 import type { MatchCandidate } from "./_match_gate.js";
 
@@ -447,6 +449,26 @@ export function searchToolFor(
   if (registered.has("tako_search")) return "tako_search";
   if (registered.has("tako_search_advanced")) return "tako_search_advanced";
   return null;
+}
+
+/**
+ * The search tool that can return a card, and the one that can reach the web,
+ * on this connection. A `sources` pin leaves one of them `null`.
+ */
+export interface SearchReach {
+  readonly cards: SearchToolName | null;
+  readonly web: SearchToolName | null;
+}
+
+export function searchReachFor(
+  registered: ReadonlySet<string> | undefined,
+  pins: InputPins | undefined,
+): SearchReach {
+  const searchTool = searchToolFor(registered);
+  return {
+    cards: reachesSource(pins, "data") ? searchTool : null,
+    web: reachesSource(pins, "web") ? searchTool : null,
+  };
 }
 
 /** "Search the web with `tako_search`" — or, with no search tool registered, no pointer at all. */

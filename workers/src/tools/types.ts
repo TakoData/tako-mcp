@@ -20,6 +20,7 @@ import type { CallerStamp } from "../caller.js";
 import type { Env } from "../env.js";
 import type { Tier } from "../freetier.js";
 import type { Surface } from "../surface.js";
+import type { InputPinAppliers, InputPins } from "./_input_pins.js";
 
 /**
  * Execution context handed to every tool `handler`. Built in `mcp.ts` once
@@ -129,6 +130,8 @@ export interface ToolContext {
    * a tool is present.
    */
   registeredTools?: ReadonlySet<string> | undefined;
+  /** The connection's URL pins that a registered tool declares. `undefined` outside an HTTP request. */
+  pins?: InputPins | undefined;
   /**
    * Attribution for upstream Django calls: `django.ts` sets `User-Agent`
    * and `X-Tako-Caller` from it. When `undefined`, the request sends no
@@ -429,6 +432,13 @@ export interface ToolModule<
   annotationsBySurface?: { chatgpt?: Partial<ToolAnnotations> };
   /** Request fields sent with a constant value — see {@link FixedInput}. */
   fixedInputs?: ReadonlyArray<FixedInput>;
+  /** Inputs a `/mcp` URL parameter can pin for the whole connection, keyed by MCP input name. */
+  inputPins?: InputPinAppliers;
+  /**
+   * The description on a connection that applies `pins`. Returns `description`
+   * when no pin changes what this tool can reach.
+   */
+  describeForPins?: (pins: InputPins) => string;
   /**
    * Answer this tool's calls over SSE on the generic surface so
    * `ctx.sendProgress` reaches the client. The chatgpt surface, and every
@@ -560,6 +570,10 @@ export interface AnyToolModule {
   annotationsBySurface?: { chatgpt?: Partial<ToolAnnotations> };
   /** Request fields sent with a constant value — see {@link FixedInput}. */
   fixedInputs?: ReadonlyArray<FixedInput>;
+  /** URL-pinnable inputs — see {@link ToolModule.inputPins}. */
+  inputPins?: InputPinAppliers;
+  /** Pin-aware description — see {@link ToolModule.describeForPins}. */
+  describeForPins?: (pins: InputPins) => string;
   /** SSE responses for progress — see {@link ToolModule.streamsProgress}. */
   streamsProgress?: true;
   /** Anonymous-input gate — see {@link ToolModule.anonymousInputRejects}. */
