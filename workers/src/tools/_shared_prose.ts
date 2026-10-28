@@ -17,6 +17,9 @@ export const SOURCES_CORPORA_SENTENCE =
 
 export const SOURCES_KEEP_BOTH_SENTENCE = "Keep both unless the user asks for one.";
 
+export const PREMIUM_ROW_SCOPE_SENTENCES =
+  "If a row has its own Tako link, in its cells or in the card's `description`, pass that link with `max_rows: 1` to get only that row. Otherwise set `offset` and `max_rows` to those rows.";
+
 /**
  * `sources` on `tako_search` and `tako_agent`. Both take the same two-corpus
  * enum and route the same way, so the sentence is one string. `tako_agent`

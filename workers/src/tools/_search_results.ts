@@ -23,7 +23,7 @@ import {
   nativeCardUrl,
   withShareOptIn,
 } from "./_chart_widget.js";
-import { GENERIC_SIGN_IN_HINT, PASSAGE_BREAK_DESCRIBE } from "./_shared_prose.js";
+import { GENERIC_SIGN_IN_HINT, PASSAGE_BREAK_DESCRIBE, PREMIUM_ROW_SCOPE_SENTENCES } from "./_shared_prose.js";
 
 // Backend ResultContent (api/ga/content_types.py) — a result's export
 // descriptor + inline data. It rides on every EXPORTABLE result (even when
@@ -1346,8 +1346,7 @@ export function withheldDataGuidance(cards: ReadonlyArray<TakoCard>): string | u
   return `${sources.join(" and ")} data on a placeholder card needs a signed-in connection. ${GENERIC_SIGN_IN_HINT}`;
 }
 
-export const WITHHELD_CELLS_GUIDANCE =
-  "A card shows premium cells as 🔒. When the user asks for them, `tako_contents` with `premium: true` returns them. Charges scale with the rows that hold one.";
+export const WITHHELD_CELLS_GUIDANCE = `A card shows premium cells as 🔒. When the user asks for them, \`tako_contents\` with \`premium: true\` returns them. Charges scale with the rows that hold one, so fetch only the rows the user wants. ${PREMIUM_ROW_SCOPE_SENTENCES}`;
 
 export function withheldCellsGuidance(cards: ReadonlyArray<TakoCard>): string | undefined {
   const withholds = cards.some((card) => {

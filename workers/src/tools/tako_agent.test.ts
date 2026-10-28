@@ -2,7 +2,6 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { CfWorkerJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/cfworker";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { z } from "zod";
 
 vi.mock("../django.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../django.js")>();
@@ -16,6 +15,7 @@ import { refusalGuidance } from "./_agent_run.js";
 import { AnswerAgentRunRequest } from "../generated/schemas.js";
 import { AGENT_CALL_WINDOW_MS } from "./_agent_wait.js";
 import { AGENT_CARD_LINK_SENTENCE } from "./_agent_call.js";
+import { inputPropertyDescription } from "./__test_helpers.js";
 import type { ToolContext } from "./types.js";
 
 const encoder = new TextEncoder();
@@ -391,7 +391,7 @@ describe("tako_agent input schema", () => {
   });
 
   it("the sources description keeps both corpora unless the user asks for one", () => {
-    const sources = (z.toJSONSchema(tool.inputSchema, { io: "input" }) as { properties: Record<string, { description?: string }> }).properties.sources?.description;
+    const sources = inputPropertyDescription(tool.inputSchema, "sources");
     expect(sources).toContain("`data` is Tako's data graph, curated from authoritative data sources; `web` is the open web.");
     expect(sources).toContain("Keep both unless the user asks for one.");
   });

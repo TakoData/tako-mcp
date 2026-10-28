@@ -11,6 +11,7 @@
  * the real tools at the top of `ls`.
  */
 import { vi } from "vitest";
+import { z } from "zod";
 
 import type { ToolContext } from "./types.js";
 
@@ -109,3 +110,9 @@ export async function bodyOf(req: Request): Promise<Record<string, unknown>> {
  */
 export const TIER_CLAIM =
   /anonymous|sign(ed|ing)?[ -]in|log(ged|ging)? ?in|Tako account|requires? (an )?account|credentials|API key|\bfree\b|no charge|at no cost|unlocks?/i;
+
+/** The description `tools/list` publishes for one input property. */
+export function inputPropertyDescription(schema: z.ZodType, property: string): string | undefined {
+  const published = z.toJSONSchema(schema, { io: "input" }) as { properties: Record<string, { description?: string }> };
+  return published.properties[property]?.description;
+}

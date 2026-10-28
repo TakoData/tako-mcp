@@ -12,7 +12,8 @@ vi.mock("../django.js", async (importOriginal) => ({
 
 import { DjangoBadRequestError, DjangoError, DjangoHttpError, DjangoNotFoundError, DjangoTimeoutError, DjangoUnauthorizedError, djangoPost } from "../django.js";
 import { djangoErrorToToolResult } from "../mcp.js";
-import { CARD_FALLBACK_NOTE, chatgptContentsOutputShape, EMPTY_PAYLOAD_ERROR, OFFSET_ORDER_NOTE, PREMIUM_REVEAL_NOTE } from "./_contents.js";
+import { CARD_FALLBACK_NOTE, chatgptContentsOutputShape, EMPTY_PAYLOAD_ERROR, OFFSET_ORDER_NOTE } from "./_contents.js";
+import { inputPropertyDescription } from "./__test_helpers.js";
 import tool, {
   BATCH_CHAR_BUDGET,
   chatgptInputSchema,
@@ -980,9 +981,9 @@ describe("tako_contents premium and offset", () => {
       redacted_cells: redacted,
     });
 
-  it("the premium description scopes a reveal to the rows the user wants", () => {
-    expect((z.toJSONSchema(tool.inputSchema, { io: "input" }) as { properties: Record<string, { description?: string }> }).properties.premium?.description).toContain(
-      "set it only when the user asks, with `offset` and `max_rows` set to only the rows they want.",
+  it("the premium description sends a one-row reveal to that row's own Tako link", () => {
+    expect(inputPropertyDescription(tool.inputSchema, "premium")).toContain(
+      "For one row, pass its own Tako link with `max_rows: 1`. Otherwise set `offset` and `max_rows`.",
     );
   });
 
@@ -1020,12 +1021,12 @@ describe("tako_contents premium and offset", () => {
     expect(tool.inputSchema.safeParse({ urls: [cardUrl], premium: true, max_rows: 1 }).success).toBe(true);
   });
 
-  it("warns that a premium fetch shows the revealed cells to anyone who opens the card", async () => {
+  it("adds no note to a premium fetch that returned every cell", async () => {
     vi.mocked(djangoPost).mockResolvedValue(
       card({ ...peopleCard(null).contents[0], premium: true, premium_rows: { person_contact: 1 } }),
     );
     const out = await tool.handler(tool.inputSchema.parse({ urls: [cardUrl], premium: true, max_rows: 1 }), ctx);
-    expect(out.results[0]!.note).toBe(PREMIUM_REVEAL_NOTE);
+    expect(out.results[0]).not.toHaveProperty("note");
   });
 
   it("tells the model to check the row's name when it skipped rows", async () => {
@@ -1046,7 +1047,7 @@ describe("tako_contents premium and offset", () => {
     vi.mocked(djangoPost).mockResolvedValue(peopleCard({ work_email: [0, 1], phone: [0] }));
     const out = await tool.handler(tool.inputSchema.parse({ urls: [cardUrl] }), ctx);
     expect(out.results[0]!.note).toBe(
-      "Tako returned the premium cells in `work_email`, `phone` as `null` in 2 rows. To get them, call again with `premium: true`, and `offset` and `max_rows` set to only the rows the user wants. Charges scale with those rows.",
+      "Tako returned the premium cells in `work_email`, `phone` as `null` in 2 rows. To get them, call again with `premium: true` for only the rows the user wants. Charges scale with those rows. If a row has its own Tako link, in its cells or in the card's `description`, pass that link with `max_rows: 1` to get only that row. Otherwise set `offset` and `max_rows` to those rows.",
     );
   });
 
@@ -1067,7 +1068,7 @@ describe("tako_contents premium and offset", () => {
     });
     const out = await tool.handler(tool.inputSchema.parse({ urls: [cardUrl], delivery: "link" }), ctx);
     expect(out.results[0]!.note).toBe(
-      "Tako returned the premium cells in `phone` as `[premium: withheld]` in 2 rows. To get them, call again with `premium: true`, and `offset` and `max_rows` set to only the rows the user wants. Charges scale with those rows.",
+      "Tako returned the premium cells in `phone` as `[premium: withheld]` in 2 rows. To get them, call again with `premium: true` for only the rows the user wants. Charges scale with those rows. If a row has its own Tako link, in its cells or in the card's `description`, pass that link with `max_rows: 1` to get only that row. Otherwise set `offset` and `max_rows` to those rows.",
     );
   });
 
@@ -1078,7 +1079,7 @@ describe("tako_contents premium and offset", () => {
       { ...ctx, surface: "chatgpt" as const },
     );
     expect(out.results[0]!.note).toBe(
-      "Tako returned the premium cells in `phone` as `null` in 1 row. To get them, call again with `premium: true`, and `offset` and `max_rows` set to only the rows the user wants. Charges scale with those rows.",
+      "Tako returned the premium cells in `phone` as `null` in 1 row. To get them, call again with `premium: true` for only the rows the user wants. Charges scale with those rows. If a row has its own Tako link, in its cells or in the card's `description`, pass that link with `max_rows: 1` to get only that row. Otherwise set `offset` and `max_rows` to those rows.",
     );
   });
 
@@ -1099,7 +1100,7 @@ describe("tako_contents premium and offset", () => {
     );
     const body = vi.mocked(djangoPost).mock.calls[0]![3] as Record<string, unknown>;
     expect(body).toMatchObject({ premium: true, offset: 2, max_rows: 1 });
-    expect(out.results[0]!.note).toContain(PREMIUM_REVEAL_NOTE);
+    expect(out.results[0]!.note).toBe(OFFSET_ORDER_NOTE);
   });
 
   it("adds no note when nothing was withheld", async () => {

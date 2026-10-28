@@ -2,7 +2,6 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { CfWorkerJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/cfworker";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { z } from "zod";
 
 vi.mock("../django.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../django.js")>();
@@ -15,6 +14,7 @@ import { parseToolsParam } from "./_tools_param.js";
 import { CHATGPT_TOOL_NAMES, GENERIC_DEFAULT_TOOL_NAMES, resolveToolSet } from "./_surface.js";
 import { TOOL_REGISTRY } from "./_registry.js";
 import tool, { buildCompanyAgentBody } from "./tako_company_agent.js";
+import { inputPropertyDescription } from "./__test_helpers.js";
 import type { ToolContext } from "./types.js";
 import { AGENT_CARD_LINK_SENTENCE } from "./_agent_call.js";
 
@@ -73,7 +73,7 @@ describe("tako_company_agent", () => {
   });
 
   it("the sources description keeps both corpora unless the user asks for one", () => {
-    const sources = (z.toJSONSchema(tool.inputSchema, { io: "input" }) as { properties: Record<string, { description?: string }> }).properties.sources?.description;
+    const sources = inputPropertyDescription(tool.inputSchema, "sources");
     expect(sources).toContain("`data` is Tako's data graph, curated from authoritative data sources; `web` is the open web.");
     expect(sources).toContain("Keep both unless the user asks for one.");
   });

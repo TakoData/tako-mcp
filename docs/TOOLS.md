@@ -1229,7 +1229,7 @@ Parameters:
 | `delivery` | string ("inline" \\| "link") | no |  | Tako cards only. `inline` returns the data in the result. `link` returns a download link: a CSV file, or a JSON file with `format: "card"`. It expires in 5 minutes. Use `link` when you can run shell commands and want to analyze the data in code. If the download fails, call again inline with `max_rows` at 2,000 or less. |
 | `format` | string ("rows" \\| "card") | no |  | Tako cards only. `rows` returns the card's data as one table. `card` returns the card's own structure, such as a company card's tabs or a game's box score. |
 | `offset` | integer | no |  | Tako list cards only: rows to skip. With `max_rows: 1`, it fetches a single row. |
-| `premium` | boolean | no |  | Tako cards only: `true` returns premium cells, shown as 🔒 in `tako_search` and listed in `note`. Charges scale with the rows that hold one, so set it only when the user asks, with `offset` and `max_rows` set to only the rows they want. |
+| `premium` | boolean | no |  | Tako cards only: `true` returns premium cells, shown as 🔒. Charges scale with the rows that hold one, so set it only when the user asks. For one row, pass its own Tako link with `max_rows: 1`. Otherwise set `offset` and `max_rows`. |
 
 Fixed request inputs (the caller cannot change these):
 
@@ -1300,7 +1300,7 @@ Annotations:
       "maximum": 100000
     },
     "premium": {
-      "description": "Tako cards only: `true` returns premium cells, shown as 🔒 in `tako_search` and listed in `note`. Charges scale with the rows that hold one, so set it only when the user asks, with `offset` and `max_rows` set to only the rows they want.",
+      "description": "Tako cards only: `true` returns premium cells, shown as 🔒. Charges scale with the rows that hold one, so set it only when the user asks. For one row, pass its own Tako link with `max_rows: 1`. Otherwise set `offset` and `max_rows`.",
       "type": "boolean"
     }
   },
@@ -1354,7 +1354,7 @@ Annotations:
       "maximum": 100000
     },
     "premium": {
-      "description": "Tako cards only: `true` returns premium cells, shown as 🔒 in `tako_search` and listed in `note`. Charges scale with the rows that hold one, so set it only when the user asks, with `offset` and `max_rows` set to only the rows they want.",
+      "description": "Tako cards only: `true` returns premium cells, shown as 🔒. Charges scale with the rows that hold one, so set it only when the user asks. For one row, pass its own Tako link with `max_rows: 1`. Otherwise set `offset` and `max_rows`.",
       "type": "boolean"
     }
   },
