@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.8.0](https://github.com/TakoData/tako-mcp/compare/v1.7.0...v1.8.0) (2026-10-28)
+
+
+### Features
+
+* pin a connection to Tako data or the web with ?sources= on the /mcp URL ([#388](https://github.com/TakoData/tako-mcp/issues/388)) ([4da7929](https://github.com/TakoData/tako-mcp/commit/4da7929cb2bbf2ba49fd09f9c5c6c97c94acfbbd))
+
+
+### Chores
+
+* **chatgpt-plugin:** package 1.3.1 with the agent-routing and one-row premium skill edits ([#385](https://github.com/TakoData/tako-mcp/issues/385)) ([97e1df8](https://github.com/TakoData/tako-mcp/commit/97e1df898ea4ff093969129684e139c1985882b3))
+* sync OpenAPI spec from monorepo ([#387](https://github.com/TakoData/tako-mcp/issues/387)) ([9cde958](https://github.com/TakoData/tako-mcp/commit/9cde958f28349bdbd8dcd5dcf55282ae60419570))
+
 ## [1.7.0](https://github.com/TakoData/tako-mcp/compare/v1.6.2...v1.7.0) (2026-10-28)
 
 
