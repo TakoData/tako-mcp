@@ -1729,6 +1729,9 @@ const WIDGET_HTML = `<!doctype html>
   var carouselNext = document.getElementById("tako-next");
   var carouselSlides = [];
   var keepSingleFrameUntilSlideReveals = false;
+  // The embed carousel runs on ChatGPT, which pins the tallest height it has
+  // seen and ignores shrinks, so it only grows. Live cards can also render on
+  // a window.openai host, where ChatGPT ignores their shrinks.
   var carouselShrinks = false;
 
   function renderCarousel(charts, fallbackHeight) {
