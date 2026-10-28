@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.7.0](https://github.com/TakoData/tako-mcp/compare/v1.6.2...v1.7.0) (2026-10-28)
+
+
+### Features
+
+* **mcp:** render live cards on /mcp for clients that declare MCP Apps support ([#374](https://github.com/TakoData/tako-mcp/issues/374)) ([3efe6dd](https://github.com/TakoData/tako-mcp/commit/3efe6dd646ea1728ba39c747ee1d586be2949fc5))
+
+
+### Bug Fixes
+
+* **chatgpt:** keep the data graph on, start the company agent only when asked, and scope premium reveals ([#383](https://github.com/TakoData/tako-mcp/issues/383)) ([961dbf6](https://github.com/TakoData/tako-mcp/commit/961dbf60cc5f8c6067147ddded4035271b4f80ea))
+* **widget:** fit the host frame to a live card that settles shorter ([#384](https://github.com/TakoData/tako-mcp/issues/384)) ([ab6a32c](https://github.com/TakoData/tako-mcp/commit/ab6a32cc98f172522a121de652bc055e4b613576))
+
 ## [1.6.2](https://github.com/TakoData/tako-mcp/compare/v1.6.1...v1.6.2) (2026-10-27)
 
 

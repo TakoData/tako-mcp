@@ -3,7 +3,7 @@
   "name": "io.github.TakoData/tako-mcp",
   "title": "Tako",
   "description": "Premium live data from S&P Global, FRED, OECD & more, plus web search, in one call.",
-  "version": "1.6.2",
+  "version": "1.7.0",
   "repository": {
     "url": "https://github.com/TakoData/tako-mcp",
     "source": "github"
