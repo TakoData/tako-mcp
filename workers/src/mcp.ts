@@ -50,6 +50,16 @@ import { AgentInputError } from "./tools/_agent_product.js";
 import { logToolRequestId } from "./tools/_log.js";
 import { GENERIC_SIGN_IN_HINT } from "./tools/_shared_prose.js";
 import { parseToolsParam, readToolsParam } from "./tools/_tools_param.js";
+import {
+  type InputPins,
+  NO_PINS,
+  applyInputPins,
+  describePins,
+  descriptionForConnection,
+  effectivePins,
+  inputSchemaForConnection,
+  readInputPins,
+} from "./tools/_input_pins.js";
 import { TOOL_REGISTRY } from "./tools/_registry.js";
 import {
   authRequiredToolResult,
@@ -61,7 +71,6 @@ import {
   FREE_TIER_TOOL_NAMES,
   isToolOnSurface,
   resolveToolSet,
-  inputSchemaForSurface,
   outputSchemaForSurface,
   toolAnnotationsForSurface,
 } from "./tools/_surface.js";
@@ -153,6 +162,8 @@ export function createMcpServer(
      * Ignored on the chatgpt surface, whose listing is fixed (spec D2).
      */
     requestedToolNames?: ReadonlySet<string> | null;
+    /** The `/mcp` URL's pinned tool inputs, as parsed by `readInputPins`. Omitted means none. */
+    inputPins?: InputPins;
     /**
      * Connection tier. `"free"` (anonymous, no Authorization header)
      * restricts the EXECUTABLE toolset to `FREE_TIER_TOOL_NAMES`. The
@@ -275,6 +286,10 @@ export function createMcpServer(
   // the per-call context so a tool result cannot name a tool this loop did
   // not register. Same call that drives `isToolOnSurface` below.
   const registeredTools = resolveToolSet(surface, requestedToolNames);
+  const pins = effectivePins(
+    TOOL_REGISTRY.filter((tool) => registeredTools.has(tool.name)),
+    options.inputPins ?? NO_PINS,
+  );
 
   for (const tool of TOOL_REGISTRY) {
     // Deliberately tier-blind: the listing is auth-invariant (spec D4);
@@ -287,6 +302,7 @@ export function createMcpServer(
       clientRendersUi: options.clientRendersUi,
       tier,
       registeredTools,
+      pins,
       // Commerce copy (billing remedies, account pointers) is allowed on
       // the generic surface for every client (spec D5); the chatgpt
       // surface never carries it — OpenAI's app guidelines ban
@@ -428,6 +444,8 @@ function registerTool(
      * `tako_search` alone and tier cannot tell you that.
      */
     registeredTools: ReadonlySet<string>;
+    /** The connection's pinned tool inputs; this tool applies the ones it declares. */
+    pins: InputPins;
     /**
      * Request origin (e.g. `https://mcp.tako.com`) used to build the
      * `resource_metadata` URL in `_meta["mcp/www_authenticate"]`
@@ -471,8 +489,8 @@ function registerTool(
   // the wire" is the guard.
   const config: Record<string, unknown> = {
     title: tool.annotations.title,
-    description: tool.description,
-    inputSchema: inputSchemaForSurface(tool, options.surface),
+    description: descriptionForConnection(tool, options.surface, options.pins),
+    inputSchema: inputSchemaForConnection(tool, options.surface, options.pins),
     annotations: toolAnnotationsForSurface(tool, options.surface),
   };
 
@@ -797,6 +815,7 @@ function registerTool(
         // connection did not register is an instruction the model cannot
         // follow.
         registeredTools: options.registeredTools,
+        pins: options.pins,
         // Same registration-time source as `surface` and `tier` above: the
         // logged surface must be the one that chose the toolset, not the
         // request-time copy on `ctx`.
@@ -831,10 +850,14 @@ function registerTool(
       // `isMeteredJsonRpcBody` reads THIS SAME hook so the per-IP limiter does
       // not charge for a call that never runs. Rebuilding that later is far
       // more expensive than keeping ten dormant lines.
+      const pinnedInput = applyInputPins(
+        tool,
+        options.surface,
+        options.pins,
+        input as Record<string, unknown>,
+      );
       if (callCtx.tier === "free" && tool.anonymousInputRejects !== undefined) {
-        const reason = tool.anonymousInputRejects(
-          input as Record<string, unknown>,
-        );
+        const reason = tool.anonymousInputRejects(pinnedInput);
         if (reason !== undefined) {
           console.log(`[mcp] anonymous input rejected tool=${tool.name}`);
           // `reason` is the LEAD, not a suffix: this tool executes fine
@@ -849,7 +872,7 @@ function registerTool(
       }
       let output: unknown;
       try {
-        output = await tool.handler(input as unknown, callCtx);
+        output = await tool.handler(pinnedInput, callCtx);
       } catch (err) {
         // Map Django transport failures to a structured `isError: true`
         // result so MCP clients can distinguish "your token was rejected"
@@ -1478,6 +1501,13 @@ export async function handleMcpRequest(
   env: Env,
   surface: Surface,
 ): Promise<Response> {
+  const pinsResult =
+    surface === "generic"
+      ? readInputPins(new URL(request.url))
+      : { ok: true as const, pins: NO_PINS };
+  if (!pinsResult.ok) return invalidInputPinResponse(pinsResult.message);
+  const inputPins = pinsResult.pins;
+
   // Gate the endpoint behind Bearer auth — with one carve-out. A request
   // whose Authorization header is fully ABSENT (kind="missing") is served
   // as the anonymous free tier when the env has opted in (both free-tier
@@ -1648,6 +1678,9 @@ export async function handleMcpRequest(
         }`,
       );
     }
+    if (Object.keys(inputPins).length > 0) {
+      console.log(`[mcp] pins ${describePins(inputPins)} surface=${surface}`);
+    }
     const peekedBody = await peekJsonBody(request);
     const declaredUi =
       surface === "generic" ? initializeDeclaresUi(peekedBody) : undefined;
@@ -1666,10 +1699,11 @@ export async function handleMcpRequest(
       surface,
       clientRendersUi,
       requestedToolNames,
+      inputPins,
       tier,
     });
     const registeredTools = resolveToolSet(surface, requestedToolNames);
-    logToolInputRejections(peekedBody, registeredTools, surface);
+    logToolInputRejections(peekedBody, registeredTools, surface, inputPins);
     const streamingTool = streamingToolCallName(peekedBody);
     const surfaceRendersProgress = surface !== "chatgpt";
     const streamsProgress =
@@ -1757,6 +1791,13 @@ const TOOLS_BY_NAME: ReadonlyMap<string, AnyToolModule> = new Map(
 
 const MAX_LOGGED_ISSUES_CHARS = 500;
 
+function invalidInputPinResponse(message: string): Response {
+  return new Response(
+    JSON.stringify({ jsonrpc: "2.0", id: null, error: { code: -32602, message } }),
+    { status: 400, headers: { "Content-Type": "application/json; charset=utf-8" } },
+  );
+}
+
 /**
  * Log each `tools/call` in `body` whose arguments the tool's input schema
  * rejects. The SDK turns that rejection into an `isError` result before any
@@ -1768,6 +1809,7 @@ export function logToolInputRejections(
   body: unknown,
   registered: ReadonlySet<string>,
   surface: Surface,
+  pins: InputPins = NO_PINS,
 ): void {
   for (const message of Array.isArray(body) ? body : [body]) {
     if (typeof message !== "object" || message === null) continue;
@@ -1777,7 +1819,7 @@ export function logToolInputRejections(
     if (typeof name !== "string" || !registered.has(name)) continue;
     const tool = TOOLS_BY_NAME.get(name);
     if (tool === undefined) continue;
-    const parsed = inputSchemaForSurface(tool, surface).safeParse(args ?? {});
+    const parsed = inputSchemaForConnection(tool, surface, pins).safeParse(args ?? {});
     if (parsed.success) continue;
     const issues = parsed.error.issues
       .map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`)

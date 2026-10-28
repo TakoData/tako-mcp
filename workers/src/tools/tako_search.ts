@@ -24,6 +24,7 @@ import {
   buildChartExtraMeta,
   fetchPngContentBlock,
 } from "./_chart_widget.js";
+import { type Source, pinnedField } from "./_input_pins.js";
 import { looseArray } from "./_loose_array.js";
 import {
   renderSearchMarkdown,
@@ -44,6 +45,26 @@ const DESCRIPTION = [
   // other three default tools already use in docs/TOOLS.md.
   'Best for: breadth — fan out several narrow queries in parallel. Each query answers one question — one metric for one entity, a comparison set ("Apple revenue", "Nvidia vs AMD gross margin"), one news or web lookup ("EU AI Act timeline"), or one list of companies, or of business professionals by role and place, for prospecting or recruiting ("fintechs in London", "CFOs in Austin"); several metrics or topics in one query retrieve poorly.',
 ].join("\n");
+
+const PINNED_DESCRIPTION_LINES: Record<Source, { lead: string; contents: string }> = {
+  data: {
+    lead: "Search Tako's data graph: many results at once, as structured cards. This connection returns no web results. The first card's chart renders inline; some hosts also show every other card's chart, in search's order.",
+    contents:
+      "It finds results; `tako_contents` fetches what's behind them. Each card carries a headline value, node ids, and a url — pass the url to `tako_contents` for rows (`exportable: true` cards). When `exportable` is false the rows are locked — read the headline value from the card's `description`.",
+  },
+  web: {
+    lead: "Search the web: many results at once, as web results. This connection returns no Tako cards.",
+    contents: "It finds results; `tako_contents` fetches a web result's full page text.",
+  },
+};
+
+/** The description on a connection whose URL pins `sources`. */
+export function describeSearch(sources: readonly Source[]): string {
+  const only = sources.length === 1 ? sources[0] : undefined;
+  if (only === undefined) return DESCRIPTION;
+  const { lead, contents } = PINNED_DESCRIPTION_LINES[only];
+  return [lead, "", contents, ...DESCRIPTION.split("\n").slice(3)].join("\n");
+}
 
 const inputSchema = z.object({
   query: z
@@ -151,6 +172,7 @@ const tako_search = {
   name: "tako_search",
   description: DESCRIPTION,
   inputSchema,
+  inputPins: { sources: pinnedField("sources", describeSearch) },
   outputSchema,
   // The chart widget fields exist only where a widget reads them.
   outputSchemaBySurface: { chatgpt: searchChatgptOutputShape },

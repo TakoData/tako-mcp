@@ -26,7 +26,7 @@ import { z } from "zod";
 import type { Env } from "../env.js";
 import { SearchRequest } from "../generated/schemas.js";
 import type { AnyToolModule, ToolContext } from "./types.js";
-import tako_search, { buildSearchBody } from "./tako_search.js";
+import tako_search, { buildSearchBody, describeSearch } from "./tako_search.js";
 import tako_search_advanced from "./tako_search_advanced.js";
 import { GENERIC_SIGN_IN_HINT } from "./_shared_prose.js";
 import {
@@ -757,5 +757,27 @@ describe("tako_search extraMeta on generic", () => {
       expect(entry).not.toHaveProperty("image_natural_width");
     }
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("describeSearch for a connection that pins sources", () => {
+  it("describes a data-only connection without promising web results", () => {
+    const lines = describeSearch(["data"]).split("\n");
+    expect(lines[0]).toBe(
+      "Search Tako's data graph: many results at once, as structured cards. This connection returns no web results. The first card's chart renders inline; some hosts also show every other card's chart, in search's order.",
+    );
+    expect(describeSearch(["data"])).not.toContain("web result's");
+  });
+
+  it("describes a web-only connection without promising cards", () => {
+    const lines = describeSearch(["web"]).split("\n");
+    expect(lines[0]).toBe(
+      "Search the web: many results at once, as web results. This connection returns no Tako cards.",
+    );
+    expect(lines[2]).toBe("It finds results; `tako_contents` fetches a web result's full page text.");
+  });
+
+  it("keeps the default description for a data,web pin", () => {
+    expect(describeSearch(["data", "web"])).toBe(tako_search.description);
   });
 });
