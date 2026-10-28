@@ -13,7 +13,8 @@ import { createMcpServer } from "../mcp.js";
 import { parseToolsParam } from "./_tools_param.js";
 import { CHATGPT_TOOL_NAMES, GENERIC_DEFAULT_TOOL_NAMES, resolveToolSet } from "./_surface.js";
 import { TOOL_REGISTRY } from "./_registry.js";
-import tool, { buildCompanyAgentBody } from "./tako_company_agent.js";
+import tool, { buildCompanyAgentBody, describeCompanyAgent } from "./tako_company_agent.js";
+import { applyInputPins, inputSchemaForConnection } from "./_input_pins.js";
 import { inputPropertyDescription } from "./__test_helpers.js";
 import type { ToolContext } from "./types.js";
 import { AGENT_CARD_LINK_SENTENCE } from "./_agent_call.js";
@@ -200,5 +201,25 @@ describe("tako_company_agent over MCP", () => {
       await client.close();
       await server.close();
     }
+  });
+});
+
+describe("tako_company_agent on a connection that pins sources", () => {
+  it("describes the pinned sources", () => {
+    expect(describeCompanyAgent(["data"])).toContain(
+      "searches company registries and business profiles over several steps",
+    );
+    expect(describeCompanyAgent(["web"])).toContain("searches the web over several steps");
+    expect(describeCompanyAgent(["data", "web"])).toBe(tool.description);
+  });
+
+  it("sends the pinned sources on a thread follow-up", () => {
+    const pins = { sources: ["data"] as const };
+    const parsed = inputSchemaForConnection(tool, "generic", pins).parse({
+      query: "and in Texas?",
+      thread_id: "cde6ed80-ab7d-464b-baa9-793fcb418a62",
+    });
+    const input = applyInputPins(tool, "generic", pins, parsed) as Parameters<typeof buildCompanyAgentBody>[0];
+    expect(buildCompanyAgentBody(input).source_indexes).toEqual(["data"]);
   });
 });

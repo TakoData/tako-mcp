@@ -11,6 +11,7 @@ import {
   readInputPins,
   SOURCE_VALUES,
 } from "./_input_pins.js";
+import { TOOL_REGISTRY } from "./_registry.js";
 import type { AnyToolModule } from "./types.js";
 
 describe("readInputPins", () => {
@@ -119,5 +120,28 @@ describe("connection resolvers", () => {
   it("keeps only pins that a listed tool declares", () => {
     expect(effectivePins([unpinnable], { sources: ["data"] })).toEqual({});
     expect(effectivePins([unpinnable, pinnable], { sources: ["data"] })).toEqual({ sources: ["data"] });
+  });
+});
+
+describe("sources pin parity with each tool's own schema", () => {
+  const declaring = TOOL_REGISTRY.filter(
+    (tool) => "sources" in tool.inputSchema.shape && tool.inputPins?.sources !== undefined,
+  );
+
+  it("covers the search tool and both agents", () => {
+    expect(declaring.map((tool) => tool.name).sort()).toEqual([
+      "tako_agent",
+      "tako_company_agent",
+      "tako_search",
+    ]);
+  });
+
+  it("accepts every value the URL accepts", () => {
+    for (const tool of declaring) {
+      const field = tool.inputSchema.shape.sources!;
+      for (const value of [["data"], ["web"], ["data", "web"]]) {
+        expect(z.safeParse(field, value).success, `${tool.name} ${value.join(",")}`).toBe(true);
+      }
+    }
   });
 });

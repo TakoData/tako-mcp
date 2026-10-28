@@ -27,18 +27,33 @@ import {
 import { AgentInputError, runIdInputSchema } from "./_agent_product.js";
 import { agentRunOutputShape, type AgentRunOutput } from "./_agent_run.js";
 import { buildChartAppUiResourceFromOutputPubId } from "./_chart_widget.js";
+import { type Source, pinnedField } from "./_input_pins.js";
 import { looseArray } from "./_loose_array.js";
 import { renderAgentRunMarkdown } from "./_render_markdown.js";
 import { AGENT_SOURCES_THREAD_RULE, SOURCES_CORPORA_SENTENCE, SOURCES_KEEP_BOTH_SENTENCE } from "./_shared_prose.js";
 import type { AppUiResource, ToolModule } from "./types.js";
 
-const DESCRIPTION = [
-  `Run Tako's Company Agent. It searches company registries, business profiles, and the web over several steps, and returns a written \`answer\` with numbered citations plus the list \`cards\` it built. ${AGENT_EXPLICIT_ASK_SENTENCE} Otherwise, use \`tako_search\`, even for a list that search can't fully filter.`,
-  "",
-  "Best for: an ask for Tako's Company Agent, or an ask for Tako's agent to build a list of companies or of their professionals, for prospecting or hiring. It filters companies by location, industry, status, founding date, funding stage, or size, and their executives by role, seniority, or department, and finds the officers, directors, and controllers in company registries.",
-  "",
-  AGENT_DESCRIPTION_LAST_LINE,
-].join("\n");
+const companyAgentDescription = (researched: string): string =>
+  [
+    `Run Tako's Company Agent. It searches ${researched} over several steps, and returns a written \`answer\` with numbered citations plus the list \`cards\` it built. ${AGENT_EXPLICIT_ASK_SENTENCE} Otherwise, use \`tako_search\`, even for a list that search can't fully filter.`,
+    "",
+    "Best for: an ask for Tako's Company Agent, or an ask for Tako's agent to build a list of companies or of their professionals, for prospecting or hiring. It filters companies by location, industry, status, founding date, funding stage, or size, and their executives by role, seniority, or department, and finds the officers, directors, and controllers in company registries.",
+    "",
+    AGENT_DESCRIPTION_LAST_LINE,
+  ].join("\n");
+
+const DESCRIPTION = companyAgentDescription("company registries, business profiles, and the web");
+
+const PINNED_RESEARCH: Record<Source, string> = {
+  data: "company registries and business profiles",
+  web: "the web",
+};
+
+/** The description on a connection whose URL pins `sources`. */
+export function describeCompanyAgent(sources: readonly Source[]): string {
+  const only = sources.length === 1 ? sources[0] : undefined;
+  return only === undefined ? DESCRIPTION : companyAgentDescription(PINNED_RESEARCH[only]);
+}
 
 const COMPANY_SOURCES_DESCRIBE = `Which sources to research. ${SOURCES_CORPORA_SENTENCE} A new thread uses both. ${SOURCES_KEEP_BOTH_SENTENCE} ${AGENT_SOURCES_THREAD_RULE}`;
 
@@ -82,6 +97,7 @@ const takoCompanyAgent = {
   name: "tako_company_agent",
   description: DESCRIPTION,
   inputSchema,
+  inputPins: { sources: pinnedField("sources", describeCompanyAgent) },
   outputSchema: agentRunOutputShape,
   annotations: {
     title: "Tako: Company Agent",

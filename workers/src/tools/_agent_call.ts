@@ -121,6 +121,7 @@ function conflictGuidance(
   code: string | undefined,
   product: AgentProduct,
   registeredTools: ReadonlySet<string> | undefined,
+  sourcesPinned: boolean,
 ): string | undefined {
   switch (code) {
     case "conflict":
@@ -128,7 +129,9 @@ function conflictGuidance(
     case "effort_mismatch":
       return "This thread's effort is fixed. Omit `effort` to keep the thread's tier, or omit `thread_id` to start a new thread at a different effort.";
     case "source_indexes_mismatch":
-      return "This thread's sources are fixed. Omit `sources` to keep them, or omit `thread_id` to start a new thread.";
+      return sourcesPinned
+        ? "This thread's sources are fixed, and this connection pins `sources`. Omit `thread_id` to start a new thread."
+        : "This thread's sources are fixed. Omit `sources` to keep them, or omit `thread_id` to start a new thread.";
     case "thread_product_mismatch":
       return threadProductMismatchGuidance(product, registeredTools);
     default:
@@ -151,6 +154,7 @@ export function mapStartError(
   product: AgentProduct,
   sentThreadId: boolean,
   registeredTools?: ReadonlySet<string>,
+  sourcesPinned = false,
 ): DjangoError {
   if (err instanceof DjangoNotFoundError) {
     if (sentThreadId) {
@@ -168,7 +172,7 @@ export function mapStartError(
     return err;
   }
   if (err instanceof DjangoHttpError && err.status === 409) {
-    const guidance = conflictGuidance(conflictCode(err), product, registeredTools);
+    const guidance = conflictGuidance(conflictCode(err), product, registeredTools, sourcesPinned);
     if (guidance !== undefined) err.modelGuidance = guidance;
   }
   return err;
@@ -262,7 +266,13 @@ async function startRun(
     });
   } catch (err) {
     if (err instanceof DjangoError) {
-      mapStartError(err, product, input.thread_id !== undefined, ctx.registeredTools);
+      mapStartError(
+        err,
+        product,
+        input.thread_id !== undefined,
+        ctx.registeredTools,
+        ctx.pins?.sources !== undefined,
+      );
     }
     throw err;
   }
