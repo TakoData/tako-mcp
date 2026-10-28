@@ -111,16 +111,20 @@ describe("tako_search_advanced surface membership", () => {
 });
 
 describe("tako_search_advanced mirrors the v3 SearchRequest", () => {
-  it("exposes every top-level SearchRequest field, with sources as two blocks", () => {
+  it("exposes every top-level SearchRequest field but zdr, with sources as two blocks", () => {
     // A LIST here would be the thing that drifts. The previous version of this
     // tool shipped 18 of 25 generated fields and the seven missing ones were
     // never decided — six appear in no spec and no plan. Derived from the
     // generated shape, "mirrors the API" is checked rather than asserted in a
     // header.
-    const expected = Object.keys(AnswerRequest.shape).filter((k) => k !== "sources");
+    const expected = Object.keys(AnswerRequest.shape).filter((k) => k !== "sources" && k !== "zdr");
     expect(Object.keys(tako_search_advanced.inputSchema.shape).sort()).toEqual(
       [...expected, "data", "web", "include_answer"].sort(),
     );
+  });
+
+  it("rejects zdr, which only API accounts Tako enables can send", () => {
+    expect(tako_search_advanced.inputSchema.safeParse({ query: "x", zdr: true }).success).toBe(false);
   });
 
   it("each derived field carries the generated CONSTRAINTS, not just the generated name", () => {
@@ -211,7 +215,7 @@ describe("tako_search_advanced mirrors the v3 SearchRequest", () => {
     });
     const body = buildAdvancedSearchBody(input);
     expect(Object.keys(body).sort()).toEqual(
-      Object.keys(AnswerRequest.shape).sort(),
+      Object.keys(AnswerRequest.shape).filter((k) => k !== "zdr").sort(),
     );
     expect(body.location).toEqual({ latitude: 51.5, longitude: -0.1 });
     expect(body.timezone).toBe("Europe/London");
