@@ -93,6 +93,10 @@ Fixed worker-side settings (not request fields):
 
 - `call window` = `45 s` — A call returns within the window; resume a running run with run_id.
 
+URL-pinnable inputs (set on the /mcp URL):
+
+- `?sources=` — Pins `sources` for the whole connection: the input leaves this tool's schema, and every call sends the pinned value.
+
 Annotations:
 
 - `/mcp`: title: Tako: Answer Agent; readOnlyHint: false; destructiveHint: false; idempotentHint: false; openWorldHint: true
@@ -904,6 +908,10 @@ Fixed request inputs (the caller cannot change these):
 Fixed worker-side settings (not request fields):
 
 - `call window` = `45 s` — A call returns within the window; resume a running run with run_id.
+
+URL-pinnable inputs (set on the /mcp URL):
+
+- `?sources=` — Pins `sources` for the whole connection: the input leaves this tool's schema, and every call sends the pinned value.
 
 Annotations:
 
@@ -2031,6 +2039,10 @@ Fixed request inputs (the caller cannot change these):
 - `variable_cost (signed-in connections)` = `true` — Website-traffic and SEO cards return their data and add a per-unit charge. A keyless connection doesn't send it and gets those cards as placeholders. The API default is false.
 - `sources.web.highlights` = `true` — Query-relevant highlight passages per web result, so the excerpt supports choosing a url to fetch. The API default is false.
 
+URL-pinnable inputs (set on the /mcp URL):
+
+- `?sources=` — Pins `sources` for the whole connection: the input leaves this tool's schema, and every call sends the pinned value.
+
 Annotations:
 
 - `/mcp`: title: Tako: Search; readOnlyHint: true; destructiveHint: false; idempotentHint: true; openWorldHint: true
@@ -2631,6 +2643,10 @@ Parameters:
 Fixed request inputs (the caller cannot change these):
 
 _none_
+
+URL-pinnable inputs (set on the /mcp URL):
+
+- `?sources=` — Pins the sources for the whole connection: an unpinned source's block leaves this tool's schema, and every call searches each pinned source.
 
 Annotations:
 

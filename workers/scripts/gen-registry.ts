@@ -1242,6 +1242,12 @@ export function buildToolsDoc(input: ToolsDocInput): string {
       for (const f of workerRows) out.push(`- \`${f.field}\` = \`${f.value}\` — ${f.note}`);
       out.push("");
     }
+    const pinnable = Object.entries(m.inputPins ?? {});
+    if (pinnable.length > 0) {
+      out.push("URL-pinnable inputs (set on the /mcp URL):", "");
+      for (const [name, applier] of pinnable) out.push(`- \`?${name}=\` — ${applier.note}`);
+      out.push("");
+    }
     out.push("Annotations:", "");
     for (const { surface, path } of SURFACE_PATHS) {
       out.push(`- \`${path}\`: ${renderAnnotations(toolAnnotationsForSurface(m, surface))}`);

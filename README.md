@@ -317,6 +317,18 @@ claude mcp add tako --transport http "https://mcp.tako.com/mcp?tools=search,avai
 - **Claude Code plugin and Gemini CLI extension:** each pins the default surface plus `tako_agent`, `tako_company_agent`, and `tako_visualize` (`?tools=search,available_data,contents,graph_related,agent,company_agent,visualize`), and its URL isn't user-editable. For a different set, add the server yourself with `claude mcp add` as above, and keep only one Tako connection active so you don't get two copies of every tool. Claude Code stores a sign-in for each server URL, so after you update the Claude Code plugin from 1.5.0 or earlier, sign in again: run `/mcp`, select `tako`, and choose **Authenticate**.
 - **`/mcp/chatgpt` ignores `?tools=`**: its listing is fixed — `tako_search`, `tako_available_data`, `tako_contents`, `tako_visualize`, `tako_graph_related`, `tako_agent`, `tako_company_agent`.
 
+**`?sources=` fixes the sources for the whole connection.** Use it to evaluate Tako data on its own. `?sources=data` searches Tako data only, `?sources=web` searches the web only, and `?sources=data,web` always searches both. It applies to `tako_search`, `tako_search_advanced`, `tako_agent`, and `tako_company_agent`: the `sources` input (or, on `tako_search_advanced`, the other source's block) leaves the tool's schema, and every call sends the fixed value, agent thread follow-ups included. `tako_contents`, `tako_available_data`, and `tako_graph_related` aren't affected, so for web only, combine it with `?tools=`: `?tools=search&sources=web`.
+
+```bash
+claude mcp add tako --transport http "https://mcp.tako.com/mcp?sources=data"
+```
+
+- An invalid value, such as `?sources=dta` or an empty `?sources=`, fails the connection with an HTTP 400 that names the parameter. Other unknown parameters are ignored.
+- To confirm the setting applied, read the server instructions, which state it, or check that `sources` is missing from `tako_search`'s input schema. A misspelled name, such as `?source=data`, connects with the default sources.
+- An agent follow-up on a thread that started with different sources fails. Start a new thread.
+- It doesn't turn off your client's own web search tool. Turn that off in the client.
+- `/mcp/chatgpt` ignores `?sources=`.
+
 <details>
 <summary><b>Getting values vs. getting pointers</b></summary>
 
