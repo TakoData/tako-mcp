@@ -3,7 +3,7 @@
  * whole, behind `?tools=search_advanced` on `/mcp`.
  *
  * Every field of `SearchRequest`, `DataSourceSettings` and `WebSourceSettings`
- * is here, derived from the generated schemas so the set cannot drift; the
+ * except `zdr` is here, derived from the generated schemas so the set cannot drift; the
  * parity tests in tako_search_advanced.test.ts are the guard. An unknown key at
  * any level is a -32602 — all three levels are `.strict()`, and mcp.ts registers
  * the full object, so that holds on the wire and not only in a unit test.
@@ -272,11 +272,12 @@ const webBlock = z.object(optionalWithoutDefaults(WebSourceSettings.shape, WEB_D
 
 /**
  * Top level: every `SearchRequest` field except `sources` (replaced by the two
- * blocks), optional and default-free. Four keep a hand-written `.describe()`
+ * blocks) and `zdr` (zero data retention, offered only to API accounts Tako
+ * enables, none of which connect over MCP), optional and default-free. Four keep a hand-written `.describe()`
  * that names the server default in words — the generated text for
  * `country_code` and `locale` does not, and this tool's description promises it.
  */
-const topLevel = optionalWithoutDefaults(SearchRequest.omit({ query: true, sources: true }).shape);
+const topLevel = optionalWithoutDefaults(SearchRequest.omit({ query: true, sources: true, zdr: true }).shape);
 
 /**
  * `output_settings` rebuilt from `OutputSettings` with its INNER defaults
