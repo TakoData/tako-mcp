@@ -17,7 +17,7 @@ import {
   FREE_TIER_TOOL_NAMES,
   GENERIC_DEFAULT_TOOL_NAMES,
 } from "./_surface.js";
-import tako_search_advanced, { buildAdvancedSearchBody } from "./tako_search_advanced.js";
+import tako_search_advanced, { buildAdvancedSearchBody, describeSearchAdvanced } from "./tako_search_advanced.js";
 import tako_search from "./tako_search.js";
 import type { ToolContext } from "./types.js";
 
@@ -923,5 +923,75 @@ describe("published prose stays inside the caps at every level", () => {
     expect(tako_search_advanced.description, "the contradiction paragraph is back").not.toMatch(
       /strong boost|provisional/,
     );
+  });
+});
+
+describe("tako_search_advanced on a connection that pins sources", () => {
+  const pin = tako_search_advanced.inputPins.sources;
+  const schema = tako_search_advanced.inputSchema;
+  const bodyFor = (input: Record<string, unknown>) =>
+    buildAdvancedSearchBody(schema.parse(input));
+
+  it("drops the web block from a data-pinned schema", () => {
+    expect(Object.keys(pin.schema(schema, ["data"]).shape)).not.toContain("web");
+    expect(Object.keys(pin.schema(schema, ["data"]).shape)).toContain("data");
+  });
+
+  it("drops the data block from a web-pinned schema", () => {
+    expect(Object.keys(pin.schema(schema, ["web"]).shape)).not.toContain("data");
+  });
+
+  it("keeps both blocks on a data,web pin", () => {
+    expect(pin.schema(schema, ["data", "web"])).toBe(schema);
+  });
+
+  it("rejects a web block on a data-pinned schema", () => {
+    expect(pin.schema(schema, ["data"]).safeParse({ query: "q", web: {} }).success).toBe(false);
+  });
+
+  it("keeps the request checks on a pinned schema", () => {
+    const pinned = pin.schema(schema, ["data"]);
+    expect(pinned.safeParse({ query: "q", output_schema: { type: "object" } }).success).toBe(false);
+    expect(pinned.safeParse({ query: "q", data: { strict: true } }).success).toBe(false);
+  });
+
+  it("sends data only when a data-pinned call names no block", () => {
+    expect(bodyFor(pin.input({ query: "q" }, ["data"])).sources).toEqual({ data: {} });
+  });
+
+  it("sends web only, with highlights, when a web-pinned call names no block", () => {
+    expect(bodyFor(pin.input({ query: "q" }, ["web"])).sources).toEqual({ web: { highlights: true } });
+  });
+
+  it("sends both blocks when a data,web pin names only one", () => {
+    expect(bodyFor(pin.input({ query: "q", data: { count: 3 } }, ["data", "web"])).sources).toEqual({
+      data: { count: 3 },
+      web: { highlights: true },
+    });
+  });
+
+  it("describes a data-only connection", () => {
+    const [lead, , usage] = describeSearchAdvanced(["data"]).split("\n");
+    expect(lead).toBe(
+      "Get one citation-backed answer (`include_answer: true`), or search Tako's data graph with the whole v3 request: per-source counts, inline card rows, graph pins, and the deep effort tier.",
+    );
+    expect(usage).toContain("This connection searches Tako data only.");
+    expect(usage).not.toContain("Naming a source block");
+  });
+
+  it("describes a web-only connection", () => {
+    const [lead, , usage] = describeSearchAdvanced(["web"]).split("\n");
+    expect(lead).toBe(
+      "Get one citation-backed answer (`include_answer: true`), or search the web with the whole v3 request: web domain and category filters, and the deep effort tier.",
+    );
+    expect(usage).toBe(
+      "Only `query` is required; an omitted field takes the server default its description names. This connection searches the web only.",
+    );
+  });
+
+  it("describes a data,web connection that always searches both", () => {
+    const usage = describeSearchAdvanced(["data", "web"]).split("\n")[2];
+    expect(usage).toContain("Every call searches data and web; a block sets that source's options.");
+    expect(usage).not.toContain("Naming a source block");
   });
 });

@@ -79,6 +79,7 @@ import {
   renderSearchMarkdown,
   searchAdvancedOutputShape,
 } from "./_render_markdown.js";
+import type { InputPinApplier, Source } from "./_input_pins.js";
 import type { SearchOutput } from "./_search_results.js";
 import { runSearch, type SearchCall, type SearchEndpoint } from "./_run_search.js";
 import type { ToolModule } from "./types.js";
@@ -91,13 +92,46 @@ import type { ToolModule } from "./types.js";
 // a `strict: true` pin that returns no cards gets `guidance` on the result,
 // which is where the model reads it at the moment it applies; the highlights
 // toggle is `web.highlights`.
-const DESCRIPTION = [
+const QUERY_REQUIRED_SENTENCE =
+  "Only `query` is required; an omitted field takes the server default its description names.";
+const INCLUDE_CONTENTS_SENTENCE =
+  "`data.include_contents` inlines each card's rows, billed per card — cap with `data.max_rows`, or fetch a card's rows with `tako_contents` instead.";
+
+const advancedDescription = (lead: string, usage: string): string =>
+  [
+    lead,
+    "",
+    usage,
+    "",
+    "Best for: a written answer (`include_answer` puts it in `answer`), or a call `tako_search` can't express. `output_schema` fills a JSON Schema from the evidence into `structured_output`.",
+  ].join("\n");
+
+const DESCRIPTION = advancedDescription(
   "Get one citation-backed answer (`include_answer: true`), or search Tako's data graph and the web with the whole v3 request: per-source counts, inline card rows, graph pins, web domain and category filters, and the deep effort tier.",
-  "",
-  "Only `query` is required; an omitted field takes the server default its description names. Naming a source block (even `{}`) selects it; omit both to search data and web. `data.include_contents` inlines each card's rows, billed per card — cap with `data.max_rows`, or fetch a card's rows with `tako_contents` instead.",
-  "",
-  "Best for: a written answer (`include_answer` puts it in `answer`), or a call `tako_search` can't express. `output_schema` fills a JSON Schema from the evidence into `structured_output`.",
-].join("\n");
+  `${QUERY_REQUIRED_SENTENCE} Naming a source block (even \`{}\`) selects it; omit both to search data and web. ${INCLUDE_CONTENTS_SENTENCE}`,
+);
+
+const PINNED_DESCRIPTIONS: Record<Source, string> = {
+  data: advancedDescription(
+    "Get one citation-backed answer (`include_answer: true`), or search Tako's data graph with the whole v3 request: per-source counts, inline card rows, graph pins, and the deep effort tier.",
+    `${QUERY_REQUIRED_SENTENCE} This connection searches Tako data only. ${INCLUDE_CONTENTS_SENTENCE}`,
+  ),
+  web: advancedDescription(
+    "Get one citation-backed answer (`include_answer: true`), or search the web with the whole v3 request: web domain and category filters, and the deep effort tier.",
+    `${QUERY_REQUIRED_SENTENCE} This connection searches the web only.`,
+  ),
+};
+
+const BOTH_PINNED_DESCRIPTION = advancedDescription(
+  "Get one citation-backed answer (`include_answer: true`), or search Tako's data graph and the web with the whole v3 request: per-source counts, inline card rows, graph pins, web domain and category filters, and the deep effort tier.",
+  `${QUERY_REQUIRED_SENTENCE} Every call searches data and web; a block sets that source's options. ${INCLUDE_CONTENTS_SENTENCE}`,
+);
+
+/** The description on a connection whose URL pins `sources`. */
+export function describeSearchAdvanced(sources: readonly Source[]): string {
+  const only = sources.length === 1 ? sources[0] : undefined;
+  return only === undefined ? BOTH_PINNED_DESCRIPTION : PINNED_DESCRIPTIONS[only];
+}
 
 
 /**
@@ -289,7 +323,7 @@ const outputSettingsBlock = z
   .optional()
   .describe(SearchRequest.shape.output_settings.unwrap().description ?? "");
 
-const inputSchema = z
+const inputObject = z
   .object({
     // DERIVED, like every other field here. Re-authoring it as
     // `z.string().min(1)` dropped the generated `/\S/`, so `query: "   "`
@@ -372,26 +406,58 @@ const inputSchema = z
   // `.strict()` at every level. A bare `z.object` STRIPS unknown keys; this
   // rejects them, and because mcp.ts registers this object rather than its
   // `.shape`, the rejection reaches the wire too.
-  .strict()
-  // /v3/search is extra="forbid", so `output_schema` without `include_answer`
-  // is a 400 from the backend naming the field. Catching it here spends
-  // nothing and says what to do instead. This `.refine()` also only runs on the
-  // wire because mcp.ts registers the full object — a raw `.shape` drops it.
-  .refine((v) => v.output_schema == null || v.include_answer === true, {
-    path: ["output_schema"],
-    message:
-      "output_schema applies only to the answer endpoint. Set include_answer: true, or drop output_schema.",
-  })
-  // The same bargain one level down: `DataSourceSettings._strict_requires_node_ids`
-  // raises "strict=true requires a non-empty node_ids list", so this pair is a
-  // guaranteed 400 with a paid round trip in front of it. `optionalWithoutDefaults`
-  // strips the block's inner validators along with its defaults, so nothing else
-  // in this schema catches it.
-  .refine((v) => v.data?.strict !== true || (v.data.node_ids?.length ?? 0) > 0, {
-    path: ["data", "strict"],
-    message:
-      "strict: true filters to data.node_ids, so it needs at least one. Add the metric's node id, or drop strict.",
-  });
+  .strict();
+
+interface RequestCheckedFields {
+  output_schema?: unknown;
+  include_answer?: boolean | undefined;
+  data?: { strict?: boolean | undefined; node_ids?: readonly unknown[] | undefined } | undefined;
+}
+
+const withRequestChecks = <S extends z.ZodObject<z.ZodRawShape> & z.ZodType<RequestCheckedFields>>(
+  schema: S,
+): S =>
+  schema
+    // /v3/search is extra="forbid", so `output_schema` without `include_answer`
+    // is a 400 from the backend naming the field. Catching it here spends
+    // nothing and says what to do instead. This `.refine()` also only runs on the
+    // wire because mcp.ts registers the full object — a raw `.shape` drops it.
+    .refine((v) => v.output_schema == null || v.include_answer === true, {
+      path: ["output_schema"],
+      message:
+        "output_schema applies only to the answer endpoint. Set include_answer: true, or drop output_schema.",
+    })
+    // The same bargain one level down: `DataSourceSettings._strict_requires_node_ids`
+    // raises "strict=true requires a non-empty node_ids list", so this pair is a
+    // guaranteed 400 with a paid round trip in front of it. `optionalWithoutDefaults`
+    // strips the block's inner validators along with its defaults, so nothing else
+    // in this schema catches it.
+    .refine((v) => v.data?.strict !== true || (v.data.node_ids?.length ?? 0) > 0, {
+      path: ["data", "strict"],
+      message:
+        "strict: true filters to data.node_ids, so it needs at least one. Add the metric's node id, or drop strict.",
+    });
+
+const inputSchema = withRequestChecks(inputObject);
+
+const PINNED_SCHEMAS: Record<Source, z.ZodObject<z.ZodRawShape>> = {
+  data: withRequestChecks(inputObject.omit({ web: true })),
+  web: withRequestChecks(inputObject.omit({ data: true })),
+};
+
+const sourcesPin: InputPinApplier<readonly Source[]> = {
+  schema: (schema, sources) => {
+    const only = sources.length === 1 ? sources[0] : undefined;
+    return only === undefined ? schema : PINNED_SCHEMAS[only];
+  },
+  input: (input, sources) =>
+    Object.fromEntries([
+      ...Object.entries(input),
+      ...sources.filter((source) => input[source] === undefined).map((source) => [source, {}]),
+    ]),
+  description: describeSearchAdvanced,
+  note: "Pins the sources for the whole connection: an unpinned source's block leaves this tool's schema, and every call searches each pinned source.",
+};
 
 type Input = z.infer<typeof inputSchema>;
 
@@ -480,6 +546,7 @@ const tako_search_advanced = {
   name: "tako_search_advanced",
   description: DESCRIPTION,
   inputSchema,
+  inputPins: { sources: sourcesPin },
   outputSchema,
   annotations: {
     title: "Tako: Search (advanced)",
