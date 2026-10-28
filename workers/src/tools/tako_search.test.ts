@@ -777,6 +777,19 @@ describe("describeSearch for a connection that pins sources", () => {
     expect(lines[2]).toBe("It finds results; `tako_contents` fetches a web result's full page text.");
   });
 
+  it("aims a data-only connection's queries at the data graph", () => {
+    const text = describeSearch(["data"]);
+    expect(text).toContain('"Apple revenue"');
+    expect(text).not.toContain("web lookup");
+  });
+
+  it("aims a web-only connection's queries at the web", () => {
+    const text = describeSearch(["web"]);
+    expect(text).toContain("web lookup");
+    expect(text).not.toContain('"Apple revenue"');
+    expect(text).not.toContain('"CFOs in Austin"');
+  });
+
   it("keeps the default description for a data,web pin", () => {
     expect(describeSearch(["data", "web"])).toBe(tako_search.description);
   });

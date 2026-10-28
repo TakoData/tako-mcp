@@ -46,15 +46,19 @@ const DESCRIPTION = [
   'Best for: breadth — fan out several narrow queries in parallel. Each query answers one question — one metric for one entity, a comparison set ("Apple revenue", "Nvidia vs AMD gross margin"), one news or web lookup ("EU AI Act timeline"), or one list of companies, or of business professionals by role and place, for prospecting or recruiting ("fintechs in London", "CFOs in Austin"); several metrics or topics in one query retrieve poorly.',
 ].join("\n");
 
-const PINNED_DESCRIPTION_LINES: Record<Source, { lead: string; contents: string }> = {
+const PINNED_DESCRIPTION_LINES: Record<Source, { lead: string; contents: string; bestFor: string }> = {
   data: {
     lead: "Search Tako's data graph: many results at once, as structured cards. This connection returns no web results. The first card's chart renders inline; some hosts also show every other card's chart, in search's order.",
     contents:
       "It finds results; `tako_contents` fetches what's behind them. Each card carries a headline value, node ids, and a url — pass the url to `tako_contents` for rows (`exportable: true` cards). When `exportable` is false the rows are locked — read the headline value from the card's `description`.",
+    bestFor:
+      'Best for: breadth — fan out several narrow queries in parallel. Each query answers one question — one metric for one entity, a comparison set ("Apple revenue", "Nvidia vs AMD gross margin"), or one list of companies, or of business professionals by role and place, for prospecting or recruiting ("fintechs in London", "CFOs in Austin"); several metrics or topics in one query retrieve poorly.',
   },
   web: {
     lead: "Search the web: many results at once, as web results. This connection returns no Tako cards.",
     contents: "It finds results; `tako_contents` fetches a web result's full page text.",
+    bestFor:
+      'Best for: breadth — fan out several narrow queries in parallel. Each query answers one news or web lookup ("EU AI Act timeline"); several topics in one query retrieve poorly.',
   },
 };
 
@@ -62,8 +66,8 @@ const PINNED_DESCRIPTION_LINES: Record<Source, { lead: string; contents: string 
 export function describeSearch(sources: readonly Source[]): string {
   const only = soleSource(sources);
   if (only === undefined) return DESCRIPTION;
-  const { lead, contents } = PINNED_DESCRIPTION_LINES[only];
-  return [lead, "", contents, ...DESCRIPTION.split("\n").slice(3)].join("\n");
+  const { lead, contents, bestFor } = PINNED_DESCRIPTION_LINES[only];
+  return [lead, "", contents, "", bestFor].join("\n");
 }
 
 const inputSchema = z.object({
