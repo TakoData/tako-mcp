@@ -2,7 +2,7 @@
   "$schema": "https://registry.modelcontextprotocol.io/schemas/server.json",
   "namespace": "com.tako",
   "name": "tako-mcp",
-  "version": "1.6.2",
+  "version": "1.7.0",
   "title": "Tako MCP Server",
   "description": "Tako MCP gives your agent premium live data from authoritative providers and web search in one call, returned as cited charts and web results. The data covers finance, markets, company KPIs, economics, website traffic, sports, prediction markets, demographics, energy, real estate, and more.",
   "repository": {
