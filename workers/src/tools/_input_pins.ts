@@ -16,6 +16,11 @@ export type PinValue<K extends PinName> = NonNullable<InputPins[K]>;
 
 export const NO_PINS: InputPins = {};
 
+/** The one source a `sources` value names, or `undefined` when it names both. */
+export function soleSource(sources: readonly Source[]): Source | undefined {
+  return sources.length === 1 ? sources[0] : undefined;
+}
+
 export type InputPinsResult =
   | { ok: true; pins: InputPins }
   | { ok: false; parameter: PinName; message: string };

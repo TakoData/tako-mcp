@@ -231,6 +231,11 @@ export function createMcpServer(
     );
   }
   const tier = options.tier ?? ctx.tier ?? "authenticated";
+  const listedTools = resolveToolSet(options.surface, options.requestedToolNames ?? null);
+  const pins = effectivePins(
+    TOOL_REGISTRY.filter((tool) => listedTools.has(tool.name)),
+    options.inputPins ?? NO_PINS,
+  );
 
   const server = new McpServer(
     {
@@ -249,9 +254,7 @@ export function createMcpServer(
       // connection cannot call (see `serverInstructionsFor`). NOT by tier:
       // the host loads this string once, so a tier-specific variant would
       // outlive a mid-conversation sign-in (see `instructions.ts`).
-      instructions: serverInstructionsFor(
-        resolveToolSet(options.surface, options.requestedToolNames ?? null),
-      ),
+      instructions: serverInstructionsFor(listedTools, pins),
     },
   );
 
@@ -286,10 +289,6 @@ export function createMcpServer(
   // the per-call context so a tool result cannot name a tool this loop did
   // not register. Same call that drives `isToolOnSurface` below.
   const registeredTools = resolveToolSet(surface, requestedToolNames);
-  const pins = effectivePins(
-    TOOL_REGISTRY.filter((tool) => registeredTools.has(tool.name)),
-    options.inputPins ?? NO_PINS,
-  );
 
   for (const tool of TOOL_REGISTRY) {
     // Deliberately tier-blind: the listing is auth-invariant (spec D4);
@@ -318,7 +317,7 @@ export function createMcpServer(
     });
   }
 
-  registerSkills(server, skillsForSurface(surface, registeredTools));
+  registerSkills(server, skillsForSurface(surface, registeredTools, undefined, pins));
 
   return server;
 }

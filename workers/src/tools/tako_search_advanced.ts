@@ -79,7 +79,7 @@ import {
   renderSearchMarkdown,
   searchAdvancedOutputShape,
 } from "./_render_markdown.js";
-import type { InputPinApplier, Source } from "./_input_pins.js";
+import { type InputPinApplier, type Source, soleSource } from "./_input_pins.js";
 import type { SearchOutput } from "./_search_results.js";
 import { runSearch, type SearchCall, type SearchEndpoint } from "./_run_search.js";
 import type { ToolModule } from "./types.js";
@@ -129,7 +129,7 @@ const BOTH_PINNED_DESCRIPTION = advancedDescription(
 
 /** The description on a connection whose URL pins `sources`. */
 export function describeSearchAdvanced(sources: readonly Source[]): string {
-  const only = sources.length === 1 ? sources[0] : undefined;
+  const only = soleSource(sources);
   return only === undefined ? BOTH_PINNED_DESCRIPTION : PINNED_DESCRIPTIONS[only];
 }
 
@@ -447,7 +447,7 @@ const PINNED_SCHEMAS: Record<Source, z.ZodObject<z.ZodRawShape>> = {
 
 const sourcesPin: InputPinApplier<readonly Source[]> = {
   schema: (schema, sources) => {
-    const only = sources.length === 1 ? sources[0] : undefined;
+    const only = soleSource(sources);
     return only === undefined ? schema : PINNED_SCHEMAS[only];
   },
   input: (input, sources) =>

@@ -24,7 +24,7 @@ import {
   buildChartExtraMeta,
   fetchPngContentBlock,
 } from "./_chart_widget.js";
-import { type Source, pinnedField } from "./_input_pins.js";
+import { type Source, pinnedField, soleSource } from "./_input_pins.js";
 import { looseArray } from "./_loose_array.js";
 import {
   renderSearchMarkdown,
@@ -60,7 +60,7 @@ const PINNED_DESCRIPTION_LINES: Record<Source, { lead: string; contents: string 
 
 /** The description on a connection whose URL pins `sources`. */
 export function describeSearch(sources: readonly Source[]): string {
-  const only = sources.length === 1 ? sources[0] : undefined;
+  const only = soleSource(sources);
   if (only === undefined) return DESCRIPTION;
   const { lead, contents } = PINNED_DESCRIPTION_LINES[only];
   return [lead, "", contents, ...DESCRIPTION.split("\n").slice(3)].join("\n");

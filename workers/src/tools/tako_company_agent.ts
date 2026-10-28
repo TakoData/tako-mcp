@@ -27,7 +27,7 @@ import {
 import { AgentInputError, runIdInputSchema } from "./_agent_product.js";
 import { agentRunOutputShape, type AgentRunOutput } from "./_agent_run.js";
 import { buildChartAppUiResourceFromOutputPubId } from "./_chart_widget.js";
-import { type Source, pinnedField } from "./_input_pins.js";
+import { type Source, pinnedField, soleSource } from "./_input_pins.js";
 import { looseArray } from "./_loose_array.js";
 import { renderAgentRunMarkdown } from "./_render_markdown.js";
 import { AGENT_SOURCES_THREAD_RULE, SOURCES_CORPORA_SENTENCE, SOURCES_KEEP_BOTH_SENTENCE } from "./_shared_prose.js";
@@ -51,7 +51,7 @@ const PINNED_RESEARCH: Record<Source, string> = {
 
 /** The description on a connection whose URL pins `sources`. */
 export function describeCompanyAgent(sources: readonly Source[]): string {
-  const only = sources.length === 1 ? sources[0] : undefined;
+  const only = soleSource(sources);
   return only === undefined ? DESCRIPTION : companyAgentDescription(PINNED_RESEARCH[only]);
 }
 

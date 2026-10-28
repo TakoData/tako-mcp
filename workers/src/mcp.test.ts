@@ -3074,3 +3074,52 @@ describe("URL-pinned sources", () => {
     expect(res.status).toBe(200);
   });
 });
+
+describe("URL-pinned sources in instructions and skills", () => {
+  async function connectWith(
+    options: Partial<Parameters<typeof createMcpServer>[1]>,
+  ): Promise<{ instructions: string | undefined; skillTexts: string[] }> {
+    const ctx: ToolContext = {
+      token: "sk-test",
+      env: { DJANGO_BASE_URL: "https://staging.trytako.com" } as Env,
+      sendProgress: noopSendProgress,
+      surface: "generic",
+    };
+    const server = createMcpServer(ctx, { ...options, surface: "generic", clientRendersUi: false });
+    const client = new Client(
+      { name: "pins-instructions-test", version: "0.0.0" },
+      { jsonSchemaValidator: new CfWorkerJsonSchemaValidator() },
+    );
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    try {
+      const resources = client.getServerCapabilities()?.resources === undefined ? [] : (await client.listResources()).resources;
+      const skillTexts: string[] = [];
+      for (const resource of resources.filter((r) => r.uri.startsWith("skill://"))) {
+        const { contents } = await client.readResource({ uri: resource.uri });
+        for (const content of contents) if ("text" in content) skillTexts.push(content.text as string);
+      }
+      return { instructions: client.getInstructions(), skillTexts };
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  }
+
+  it("states a data pin in the instructions and the skills", async () => {
+    const { instructions, skillTexts } = await connectWith({ inputPins: { sources: ["data"] } });
+    expect(instructions).toContain("use Tako data only");
+    expect(skillTexts.length).toBeGreaterThan(0);
+    expect(skillTexts.every((text) => text.includes("pinned to Tako data"))).toBe(true);
+  });
+
+  it("says nothing about a pin no listed tool declares", async () => {
+    const { instructions, skillTexts } = await connectWith({
+      inputPins: { sources: ["data"] },
+      requestedToolNames: new Set(["tako_contents"]),
+    });
+    expect(instructions).not.toContain("On this connection");
+    expect(skillTexts.some((text) => text.includes("pinned"))).toBe(false);
+  });
+});
