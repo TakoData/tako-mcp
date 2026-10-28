@@ -463,7 +463,13 @@ const PINNED_SCHEMAS: Record<Source, z.ZodObject<z.ZodRawShape>> = {
 const sourcesPin: InputPinApplier<readonly Source[]> = {
   schema: (schema, sources) => {
     const only = soleSource(sources);
-    return only === undefined ? schema : PINNED_SCHEMAS[only];
+    if (only === undefined) return schema;
+    if (schema !== inputSchema) {
+      throw new Error(
+        "tako_search_advanced builds its pinned schemas from inputSchema, so pinning another schema would discard it. Derive PINNED_SCHEMAS from the schema it receives before adding a surface override or a second pin.",
+      );
+    }
+    return PINNED_SCHEMAS[only];
   },
   input: (input, sources) =>
     Object.fromEntries([

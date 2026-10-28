@@ -63,8 +63,7 @@ opt-in `tako_search_advanced` returns a prose answer instead — name `search_ad
 - **Search first.** Use `tako_available_data` for questions about what Tako covers. It
   reports on the graph only, so a miss there means fall back to the web half, not give up.
 - **When no card answers the question**, answer from the web results. To read a page in
-  full, pass its url to `tako_contents`. If there are no web results either, tell the user
-  that Tako found nothing for it.
+  full, pass its url to `tako_contents`.
 - **Cite what you relay.** Every card carries a source and an **Open in Tako** link.
 
 ## Commands

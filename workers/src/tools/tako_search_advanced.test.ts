@@ -959,6 +959,12 @@ describe("tako_search_advanced on a connection that pins sources", () => {
     expect(inputPropertyDescription(data, "location")).not.toContain("web results");
   });
 
+  it("refuses to pin a schema other than its own instead of discarding it", () => {
+    const overridden = z.object({ query: z.string(), surface_only: z.string() });
+    expect(() => pin.schema(overridden, ["data"])).toThrow(/discard/);
+    expect(pin.schema(overridden, ["data", "web"])).toBe(overridden);
+  });
+
   it("keeps both blocks on a data,web pin", () => {
     expect(pin.schema(schema, ["data", "web"])).toBe(schema);
   });
