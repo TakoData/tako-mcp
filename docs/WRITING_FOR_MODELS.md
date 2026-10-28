@@ -190,6 +190,34 @@ decides whether the agent opens the skill and follows its workflow. On Codex,
 the computation questions moved within noise, and lookups that start an agent
 stayed inside the 1-in-20 gate.
 
+Codex runs on 2026-10-27 (TAKO-5271) tested the `sources` rule "Keep both
+unless the user asks for one", which replaced "Narrow to `["web"]` only for
+news or page text". In ChatGPT, the old rule narrowed people lookups such as
+"Who are the VPs of engineering at Stripe?" to the web, and compound lists
+such as "Find heads of marketing at fintech companies in London" started
+`tako_company_agent` with no ask. Twelve prompts ran three times each: the
+seven people prompts from that ChatGPT run, two explicit asks for the Company
+Agent, a news question, a data question, and a no-lookup task. Each arm's stub
+served the `/mcp/chatgpt` listing from its commit. The new rule with the old
+skills is what ChatGPT runs until a new ZIP ships the `tako-agent` edit.
+
+| Arm | People prompts whose first `tako_search` keeps `data` | Named lookups that call Tako | Compound lists that start an agent first | Explicit asks that start `tako_company_agent` | No-lookup tasks that call Tako |
+|---|---|---|---|---|---|
+| Old rule, old skills | 10 of 15 | 4 of 9 | 0 of 9 | 6 of 6 | 0 of 3 |
+| New rule, new skills (shipped) | 12 of 12 | 1 of 9 | 0 of 9 | 6 of 6 | 0 of 3 |
+| New rule, old skills | 14 of 17 | 5 of 9 | 0 of 9 | 6 of 6 | 0 of 3 |
+
+The old rule narrowed every named lookup that reached Tako to `["web"]`, 4 of
+4, and the new rule kept `data` on 4 of 6. Codex sent every compound list to
+`tako_search` under the old rule too, so these runs can't show the ChatGPT
+agent starts going away. Only the explicit asks opened the `tako-agent` skill,
+so the two new-rule arms gave the model the same text on every other prompt.
+Their gap on named lookups that call Tako, 1 of 9 against 5 of 9, is
+run-to-run noise; the other lookups used Codex's own web search. The news
+question narrowed to `["web"]` on every first search in every arm. The stub
+returns no rows, so these runs can't test the `premium` row scope. All runs
+used `gpt-6-luna` on Codex 0.164.0.
+
 ## Tool descriptions say how to call the tool
 
 - Lead with what the tool does in one line, then a `Best for:` line. See the

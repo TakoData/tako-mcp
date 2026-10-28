@@ -14,7 +14,9 @@ Start an agent only when the user asks for one: they name Tako's agent or ask fo
 
 ## Choose the agent
 
-- Use `tako_company_agent` when the user names the Company Agent or wants a list of companies or of the professionals at them: companies by location, industry, status, founding date, funding, or size, or the officers, directors, executives, or employees of those companies.
+After the user asks for an agent, choose it by what they want back:
+
+- Use `tako_company_agent` when the user names the Company Agent or asks the agent for a list of companies or of the professionals at them: companies by location, industry, status, founding date, funding, or size, or the officers, directors, executives, or employees of those companies.
 - Use `tako_agent` for anything else, such as a chart, a written finding, or a ranking of companies by a metric.
 
 ## Run an agent

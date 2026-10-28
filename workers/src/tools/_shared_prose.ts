@@ -12,17 +12,24 @@
  * A tool whose text must differ writes its own constant.
  */
 
+export const SOURCES_CORPORA_SENTENCE =
+  "`data` is Tako's data graph, curated from authoritative data sources; `web` is the open web.";
+
+export const SOURCES_KEEP_BOTH_SENTENCE = "Keep both unless the user asks for one.";
+
+export const PREMIUM_ROW_SCOPE_SENTENCES =
+  "If a row has its own Tako link, in its cells or in the card's `description`, pass that link with `max_rows: 1` to get only that row. Otherwise set `offset` and `max_rows` to those rows.";
+
 /**
  * `sources` on `tako_search` and `tako_agent`. Both take the same two-corpus
  * enum and route the same way, so the sentence is one string. `tako_agent`
  * appends `AGENT_SOURCES_THREAD_RULE`.
  *
- * The digital-metrics clause is the load-bearing part: models narrow to
- * `["web"]` for website and app traffic on the assumption that a data graph
- * cannot hold it, and Tako's does.
+ * The keep-both rule is the load-bearing part: models narrow to `["web"]`
+ * whenever they guess the graph can't hold the answer, for website traffic,
+ * a role at a company, or a contact, and Tako's graph holds all three.
  */
-export const SOURCES_DESCRIBE =
-  'Which corpora to search; default is both. Narrow to ["web"] only for news or page text — website traffic is in the data graph.';
+export const SOURCES_DESCRIBE = `Which corpora to search; default is both. ${SOURCES_CORPORA_SENTENCE} ${SOURCES_KEEP_BOTH_SENTENCE}`;
 
 /** The `sources` rule both agent tools share: a thread's sources are fixed. */
 export const AGENT_SOURCES_THREAD_RULE =

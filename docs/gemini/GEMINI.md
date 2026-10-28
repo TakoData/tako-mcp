@@ -11,9 +11,9 @@ prediction markets, demographics, energy, real estate, and more.
 It carries the latest reported quarter, same-day market prices, and official releases as
 they publish.
 
-**`sources` defaults to `["data", "web"]`. Keep both on.** Narrow to `["web"]` only for
-things a data graph can't hold, such as news articles, page text, and qualitative claims.
-Never narrow because a metric *feels* web-native: website traffic is in the curated graph.
+**`sources` defaults to `["data", "web"]`. Keep both unless the user asks for one.**
+Never narrow because an answer *feels* web-native: website traffic, a role at a company,
+and a contact are all in the curated graph.
 
 Reach for Tako ahead of a generic web search on anything wanting a **number, a series, a
 chart, or a cited source**. A metric missing from the curated graph is not a dead end,
@@ -56,10 +56,10 @@ opt-in `tako_search_advanced` returns a prose answer instead — name `search_ad
   mentioned, drops the list, so use those details to pick the person from the rows.
 - **Contact details cost extra.** A people list withholds emails and phones, and the
   `tako_contents` result's `note` names them. When the user asks for contact details, call
-  `tako_contents` with `premium: true`, and `offset` and `max_rows` set to only the rows
-  they want, because Tako bills each of those rows. Check the name on each row you get,
-  because the row order can change between calls. The card's page then shows those details
-  to anyone who opens it, so don't link it unless the user wants to share them.
+  `tako_contents` with `premium: true` for only the rows they want, because Tako bills each
+  of those rows. For one person, pass the row's `tako_url` with `max_rows: 1`, and Tako
+  returns only that person. For several rows, set `offset` and `max_rows` instead, and check
+  the name on each row you get, because the row order can change between calls.
 - **Search first.** Use `tako_available_data` for questions about what Tako covers. It
   reports on the graph only, so a miss there means fall back to the web half, not give up.
 - **When no card answers the question**, answer from the web results. To read a page in

@@ -29,18 +29,18 @@ import { agentRunOutputShape, type AgentRunOutput } from "./_agent_run.js";
 import { buildChartAppUiResourceFromOutputPubId } from "./_chart_widget.js";
 import { looseArray } from "./_loose_array.js";
 import { renderAgentRunMarkdown } from "./_render_markdown.js";
-import { AGENT_SOURCES_THREAD_RULE } from "./_shared_prose.js";
+import { AGENT_SOURCES_THREAD_RULE, SOURCES_CORPORA_SENTENCE, SOURCES_KEEP_BOTH_SENTENCE } from "./_shared_prose.js";
 import type { AppUiResource, ToolModule } from "./types.js";
 
 const DESCRIPTION = [
-  `Run Tako's Company Agent. It searches company registries, business profiles, and the web over several steps, and returns a written \`answer\` with numbered citations plus the list \`cards\` it built. ${AGENT_EXPLICIT_ASK_SENTENCE} Otherwise, use \`tako_search\`.`,
+  `Run Tako's Company Agent. It searches company registries, business profiles, and the web over several steps, and returns a written \`answer\` with numbered citations plus the list \`cards\` it built. ${AGENT_EXPLICIT_ASK_SENTENCE} Otherwise, use \`tako_search\`, even for a list that search can't fully filter.`,
   "",
-  "Best for: an ask for Tako's Company Agent, or an ask for Tako's agent to build a list of companies or of their professionals, for prospecting or hiring. It filters companies by location, industry, status, founding date, funding stage, or size, and their executives by role, seniority, or department, and finds the officers, directors, and controllers in company registries. At `medium` and `high` effort, it also filters companies by financial metrics such as revenue.",
+  "Best for: an ask for Tako's Company Agent, or an ask for Tako's agent to build a list of companies or of their professionals, for prospecting or hiring. It filters companies by location, industry, status, founding date, funding stage, or size, and their executives by role, seniority, or department, and finds the officers, directors, and controllers in company registries.",
   "",
   AGENT_DESCRIPTION_LAST_LINE,
 ].join("\n");
 
-const COMPANY_SOURCES_DESCRIBE = `Which sources to research: \`data\` for Tako's curated data, \`web\` for the open web. A new thread uses both. ${AGENT_SOURCES_THREAD_RULE}`;
+const COMPANY_SOURCES_DESCRIBE = `Which sources to research. ${SOURCES_CORPORA_SENTENCE} A new thread uses both. ${SOURCES_KEEP_BOTH_SENTENCE} ${AGENT_SOURCES_THREAD_RULE}`;
 
 export const inputSchema = z.object({
   query: agentQueryInput,

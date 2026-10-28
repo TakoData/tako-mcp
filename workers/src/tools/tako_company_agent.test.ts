@@ -14,6 +14,7 @@ import { parseToolsParam } from "./_tools_param.js";
 import { CHATGPT_TOOL_NAMES, GENERIC_DEFAULT_TOOL_NAMES, resolveToolSet } from "./_surface.js";
 import { TOOL_REGISTRY } from "./_registry.js";
 import tool, { buildCompanyAgentBody } from "./tako_company_agent.js";
+import { inputPropertyDescription } from "./__test_helpers.js";
 import type { ToolContext } from "./types.js";
 import { AGENT_CARD_LINK_SENTENCE } from "./_agent_call.js";
 
@@ -67,8 +68,14 @@ describe("tako_company_agent", () => {
 
   it("the description starts a run only on an explicit ask and sends other questions to tako_search", () => {
     expect(tool.description).toContain("Start a run only when the user asks for one: they name Tako's agent or ask for deep or multi-step research with Tako.");
-    expect(tool.description).toContain("Otherwise, use `tako_search`.");
+    expect(tool.description).toContain("Otherwise, use `tako_search`, even for a list that search can't fully filter.");
     expect(tool.description).toContain("an ask for Tako's agent to build a list of companies or of their professionals");
+  });
+
+  it("the sources description keeps both corpora unless the user asks for one", () => {
+    const sources = inputPropertyDescription(tool.inputSchema, "sources");
+    expect(sources).toContain("`data` is Tako's data graph, curated from authoritative data sources; `web` is the open web.");
+    expect(sources).toContain("Keep both unless the user asks for one.");
   });
 
   it("posts to the company runs path with cards true and no effort when omitted", async () => {

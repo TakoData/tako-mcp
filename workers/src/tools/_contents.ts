@@ -37,6 +37,7 @@ import {
   usageAdvertisedSchema,
   type ProjectedRows,
 } from "./_search_results.js";
+import { PREMIUM_ROW_SCOPE_SENTENCES } from "./_shared_prose.js";
 
 
 /**
@@ -135,8 +136,6 @@ export interface ContentsWireItem {
   expires_at?: string | null | undefined;
   card_data?: Record<string, unknown> | null | undefined;
   redacted_cells?: Record<string, number[]> | null | undefined;
-  premium?: boolean | null | undefined;
-  premium_rows?: Record<string, number> | null | undefined;
   offset?: number | null | undefined;
 }
 
@@ -149,21 +148,13 @@ export function withheldNote(item: ContentsWireItem): string | undefined {
   if (columns.length === 0) return undefined;
   const rowCount = new Set(columns.flatMap((column) => redactedCells[column] ?? [])).size;
   const placeholder = item.content_format === "csv" ? "`[premium: withheld]`" : "`null`";
-  return `Tako returned the premium cells in ${columns.map((column) => `\`${column}\``).join(", ")} as ${placeholder} in ${rowCount} ${rowCount === 1 ? "row" : "rows"}. To get them, call again with \`premium: true\`. Charges scale with those rows.`;
+  return `Tako returned the premium cells in ${columns.map((column) => `\`${column}\``).join(", ")} as ${placeholder} in ${rowCount} ${rowCount === 1 ? "row" : "rows"}. To get them, call again with \`premium: true\` for only the rows the user wants. Charges scale with those rows. ${PREMIUM_ROW_SCOPE_SENTENCES}`;
 }
-
-export const PREMIUM_REVEAL_NOTE =
-  "Tako now shows these cells on this card's page to anyone who opens it. Tell the user before they share the card.";
 
 export const OFFSET_ORDER_NOTE = "The row order can change between calls, so check the name on each row you get.";
 
 function offsetNote(item: ContentsWireItem): string | undefined {
   return typeof item.offset === "number" && item.offset > 0 ? OFFSET_ORDER_NOTE : undefined;
-}
-
-function revealNote(item: ContentsWireItem): string | undefined {
-  const revealed = item.premium === true && Object.values(item.premium_rows ?? {}).some((count) => count > 0);
-  return revealed ? PREMIUM_REVEAL_NOTE : undefined;
 }
 
 /** What an item says when the backend delivered no payload: no rows, text,
@@ -220,7 +211,7 @@ export function projectContentsItem(
       };
     }
     if (item.card_data != null) card = item.card_data;
-    const notes = [opts.cardNote, withheldNote(item), offsetNote(item), revealNote(item)];
+    const notes = [opts.cardNote, withheldNote(item), offsetNote(item)];
     const present = notes.filter((part): part is string => part !== undefined);
     note = present.length > 0 ? present.join(" ") : undefined;
   } else if (typeof item.data === "string") {
