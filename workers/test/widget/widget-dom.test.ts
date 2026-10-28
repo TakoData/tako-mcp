@@ -2123,7 +2123,7 @@ describe("live cards (no window.openai)", () => {
     expect(sizeChangesOf(m).at(-1)?.params.height).toBeGreaterThan(1);
   });
 
-  it("resizes only the slide whose frame reported, within the 500 px ceiling, and never shrinks", async () => {
+  it("resizes only the slide whose frame reported, within the 500 px ceiling, and fits the widget to the tallest slide", async () => {
     const m = mountWidget(liveHtml());
     stubLive(m);
     deliverLive(m, liveCharts(3));
@@ -2150,12 +2150,28 @@ describe("live cards (no window.openai)", () => {
     expect(sizeChangesOf(m)).toHaveLength(before);
 
     postSlideHeight(m, first.contentWindow as Window, 900);
+    expect(sizeChangesOf(m).at(-1)?.params.height).toBe(500);
     postSlideHeight(m, first.contentWindow as Window, 200);
-    const notified = sizeChangesOf(m).map((s) => s.params.height);
-    expect(Math.max(...notified)).toBe(500);
-    notified.forEach((h, i) => {
-      if (i > 0) expect(h).toBeGreaterThanOrEqual(notified[i - 1] as number);
-    });
+    expect(first.getAttribute("height")).toBe("200");
+    expect(sizeChangesOf(m).at(-1)?.params.height).toBe(250);
+  });
+
+  it("shrinks the widget when a card settles below its first height report", async () => {
+    const m = mountWidget(liveHtml());
+    stubLive(m);
+    deliverLive(m, liveCharts(1));
+    await settle();
+    const card = mountedFrame(m, 0);
+
+    postSlideHeight(m, card.contentWindow as Window, 460);
+    expect(sizeChangesOf(m).at(-1)?.params.height).toBe(460);
+    postSlideHeight(m, card.contentWindow as Window, 399);
+    expect(card.getAttribute("height")).toBe("399");
+    expect(sizeChangesOf(m).at(-1)?.params.height).toBe(399);
+
+    const settledCount = sizeChangesOf(m).length;
+    postSlideHeight(m, card.contentWindow as Window, 399);
+    expect(sizeChangesOf(m)).toHaveLength(settledCount);
   });
 
   it("ignores a tako-embed-height from a live frame, which only the card itself sends", async () => {
