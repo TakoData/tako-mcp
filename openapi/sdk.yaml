@@ -543,12 +543,10 @@ paths:
             or ''json_compact'' for that card. PLACEHOLDER_CARD: the card is a placeholder
             whose data is withheld from this caller, and every content format refuses
             it. VARIABLE_COST_NOT_REQUESTED: the card''s data comes from a variable-cost
-            source that is not served to this caller. Both apply to an MPP request,
-            to a contract account whose terms are not signed yet, and to an account
-            that isn''t served variable-cost data. Any other caller gets the card''s
-            data. For an MPP request, call the API with an API key. For a contract
-            account, contact your account manager to sign terms. For any other account,
-            contact Tako support.'
+            source that is not served to this caller. Both apply to an MPP request
+            and to an account that isn''t served variable-cost data. Any other caller
+            gets the card''s data. For an MPP request, call the API with an API key.
+            For an account that isn''t served variable-cost data, contact support@tako.com.'
           content:
             application/json:
               schema:
@@ -2021,10 +2019,13 @@ components:
           - type: 'null'
           title: Variable Cost
           description: Return data from sources priced per unit, such as web traffic
-            and SEO data. Such data adds a charge above the request's own price, which
-            the response's `usage` object reports as `variable_cost`. Defaults to
-            true. Set it to false and each such card is a placeholder with its title,
-            a description and no data points. An account that isn't served variable-cost
+            and SEO data. Defaults to true. Each such card served with its data has
+            a minimum charge, whether or not its rows are inlined, and the card's
+            `content.export_pricing.variable_cost_max_usd` bounds it. The request's
+            `usage.compute` price counts toward those minimums, but inline data charges
+            don't. The response's `usage` object reports any amount above it as `variable_cost`.
+            Set it to false and each such card is a placeholder with its title, a
+            description and no data points. An account that isn't served variable-cost
             data always gets placeholders, whatever it sends. To get a placeholder's
             data, request the card's URL from POST /api/v1/contents.
         zdr:
@@ -3530,7 +3531,8 @@ components:
             and the quoted cost already accounts for it. The minimum is known only
             after the export, so the actual charge can be lower. The export''s usage.variable_cost
             reports a different amount: only what the export charged above its own
-            price.'
+            price. On a search or answer card, it also bounds the minimum charge for
+            serving that card with its data.'
       type: object
       required:
       - baseline_usd
@@ -5021,10 +5023,13 @@ components:
           - type: 'null'
           title: Variable Cost
           description: Return data from sources priced per unit, such as web traffic
-            and SEO data. Such data adds a charge above the request's own price, which
-            the response's `usage` object reports as `variable_cost`. Defaults to
-            true. Set it to false and each such card is a placeholder with its title,
-            a description and no data points. An account that isn't served variable-cost
+            and SEO data. Defaults to true. Each such card served with its data has
+            a minimum charge, whether or not its rows are inlined, and the card's
+            `content.export_pricing.variable_cost_max_usd` bounds it. The request's
+            `usage.compute` price counts toward those minimums, but inline data charges
+            don't. The response's `usage` object reports any amount above it as `variable_cost`.
+            Set it to false and each such card is a placeholder with its title, a
+            description and no data points. An account that isn't served variable-cost
             data always gets placeholders, whatever it sends. To get a placeholder's
             data, request the card's URL from POST /api/v1/contents.
         zdr:
@@ -5738,10 +5743,13 @@ components:
           anyOf:
           - $ref: '#/components/schemas/UsageVariableCost'
           - type: 'null'
-          description: 'Variable-cost charge. Present only when the data a request
-            or agent run served had a per-unit minimum above its own price: on a search,
-            answer or contents request that set variable_cost, and on an agent run
-            once it completes.'
+          description: 'Variable-cost charge. Present only when data from a source
+            priced per unit had a minimum charge above the request''s base price:
+            on a search or answer request that served such a card with its data, where
+            the base price is `usage.compute` and inline data charges don''t count
+            toward the minimum; on a contents export of such a card, where it''s the
+            export''s price; and on an agent run once it completes, where it''s the
+            run''s price.'
       type: object
       required:
       - total_cost_usd
@@ -5749,9 +5757,10 @@ components:
       description: 'Usage for one metered request. `total_cost_usd` is always present
         (the
 
-        total quoted charge). `compute` and `data` are the additive breakdown;
+        total quoted charge). `compute`, `data`, and `variable_cost` are the
 
-        each appears only where it applies. total_cost_usd always equals the sum
+        additive breakdown; each appears only where it applies. total_cost_usd always
+        equals the sum
 
         of the components that appear.'
     UsageCompute:
@@ -5809,7 +5818,7 @@ components:
       description: 'The variable-cost charge: the per-unit minimum of a variable-cost
         source
 
-        the response served, above the response''s own price.'
+        the response served, above the response''s base price.'
     WebCategory:
       type: string
       enum:
