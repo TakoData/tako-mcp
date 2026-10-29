@@ -1,7 +1,7 @@
 {
   "name": "tako",
   "description": "Premium live data from authoritative providers and web search as MCP tools, returned as cited charts and web results, plus the tako-search and tako-agent skills.",
-  "version": "1.8.0",
+  "version": "1.8.1",
   "author": {
     "name": "Tako",
     "url": "https://tako.com"
