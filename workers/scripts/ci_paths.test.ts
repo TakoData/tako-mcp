@@ -52,6 +52,7 @@ const OTHER_GUARD_INPUTS: readonly string[] = [
   "docs/gemini/GEMINI.md",
   "chatgpt-plugin/plugin.json",
   "chatgpt-plugin/mcp.json",
+  "openapi/sdk.yaml",
   ".github/workflows/workers-ci.yml", // this file, via WORKFLOW below
 ];
 

@@ -6,7 +6,7 @@ on:
       - 'openapi/sdk.yaml'
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: regenerate-${{ github.head_ref }}
@@ -21,11 +21,20 @@ jobs:
       run:
         working-directory: workers
     steps:
+      - name: Mint GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.OPENAPI_SYNC_APP_ID }}
+          private-key: ${{ secrets.OPENAPI_SYNC_APP_PRIVATE_KEY }}
+          owner: TakoData
+          repositories: tako-mcp
+
       - name: Checkout
         uses: actions/checkout@v4
         with:
           ref: ${{ github.head_ref }}
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ steps.app-token.outputs.token }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -54,15 +63,6 @@ jobs:
           npm run typecheck
           npm test
 
-      # Push with the default GITHUB_TOKEN deliberately: commits it authors do
-      # NOT re-trigger `on: pull_request`/`push` workflows (GitHub anti-recursion),
-      # which is what keeps this job from re-triggering itself in a loop. The
-      # trade-off: `workers-ci.yml` does not re-run on this regen commit, so the
-      # final SHA is verified by the `Verify` step above (same checks) rather than
-      # by a separate `workers-ci` status. `main` has no required status checks
-      # today, so this does not block merge. If branch protection later requires
-      # `workers-ci`, switch this push to the OPENAPI_SYNC_APP installation token
-      # (needs the App id/key as repo secrets) so the standard checks re-fire.
       - name: Commit regenerated code
         working-directory: .
         env:
