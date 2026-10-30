@@ -263,6 +263,24 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/BaseAPIError'
+        '429':
+          description: 'Too many requests. The request hit a rate limit: retry after
+            the interval in the Retry-After header.'
+          headers:
+            RateLimit-Limit:
+              $ref: '#/components/headers/RateLimit-Limit'
+            RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimit-Remaining'
+            RateLimit-Reset:
+              $ref: '#/components/headers/RateLimit-Reset'
+            RateLimit-Policy:
+              $ref: '#/components/headers/RateLimit-Policy'
+            Retry-After:
+              $ref: '#/components/headers/Retry-After'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RateLimitExceededError'
         '503':
           description: A backing data store is temporarily unavailable.
           content:
@@ -401,6 +419,24 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/BaseAPIError'
+        '429':
+          description: 'Too many requests. The request hit a rate limit: retry after
+            the interval in the Retry-After header.'
+          headers:
+            RateLimit-Limit:
+              $ref: '#/components/headers/RateLimit-Limit'
+            RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimit-Remaining'
+            RateLimit-Reset:
+              $ref: '#/components/headers/RateLimit-Reset'
+            RateLimit-Policy:
+              $ref: '#/components/headers/RateLimit-Policy'
+            Retry-After:
+              $ref: '#/components/headers/Retry-After'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RateLimitExceededError'
         '503':
           description: A backing data store is temporarily unavailable.
           content:
@@ -454,6 +490,24 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/BaseAPIError'
+        '429':
+          description: 'Too many requests. The request hit a rate limit: retry after
+            the interval in the Retry-After header.'
+          headers:
+            RateLimit-Limit:
+              $ref: '#/components/headers/RateLimit-Limit'
+            RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimit-Remaining'
+            RateLimit-Reset:
+              $ref: '#/components/headers/RateLimit-Reset'
+            RateLimit-Policy:
+              $ref: '#/components/headers/RateLimit-Policy'
+            Retry-After:
+              $ref: '#/components/headers/Retry-After'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RateLimitExceededError'
         '503':
           description: A backing data store is temporarily unavailable.
           content:
