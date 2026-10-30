@@ -3094,7 +3094,11 @@ components:
           description: 'When true, reveal premium cells and bill them. A card''s premium
             columns (see manifest[].premium_class) are withheld by default: a withheld
             cell reads [premium: withheld] in CSV and is null in JSON formats. This
-            is the only way to receive their values. The export then charges export_pricing.premium_row_cpm_usd[class]
+            is the only way to receive their values. Some cards link each row to a
+            card for that single record. To reveal one record''s premium cells, request
+            the URL in that row''s tako_url column with premium=true. To reveal them
+            for every record the card''s export returns, up to max_rows, request the
+            card itself. The export then charges export_pricing.premium_row_cpm_usd[class]
             per 1,000 premium records, on top of the standard row rate. A premium
             record is a distinct company or person that the delivered rows hold a
             value for in a column of that class; premium_rows on the item reports
@@ -5374,8 +5378,11 @@ components:
           - $ref: '#/components/schemas/PlaceholderInfo'
           - type: 'null'
           description: 'Set when the card is a placeholder: it carries its title and
-            no data points, because the request didn''t include its source''s data.
-            Null on every card that carries its data.'
+            no data points, because its source charges for each request and this response
+            didn''t include that source''s data. A search returns a placeholder when
+            the request sets variable_cost to false, for every MPP request, and for
+            an account that isn''t served variable-cost data. Null on every card that
+            carries its data.'
       type: object
       title: TakoCard
       description: 'A Tako knowledge card on the search and answer surfaces. It carries
