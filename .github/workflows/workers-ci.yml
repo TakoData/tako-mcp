@@ -25,6 +25,8 @@ on:
   # the README's copy-paste blocks byte for byte);
   # `scripts/gemini-extension.test.ts` reads `gemini-extension.json`,
   # `commands/**`, `docs/gemini/**`, and `version.txt`;
+  # `schemas:check` and `scripts/graph_related_description.test.ts` read
+  # `openapi/sdk.yaml`;
   # `scripts/ci_paths.test.ts` reads THIS FILE, which is why it is listed
   # below — a check that cannot see its own input is a check you can delete
   # in a PR that runs nothing.
@@ -58,6 +60,7 @@ on:
       - 'llms.txt'
       - 'README.md'
       - 'version.txt'
+      - 'openapi/sdk.yaml'
       - '.github/workflows/workers-ci.yml'
   pull_request:
     paths:
@@ -77,6 +80,7 @@ on:
       - 'llms.txt'
       - 'README.md'
       - 'version.txt'
+      - 'openapi/sdk.yaml'
       - '.github/workflows/workers-ci.yml'
   workflow_dispatch:
 

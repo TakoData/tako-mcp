@@ -15,7 +15,7 @@ concurrency:
 jobs:
   regenerate:
     runs-on: ubuntu-latest
-    # Only on same-repo PRs (the auto/openapi-sync branch from the App); skip forks.
+    # Only on same-repo PRs (the auto/sdk-sync branch from the App); skip forks.
     if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
     defaults:
       run:
@@ -74,9 +74,9 @@ jobs:
           # The `Verify` step above cannot catch an omission: it runs
           # `registry:check` against the UNCOMMITTED tree, so a file the
           # generator rewrote but nobody staged looks correct there and ships
-          # stale. `predeploy:staging` re-runs the same check on a clean
-          # checkout, so the omission surfaces as a blocked deploy instead of a
-          # red sync PR. Current outputs: registry/server.json,
+          # stale. `workers-ci` re-runs the same check on a clean checkout of
+          # the regen commit, so the omission turns the sync PR's
+          # `typecheck-and-test` red. Current outputs: registry/server.json,
           # registry/lhm.plugin.json, workers/src/tools/_registry.ts,
           # workers/src/generated/skills.ts and docs/TOOLS.md (see the
           # writeFileSync block in gen-registry.ts).
