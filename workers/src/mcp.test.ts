@@ -1865,7 +1865,7 @@ describe("stringified array arguments survive SDK input validation", () => {
       sources?: { data?: Record<string, unknown>; web?: unknown };
     };
     expect(body.sources?.web).toBeUndefined();
-    expect(body.sources?.data).toEqual({});
+    expect(body.sources?.data).toEqual({ variable_cost: true });
   });
 
   // The contract does not move: a value the array schema rejects is still
@@ -3027,7 +3027,7 @@ describe("URL-pinned sources", () => {
       c.callTool({ name: "tako_search", arguments: { query: "q", sources: ["web"] } }),
     );
     expect(bodies).toHaveLength(1);
-    expect(bodies[0]!.sources).toEqual({ data: {} });
+    expect(bodies[0]!.sources).toEqual({ data: { variable_cost: true } });
   });
 
   it("sends the pinned sources on an anonymous connection", async () => {
@@ -3038,7 +3038,7 @@ describe("URL-pinned sources", () => {
       "free",
     );
     expect(bodies).toHaveLength(1);
-    expect(bodies[0]!.sources).toEqual({ data: {} });
+    expect(bodies[0]!.sources).toEqual({ data: { variable_cost: false } });
   });
 
   async function postToolsList(path: string): Promise<Response> {

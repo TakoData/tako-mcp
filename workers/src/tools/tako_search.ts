@@ -154,7 +154,7 @@ export function buildSearchBody(input: Input, tier: Tier): z.input<typeof Search
   // Typed against the contract (not Record<string, …>) so a renamed/added
   // `Sources` key or a new required per-source sub-field breaks compilation here.
   const sources: NonNullable<z.input<typeof SearchRequest>["sources"]> = {};
-  // Each block goes out EMPTY. The simple tool declares no defaults of its own:
+  // Each block carries only the values set below. The simple tool declares no other defaults:
   // an omitted field is omitted from the body, so the v3 API's own default
   // applies and every parameter description here states that default in words.
   //
@@ -163,7 +163,13 @@ export function buildSearchBody(input: Input, tier: Tier): z.input<typeof Search
   // 4000 on /v3/search). Both predate tako#29572, which made every delivered
   // row bill per 1k, and neither had a rationale anywhere in the tree. A caller
   // who wants them names the advanced search tool.
-  if (input.sources.includes("data")) sources.data = {};
+  //
+  // The data block's one value is the variable-cost opt-in. Signed-in searches
+  // get Semrush traffic and SEO cards with their data. The free tier sends
+  // false, because the API default is true and its calls bill the shared
+  // free-tier account, so an anonymous caller would run up per-unit Semrush
+  // charges on Tako's account.
+  if (input.sources.includes("data")) sources.data = { variable_cost: tier !== "free" };
   if (input.sources.includes("web")) {
     // The ONE opinionated departure from the API, and the same one Exa's
     // web_search_exa makes: the snippet becomes the passages Exa's model selects
@@ -181,11 +187,6 @@ export function buildSearchBody(input: Input, tier: Tier): z.input<typeof Search
     sources.web = { highlights: true };
   }
   const body: z.input<typeof SearchRequest> = { query: input.query, sources };
-  // Signed-in searches opt in to variable-cost sources (Semrush traffic and SEO
-  // cards); without it the backend serves those cards as placeholders. The free
-  // tier stays out: its calls bill the shared free-tier account, so an
-  // anonymous caller would run up per-unit Semrush charges on Tako's account.
-  if (tier !== "free") body.variable_cost = true;
   if (input.country_code !== undefined) body.country_code = input.country_code;
   if (input.locale !== undefined) body.locale = input.locale;
   return body satisfies z.input<typeof SearchRequest>; // ← build-time guard: backend request drift breaks here
@@ -230,9 +231,9 @@ const tako_search = {
   // refuse anonymously, which is the point of the split (spec D4).
   fixedInputs: [
     {
-      field: "variable_cost (signed-in connections)",
+      field: "sources.data.variable_cost (signed-in connections)",
       value: "true",
-      note: "Website-traffic and SEO cards return their data and add a per-unit charge. A keyless connection doesn't send it and gets those cards as placeholders. The API default is false.",
+      note: "Website-traffic and SEO cards return their data and add a per-unit charge. A keyless connection sends false and gets those cards as placeholders. The API default is true.",
     },
     {
       field: "sources.web.highlights",

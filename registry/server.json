@@ -340,10 +340,6 @@
           "type": "integer",
           "description": "Maximum follow-up queries to return in `related`. Ignored when `include_answer` is true."
         },
-        "variable_cost": {
-          "type": "boolean",
-          "description": "Web traffic and SEO data, which adds a per-unit charge. Default true; false gets placeholders."
-        },
         "data": {
           "type": "object",
           "description": "Tako data (card) source settings; naming it selects the data graph."

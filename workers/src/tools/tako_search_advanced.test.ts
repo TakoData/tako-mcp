@@ -111,13 +111,15 @@ describe("tako_search_advanced surface membership", () => {
 });
 
 describe("tako_search_advanced mirrors the v3 SearchRequest", () => {
-  it("exposes every top-level SearchRequest field but zdr, with sources as two blocks", () => {
+  it("exposes every top-level SearchRequest field but zdr and the deprecated variable_cost, with sources as two blocks", () => {
     // A LIST here would be the thing that drifts. The previous version of this
     // tool shipped 18 of 25 generated fields and the seven missing ones were
     // never decided — six appear in no spec and no plan. Derived from the
     // generated shape, "mirrors the API" is checked rather than asserted in a
     // header.
-    const expected = Object.keys(AnswerRequest.shape).filter((k) => k !== "sources" && k !== "zdr");
+    const expected = Object.keys(AnswerRequest.shape).filter(
+      (k) => k !== "sources" && k !== "zdr" && k !== "variable_cost",
+    );
     expect(Object.keys(tako_search_advanced.inputSchema.shape).sort()).toEqual(
       [...expected, "data", "web", "include_answer"].sort(),
     );
@@ -125,6 +127,13 @@ describe("tako_search_advanced mirrors the v3 SearchRequest", () => {
 
   it("rejects zdr, which only API accounts Tako enables can send", () => {
     expect(tako_search_advanced.inputSchema.safeParse({ query: "x", zdr: true }).success).toBe(false);
+  });
+
+  it("rejects the deprecated top-level variable_cost and takes it in the data block", () => {
+    expect(tako_search_advanced.inputSchema.safeParse({ query: "x", variable_cost: false }).success).toBe(false);
+    expect(
+      tako_search_advanced.inputSchema.safeParse({ query: "x", data: { variable_cost: false } }).success,
+    ).toBe(true);
   });
 
   it("each derived field carries the generated CONSTRAINTS, not just the generated name", () => {
@@ -215,14 +224,16 @@ describe("tako_search_advanced mirrors the v3 SearchRequest", () => {
     });
     const body = buildAdvancedSearchBody(input);
     expect(Object.keys(body).sort()).toEqual(
-      Object.keys(AnswerRequest.shape).filter((k) => k !== "zdr").sort(),
+      Object.keys(AnswerRequest.shape)
+        .filter((k) => k !== "zdr" && k !== "variable_cost")
+        .sort(),
     );
     expect(body.location).toEqual({ latitude: 51.5, longitude: -0.1 });
     expect(body.timezone).toBe("Europe/London");
     expect(body.output_settings).toEqual({ image_dark_mode: true });
     expect(body.include_related).toBe(3);
     expect(body.sources).toEqual({
-      data: { mode: "inline" },
+      data: { mode: "inline", variable_cost: true },
       web: { published_after: "2026-01-01", published_before: "2026-06-30", highlights: true },
     });
   });
@@ -359,12 +370,12 @@ describe("tako_search_advanced mirrors the v3 SearchRequest", () => {
     });
     expect(buildAdvancedSearchBody(input)).toEqual({
       query: "US CPI",
-      variable_cost: true,
       effort: "deep",
       country_code: "GB",
       locale: "en-GB",
       sources: {
         data: {
+          variable_cost: true,
           count: 3,
           include_contents: true,
           max_rows: 500,
@@ -528,7 +539,7 @@ describe("web highlights default", () => {
     // includes an index only if its key is present, and an absent `sources`
     // means both, so dropping `data` here would turn every default call into a
     // web search.
-    expect(bodyOf({}).sources).toEqual({ data: {}, web: { highlights: true } });
+    expect(bodyOf({}).sources).toEqual({ data: { variable_cost: true }, web: { highlights: true } });
   });
 
   it("names web: fills highlights and keeps the caller's other web fields", () => {
@@ -540,7 +551,7 @@ describe("web highlights default", () => {
   });
 
   it("data only: sends no web block, so no highlights", () => {
-    expect(bodyOf({ data: { count: 3 } }).sources).toEqual({ data: { count: 3 } });
+    expect(bodyOf({ data: { count: 3 } }).sources).toEqual({ data: { variable_cost: true, count: 3 } });
   });
 
   it("the materialized default set still matches the backend's Sources", () => {
@@ -549,13 +560,30 @@ describe("web highlights default", () => {
     expect(Object.keys(Sources.shape).sort()).toEqual(["data", "web"]);
   });
 
-  it("opts in to variable-cost sources by default, and lets an explicit false decline the per-unit minimum", () => {
-    expect(buildAdvancedSearchBody(tako_search_advanced.inputSchema.parse({ query: "netflix.com traffic" }))).toMatchObject({
+  it("opts in to variable-cost sources by default in sources.data, and lets an explicit false decline the per-unit minimum", () => {
+    const defaulted = bodyOf({});
+    expect(defaulted.sources?.data?.variable_cost).toBe(true);
+    expect(defaulted).not.toHaveProperty("variable_cost");
+
+    const declined = bodyOf({ data: { variable_cost: false } });
+    expect(declined.sources?.data?.variable_cost).toBe(false);
+    expect(declined).not.toHaveProperty("variable_cost");
+  });
+
+  it("forwards a variable-cost cap and keeps the opt-in it needs", () => {
+    expect(bodyOf({ data: { max_variable_cost_usd: 0.5 } }).sources?.data).toEqual({
       variable_cost: true,
+      max_variable_cost_usd: 0.5,
     });
-    expect(
-      buildAdvancedSearchBody(tako_search_advanced.inputSchema.parse({ query: "netflix.com traffic", variable_cost: false })),
-    ).toMatchObject({ variable_cost: false });
+  });
+
+  it("rejects a variable-cost cap with variable_cost false locally, before the backend's 400", () => {
+    const parsed = tako_search_advanced.inputSchema.safeParse({
+      query: "q",
+      data: { variable_cost: false, max_variable_cost_usd: 0 },
+    });
+    expect(parsed.success).toBe(false);
+    expect(parsed.error?.issues[0]?.path).toEqual(["data", "max_variable_cost_usd"]);
   });
 
   it("tako_search still FORCES it, and declares that as a fixed input", () => {
@@ -981,10 +1009,13 @@ describe("tako_search_advanced on a connection that pins sources", () => {
     const pinned = pin.schema(schema, ["data"]);
     expect(pinned.safeParse({ query: "q", output_schema: { type: "object" } }).success).toBe(false);
     expect(pinned.safeParse({ query: "q", data: { strict: true } }).success).toBe(false);
+    expect(
+      pinned.safeParse({ query: "q", data: { variable_cost: false, max_variable_cost_usd: 0 } }).success,
+    ).toBe(false);
   });
 
   it("sends data only when a data-pinned call names no block", () => {
-    expect(bodyFor(pin.input({ query: "q" }, ["data"])).sources).toEqual({ data: {} });
+    expect(bodyFor(pin.input({ query: "q" }, ["data"])).sources).toEqual({ data: { variable_cost: true } });
   });
 
   it("sends web only, with highlights, when a web-pinned call names no block", () => {
@@ -993,7 +1024,7 @@ describe("tako_search_advanced on a connection that pins sources", () => {
 
   it("sends both blocks when a data,web pin names only one", () => {
     expect(bodyFor(pin.input({ query: "q", data: { count: 3 } }, ["data", "web"])).sources).toEqual({
-      data: { count: 3 },
+      data: { variable_cost: true, count: 3 },
       web: { highlights: true },
     });
   });

@@ -3,15 +3,16 @@
  * whole, behind `?tools=search_advanced` on `/mcp`.
  *
  * Every field of `SearchRequest`, `DataSourceSettings` and `WebSourceSettings`
- * except `zdr` is here, derived from the generated schemas so the set cannot drift; the
+ * except `zdr` and the deprecated top-level `variable_cost` (replaced by
+ * `data.variable_cost`) is here, derived from the generated schemas so the set cannot drift; the
  * parity tests in tako_search_advanced.test.ts are the guard. An unknown key at
  * any level is a -32602 — all three levels are `.strict()`, and mcp.ts registers
  * the full object, so that holds on the wire and not only in a unit test.
  *
  * TWO values this tool supplies that the caller did not: `sources.web.highlights`
- * and `variable_cost` both default to true (see `buildAdvancedSearchBody`). They
+ * and `sources.data.variable_cost` both default to true (see `buildAdvancedSearchBody`). They
  * are DEFAULTS, not fixed inputs — `web: {highlights: false}` and
- * `variable_cost: false` win — which is why `fixedInputs` stays empty. This
+ * `data: {variable_cost: false}` win — which is why `fixedInputs` stays empty. This
  * tool never runs on the free tier, so the variable-cost default needs no tier
  * check.
  *
@@ -212,6 +213,8 @@ const DATA_DESCRIBES = {
   // promises ("an omitted field takes the server default its description
   // names").
   strict: "Return only cards matching `node_ids` — a hard filter, so zero cards is evidence about the filter, not coverage. Default false: the pin only ranks up, and organic results still return. Adding the entity's id beside the metric's widens it back out.",
+  variable_cost: "Web traffic and SEO data, which adds a per-unit charge. Default true; false gets placeholders.",
+  max_variable_cost_usd: "Most this response pays in per-unit charges (`usage.variable_cost`), in USD. Tako checks each per-unit card's maximum against what's left, in rank order, and a card that doesn't fit comes back a placeholder. 0 pays none. Omit it for no cap. Needs `variable_cost` true or omitted.",
 } satisfies Partial<Record<keyof typeof DataSourceSettings.shape, string>>;
 
 const WEB_DESCRIBES = {
@@ -272,12 +275,15 @@ const webBlock = z.object(optionalWithoutDefaults(WebSourceSettings.shape, WEB_D
 
 /**
  * Top level: every `SearchRequest` field except `sources` (replaced by the two
- * blocks) and `zdr` (zero data retention, offered only to API accounts Tako
- * enables, none of which connect over MCP), optional and default-free. Four keep a hand-written `.describe()`
+ * blocks), `zdr` (zero data retention, offered only to API accounts Tako
+ * enables, none of which connect over MCP) and the deprecated `variable_cost`
+ * (`data.variable_cost` replaces it), optional and default-free. Four keep a hand-written `.describe()`
  * that names the server default in words — the generated text for
  * `country_code` and `locale` does not, and this tool's description promises it.
  */
-const topLevel = optionalWithoutDefaults(SearchRequest.omit({ query: true, sources: true, zdr: true }).shape);
+const topLevel = optionalWithoutDefaults(
+  SearchRequest.omit({ query: true, sources: true, zdr: true, variable_cost: true }).shape,
+);
 
 /**
  * `output_settings` rebuilt from `OutputSettings` with its INNER defaults
@@ -366,9 +372,6 @@ const inputObject = z
     // geo bias still uses country_code only (TAKO-3183 phase 2)". An earlier
     // rewrite here said "bias web results toward", which is the one reading the
     // code rules out.
-    variable_cost: topLevel.variable_cost.describe(
-      "Web traffic and SEO data, which adds a per-unit charge. Default true; false gets placeholders.",
-    ),
     location: topLevel.location.describe(`${LOCATION_DESCRIBE}; web results follow country_code.`),
     output_settings: outputSettingsBlock,
     data: dataBlock.optional().describe(`${DATA_BLOCK_DESCRIBE}; naming it selects the data graph.`),
@@ -418,7 +421,14 @@ const inputObject = z
 interface RequestCheckedFields {
   output_schema?: unknown;
   include_answer?: boolean | undefined;
-  data?: { strict?: boolean | undefined; node_ids?: readonly unknown[] | undefined } | undefined;
+  data?:
+    | {
+        strict?: boolean | undefined;
+        node_ids?: readonly unknown[] | undefined;
+        variable_cost?: boolean | null | undefined;
+        max_variable_cost_usd?: number | null | undefined;
+      }
+    | undefined;
 }
 
 const withRequestChecks = <S extends z.ZodObject<z.ZodRawShape> & z.ZodType<RequestCheckedFields>>(
@@ -443,6 +453,11 @@ const withRequestChecks = <S extends z.ZodObject<z.ZodRawShape> & z.ZodType<Requ
       path: ["data", "strict"],
       message:
         "strict: true filters to data.node_ids, so it needs at least one. Add the metric's node id, or drop strict.",
+    })
+    .refine((v) => v.data?.variable_cost !== false || v.data.max_variable_cost_usd == null, {
+      path: ["data", "max_variable_cost_usd"],
+      message:
+        "max_variable_cost_usd caps per-unit charges, and variable_cost: false turns them off. Drop one of the two.",
     });
 
 const inputSchema = withRequestChecks(inputObject);
@@ -455,7 +470,7 @@ const PINNED_SCHEMAS: Record<Source, z.ZodObject<z.ZodRawShape>> = {
     }),
   ),
   web: withRequestChecks(
-    inputObject.omit({ data: true, variable_cost: true }).extend({
+    inputObject.omit({ data: true }).extend({
       web: webBlock.optional().describe(`${WEB_BLOCK_DESCRIBE}.`),
     }),
   ),
@@ -506,11 +521,11 @@ export function buildAdvancedSearchBody(input: Input): z.input<typeof AnswerRequ
   if (input.timezone !== undefined) body.timezone = input.timezone;
   if (input.output_settings !== undefined) body.output_settings = input.output_settings;
   if (input.include_related !== undefined) body.include_related = input.include_related;
-  // A DEFAULT, like `highlights` below: the caller's explicit `false` wins and
-  // gets placeholders instead of the per-unit minimum. Defaults to true so this
-  // tool matches `tako_search`, which opts in without a field. No tier check:
-  // this tool never executes on the free tier (`FREE_TIER_TOOL_NAMES`).
-  body.variable_cost = input.variable_cost ?? true;
+  // `data.variable_cost` is a DEFAULT, like `highlights` below: the caller's
+  // explicit `false` wins and gets placeholders instead of the per-unit
+  // minimum. Defaults to true so this tool matches `tako_search`. No tier
+  // check: this tool never executes on the free tier (`FREE_TIER_TOOL_NAMES`).
+  const data = input.data === undefined ? undefined : { variable_cost: true, ...input.data };
   // `highlights` is the ONE value this tool supplies that the caller did not
   // ask for, and it is a DEFAULT, not a fixed input: spread order lets an
   // explicit `web.highlights: false` win. It exists because `tako_answer` — the
@@ -530,9 +545,9 @@ export function buildAdvancedSearchBody(input: Input): z.input<typeof AnswerRequ
   // the caller who wants page-opening text sends `web: {highlights: false}`,
   // which is one field and which `tako_search` does not offer at all.
   const web = input.web === undefined ? undefined : { highlights: true, ...input.web };
-  if (input.data !== undefined || web !== undefined) {
+  if (data !== undefined || web !== undefined) {
     const sources: NonNullable<z.input<typeof SearchRequest>["sources"]> = {};
-    if (input.data !== undefined) sources.data = input.data;
+    if (data !== undefined) sources.data = data;
     if (web !== undefined) sources.web = web;
     body.sources = sources;
   } else {
@@ -542,7 +557,7 @@ export function buildAdvancedSearchBody(input: Input): z.input<typeof AnswerRequ
     // backend's own; the `Sources.shape` parity test is the guard. Sending
     // `{web: {...}}` alone here would be a WEB-ONLY request: Sources includes an
     // index only if its key is present.
-    body.sources = { data: {}, web: { highlights: true } };
+    body.sources = { data: { variable_cost: true }, web: { highlights: true } };
   }
   body satisfies z.input<typeof SearchRequest>; // ← build-time guard: /v3/search drift breaks here
   if (endpointFor(input) !== "answer") return body;
