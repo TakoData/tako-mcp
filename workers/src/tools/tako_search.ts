@@ -154,7 +154,7 @@ export function buildSearchBody(input: Input, tier: Tier): z.input<typeof Search
   // Typed against the contract (not Record<string, …>) so a renamed/added
   // `Sources` key or a new required per-source sub-field breaks compilation here.
   const sources: NonNullable<z.input<typeof SearchRequest>["sources"]> = {};
-  // Each block goes out EMPTY. The simple tool declares no defaults of its own:
+  // Each block carries only the values set below. The simple tool declares no other defaults:
   // an omitted field is omitted from the body, so the v3 API's own default
   // applies and every parameter description here states that default in words.
   //

@@ -3,7 +3,8 @@
  * whole, behind `?tools=search_advanced` on `/mcp`.
  *
  * Every field of `SearchRequest`, `DataSourceSettings` and `WebSourceSettings`
- * except `zdr` is here, derived from the generated schemas so the set cannot drift; the
+ * except `zdr` and the deprecated top-level `variable_cost` (replaced by
+ * `data.variable_cost`) is here, derived from the generated schemas so the set cannot drift; the
  * parity tests in tako_search_advanced.test.ts are the guard. An unknown key at
  * any level is a -32602 — all three levels are `.strict()`, and mcp.ts registers
  * the full object, so that holds on the wire and not only in a unit test.
