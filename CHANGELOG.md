@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.9.0](https://github.com/TakoData/tako-mcp/compare/v1.8.3...v1.9.0) (2026-11-03)
+
+
+### Features
+
+* **search:** move variable_cost into sources.data and add the cost cap to tako_search_advanced ([#396](https://github.com/TakoData/tako-mcp/issues/396)) ([c569854](https://github.com/TakoData/tako-mcp/commit/c569854ef3398e54098313ff0df8c68863a6c56b))
+
 ## [1.8.3](https://github.com/TakoData/tako-mcp/compare/v1.8.2...v1.8.3) (2026-11-02)
 
 
