@@ -2116,7 +2116,7 @@ Parameters:
 
 Fixed request inputs (the caller cannot change these):
 
-- `variable_cost (signed-in connections)` = `true` — Website-traffic and SEO cards return their data and add a per-unit charge. A keyless connection doesn't send it and gets those cards as placeholders. The API default is false.
+- `sources.data.variable_cost (signed-in connections)` = `true` — Website-traffic and SEO cards return their data and add a per-unit charge. A keyless connection sends false and gets those cards as placeholders. The API default is true.
 - `sources.web.highlights` = `true` — Query-relevant highlight passages per web result, so the excerpt supports choosing a url to fetch. The API default is false.
 
 URL-pinnable inputs (set on the /mcp URL):
@@ -2744,7 +2744,6 @@ Parameters:
 | `timezone` | string | no |  | IANA timezone. It formats dates in rendered card images only. |
 | `output_settings` | object | no |  | Settings that control the response shape. |
 | `include_related` | integer | no |  | Maximum follow-up queries to return in `related`. Ignored when `include_answer` is true. |
-| `variable_cost` | boolean | no |  | Web traffic and SEO data, which adds a per-unit charge. Default true; false gets placeholders. |
 | `data` | object | no |  | Tako data (card) source settings; naming it selects the data graph. |
 | `web` | object | no |  | Web source settings; naming it selects the web. |
 | `include_answer` | boolean | no |  | Set true to synthesize one citation-backed answer from the retrieval into `answer`. |
@@ -2876,17 +2875,6 @@ Annotations:
         }
       ]
     },
-    "variable_cost": {
-      "description": "Web traffic and SEO data, which adds a per-unit charge. Default true; false gets placeholders.",
-      "anyOf": [
-        {
-          "type": "boolean"
-        },
-        {
-          "type": "null"
-        }
-      ]
-    },
     "data": {
       "description": "Tako data (card) source settings; naming it selects the data graph.",
       "type": "object",
@@ -2950,6 +2938,29 @@ Annotations:
         "strict": {
           "type": "boolean",
           "description": "Return only cards matching `node_ids` — a hard filter, so zero cards is evidence about the filter, not coverage. Default false: the pin only ranks up, and organic results still return. Adding the entity's id beside the metric's widens it back out."
+        },
+        "variable_cost": {
+          "description": "Web traffic and SEO data, which adds a per-unit charge. Default true; false gets placeholders.",
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "max_variable_cost_usd": {
+          "description": "Most this response pays in per-unit charges (`usage.variable_cost`), in USD. Tako checks each per-unit card's maximum against what's left, in rank order, and a card that doesn't fit comes back a placeholder. 0 pays none. Omit it for no cap. Needs `variable_cost` true or omitted.",
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "additionalProperties": false

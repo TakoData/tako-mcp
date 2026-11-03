@@ -157,9 +157,9 @@ describe("tako_search is the SIMPLE tool (spec D4)", () => {
   it("declares exactly two fixed inputs: the variable-cost opt-in and the web highlights override", () => {
     expect(tako_search.fixedInputs).toEqual([
       {
-        field: "variable_cost (signed-in connections)",
+        field: "sources.data.variable_cost (signed-in connections)",
         value: "true",
-        note: expect.stringContaining("API default is false") as unknown as string,
+        note: expect.stringContaining("API default is true") as unknown as string,
       },
       {
         field: "sources.web.highlights",
@@ -187,7 +187,7 @@ describe("tako_search request body sends only what the caller asked for", () => 
     expect(body.output_settings).toBeUndefined();
   });
 
-  it("sends each per-source block EMPTY except the one opinionated web override", async () => {
+  it("sends each per-source block EMPTY except the web highlights override and the data variable-cost opt-in", async () => {
     // The deleted overrides: count 10 on both sources (API default 5) and
     // snippet_max_chars 2000 (API default 4000 on /v3/search). Both were tuned
     // when inlining was free and neither had a rationale in the tree.
@@ -195,17 +195,21 @@ describe("tako_search request body sends only what the caller asked for", () => 
     await tako_search.handler({ query: "x", sources: ["data", "web"] }, CTX);
 
     const body = await bodyOf(requestFrom(fetchMock.mock.calls[0]));
-    expect(body.sources).toEqual({ data: {}, web: { highlights: true } });
+    expect(body.sources).toEqual({ data: { variable_cost: true }, web: { highlights: true } });
   });
 
-  it("sends variable_cost on a signed-in connection and not on a keyless one", async () => {
+  it("opts a signed-in connection in to variable cost and a keyless one out, in sources.data", async () => {
     const signedIn = emptyResponse();
     await tako_search.handler({ query: "netflix.com traffic", sources: ["data"] }, CTX);
-    expect(await bodyOf(requestFrom(signedIn.mock.calls[0]))).toMatchObject({ variable_cost: true });
+    const signedInBody = await bodyOf(requestFrom(signedIn.mock.calls[0]));
+    expect(signedInBody).toMatchObject({ sources: { data: { variable_cost: true } } });
+    expect(signedInBody).not.toHaveProperty("variable_cost");
 
     const keyless = emptyResponse();
     await tako_search.handler({ query: "netflix.com traffic", sources: ["data"] }, { ...CTX, tier: "free" });
-    expect(await bodyOf(requestFrom(keyless.mock.calls[0]))).not.toHaveProperty("variable_cost");
+    const keylessBody = await bodyOf(requestFrom(keyless.mock.calls[0]));
+    expect(keylessBody).toMatchObject({ sources: { data: { variable_cost: false } } });
+    expect(keylessBody).not.toHaveProperty("variable_cost");
   });
 
   it("omits the web block entirely on a data-only search", async () => {
@@ -213,7 +217,7 @@ describe("tako_search request body sends only what the caller asked for", () => 
     await tako_search.handler({ query: "x", sources: ["data"] }, CTX);
 
     const body = await bodyOf(requestFrom(fetchMock.mock.calls[0]));
-    expect(body.sources).toEqual({ data: {} });
+    expect(body.sources).toEqual({ data: { variable_cost: true } });
   });
 
   it("omits country_code, locale and effort when the caller omits them", () => {
@@ -538,12 +542,12 @@ describe("tako_search widget + contract guard", () => {
 
   it("opts a signed-in search in to variable-cost sources, so Semrush cards aren't placeholders", () => {
     const body = buildSearchBody(tako_search.inputSchema.parse({ query: "netflix.com traffic" }), "authenticated");
-    expect(body.variable_cost).toBe(true);
+    expect(body.sources?.data?.variable_cost).toBe(true);
   });
 
   it("keeps a free-tier search out of variable-cost sources, so keyless calls don't bill Semrush units to the shared account", () => {
     const body = buildSearchBody(tako_search.inputSchema.parse({ query: "netflix.com traffic" }), "free");
-    expect(body).not.toHaveProperty("variable_cost");
+    expect(body.sources?.data?.variable_cost).toBe(false);
   });
 });
 
@@ -566,7 +570,7 @@ describe("tako_search takes no graph pin (moved to tako_search_advanced)", () =>
     ]);
     await tako_search.handler({ query: "q", ...DEFAULTS }, CTX);
     const body = await bodyOf(requestFrom(fetchMock.mock.calls[0]!));
-    expect(body.sources).toEqual({ data: {} });
+    expect(body.sources).toEqual({ data: { variable_cost: true } });
   });
 });
 
