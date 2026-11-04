@@ -82,9 +82,9 @@ import {
 } from "./_pair_confirm.js";
 import type { PairVerdict } from "./_pair_confirm.js";
 import {
-  graphErrorMessage,
   graphRelatedOutputShape,
   graphSearchOutputShape,
+  graphToolError,
 } from "./_graph.js";
 import {
   availableDataSlimOutputShape,
@@ -311,7 +311,7 @@ const tako_available_data = {
         // drops the DjangoError envelope, so this line is the only server-side
         // record of what actually failed.
         console.error("[tako] tool error tool=tako_available_data stage=graph/search:", err);
-        throw new Error(graphErrorMessage(err, "search", undefined, "tako_available_data"));
+        throw graphToolError(err, "search", undefined, "tako_available_data");
       }
       const parsed = searchShape.safeParse(raw);
       if (!parsed.success) {

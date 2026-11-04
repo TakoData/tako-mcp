@@ -1524,6 +1524,36 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
     expect(text).toContain("Add credits to continue.");
   });
 
+  it("authenticated credit exhaustion on a graph tool gets the out-of-credits result, not a retry hint", async () => {
+    for (const params of [
+      { name: "tako_graph_related", arguments: { node_id: "gdp-tok" } },
+      { name: "tako_available_data", arguments: { q: "GDP" } },
+    ]) {
+      mockFetchSequence([PAYG_402()]);
+      const res = await worker.fetch(
+        post(
+          { jsonrpc: "2.0", id: 4, method: "tools/call", params },
+          { authorization: "Bearer real-user-token", "user-agent": "claude-code/2.1.220 (sdk-cli)" },
+        ),
+        freeEnv(fakeLimiter(true)),
+      );
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as {
+        result: {
+          content: Array<{ text: string }>;
+          isError: boolean;
+          _meta: Record<string, { kind?: string }>;
+        };
+      };
+      expect(body.result.isError).toBe(true);
+      const text = body.result.content[0]?.text ?? "";
+      expect(text).toContain("out of credits");
+      expect(text).toContain("Add credits to continue.");
+      expect(text).not.toMatch(/Retry once/);
+      expect(body.result._meta["tako/error"]?.kind).toBe("payment_required");
+    }
+  });
+
   it("authenticated credit exhaustion on /mcp carries the remedy for every UA — and /mcp/chatgpt never does", async () => {
     // Commerce copy keys on the surface now (spec D5): the generic
     // surface carries Django's remedy for every client, and the chatgpt

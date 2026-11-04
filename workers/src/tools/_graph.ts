@@ -18,7 +18,7 @@ import {
   DjangoTimeoutError,
   DjangoUnauthorizedError,
 } from "../django.js";
-import { GraphRelation } from "../generated/schemas.js";
+import { BudgetExceededError, GraphRelation } from "../generated/schemas.js";
 
 /**
  * The relation keys the API documents as fixed, read from the generated wire
@@ -357,6 +357,11 @@ export function graphErrorMessage(
 
   if (err instanceof DjangoHttpError) {
     if (err.status === 429) {
+      const budget = budgetExceeded(err.body);
+      if (budget !== undefined) {
+        const resumes = budget.resets_at === null ? "until the budget is raised" : `until ${budget.resets_at}`;
+        return `${tool}: ${budget.error_message} (429 BUDGET_EXCEEDED). Retrying won't help: priced calls keep failing ${resumes}.`;
+      }
       return `${tool}: rate limited (429). The graph API allows ~180 requests/min — back off briefly (jittered) and retry, and pace any parallel fan-out.`;
     }
     if (err.status === 503) {
@@ -376,4 +381,25 @@ export function graphErrorMessage(
 
   // Not a transport error — surface it rather than masking it.
   return `${tool}: unexpected error — ${err instanceof Error ? err.message : String(err)}`;
+}
+
+function budgetExceeded(body: string): z.infer<typeof BudgetExceededError> | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return undefined;
+  }
+  const result = BudgetExceededError.safeParse(parsed);
+  return result.success && result.data.error_type === "BUDGET_EXCEEDED" ? result.data : undefined;
+}
+
+export function graphToolError(
+  err: unknown,
+  op: GraphOp,
+  ref: string | undefined,
+  toolName: string,
+): Error {
+  if (err instanceof DjangoHttpError && err.status === 402) return err;
+  return new Error(graphErrorMessage(err, op, ref, toolName));
 }

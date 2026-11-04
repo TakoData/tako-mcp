@@ -15,8 +15,8 @@ import { z } from "zod";
 import { djangoGet } from "../django.js";
 import {
   FIXED_RELATION_KEYS,
-  graphErrorMessage,
   graphRelatedOutputShape,
+  graphToolError,
   OVERVIEW_PREVIEW_N,
   projectRelated,
   type ProjectedRelated,
@@ -136,7 +136,7 @@ const tako_graph_related = {
       // Log before wrapping: the plain-Error wrap drops the DjangoError
       // envelope, so this is the only server-side record of the failure.
       console.error("[tako] tool error tool=tako_graph_related stage=graph/related:", err);
-      throw new Error(graphErrorMessage(err, "related", input.node_id, "tako_graph_related"));
+      throw graphToolError(err, "related", input.node_id, "tako_graph_related");
     }
     // Validate against the LOOSE wire facade, NOT the generated schema. The
     // generated GraphRelatedResponse enforces a strict RelationKind enum
