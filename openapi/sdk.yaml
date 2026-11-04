@@ -263,9 +263,31 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/BaseAPIError'
+        '402':
+          description: Payment required. The PAYG API-credit balance is empty or depleted
+            (error_type, error_message, balance_cents).
+          content:
+            application/json:
+              schema:
+                properties:
+                  error_type:
+                    type: string
+                  error_message:
+                    type: string
+                  balance_cents:
+                    type: integer
+                type: object
+                required:
+                - error_type
+                - error_message
+                - balance_cents
         '429':
-          description: 'Too many requests. The request hit a rate limit: retry after
-            the interval in the Retry-After header.'
+          description: 'Too many requests. With error_type RATE_LIMIT_EXCEEDED, the
+            request hit a rate limit: retry after the interval in the Retry-After
+            header. With error_type BUDGET_EXCEEDED, the API key or its owner has
+            used a spend budget: do not retry automatically. A budget response carries
+            the header x-should-retry: false, and Retry-After with the seconds until
+            the budget resets, except for a total budget.'
           headers:
             RateLimit-Limit:
               $ref: '#/components/headers/RateLimit-Limit'
@@ -280,7 +302,9 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/RateLimitExceededError'
+                anyOf:
+                - $ref: '#/components/schemas/RateLimitExceededError'
+                - $ref: '#/components/schemas/BudgetExceededError'
         '503':
           description: A backing data store is temporarily unavailable.
           content:
@@ -412,6 +436,24 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/BaseAPIError'
+        '402':
+          description: Payment required. The PAYG API-credit balance is empty or depleted
+            (error_type, error_message, balance_cents).
+          content:
+            application/json:
+              schema:
+                properties:
+                  error_type:
+                    type: string
+                  error_message:
+                    type: string
+                  balance_cents:
+                    type: integer
+                type: object
+                required:
+                - error_type
+                - error_message
+                - balance_cents
         '404':
           description: The requested resource does not exist or has no exportable
             data.
@@ -420,8 +462,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/BaseAPIError'
         '429':
-          description: 'Too many requests. The request hit a rate limit: retry after
-            the interval in the Retry-After header.'
+          description: 'Too many requests. With error_type RATE_LIMIT_EXCEEDED, the
+            request hit a rate limit: retry after the interval in the Retry-After
+            header. With error_type BUDGET_EXCEEDED, the API key or its owner has
+            used a spend budget: do not retry automatically. A budget response carries
+            the header x-should-retry: false, and Retry-After with the seconds until
+            the budget resets, except for a total budget.'
           headers:
             RateLimit-Limit:
               $ref: '#/components/headers/RateLimit-Limit'
@@ -436,7 +482,9 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/RateLimitExceededError'
+                anyOf:
+                - $ref: '#/components/schemas/RateLimitExceededError'
+                - $ref: '#/components/schemas/BudgetExceededError'
         '503':
           description: A backing data store is temporarily unavailable.
           content:
@@ -476,13 +524,31 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/GraphNode'
+                $ref: '#/components/schemas/GraphNodeResponse'
         '401':
           description: Missing or invalid API key.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/BaseAPIError'
+        '402':
+          description: Payment required. The PAYG API-credit balance is empty or depleted
+            (error_type, error_message, balance_cents).
+          content:
+            application/json:
+              schema:
+                properties:
+                  error_type:
+                    type: string
+                  error_message:
+                    type: string
+                  balance_cents:
+                    type: integer
+                type: object
+                required:
+                - error_type
+                - error_message
+                - balance_cents
         '404':
           description: The requested resource does not exist or has no exportable
             data.
@@ -491,8 +557,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/BaseAPIError'
         '429':
-          description: 'Too many requests. The request hit a rate limit: retry after
-            the interval in the Retry-After header.'
+          description: 'Too many requests. With error_type RATE_LIMIT_EXCEEDED, the
+            request hit a rate limit: retry after the interval in the Retry-After
+            header. With error_type BUDGET_EXCEEDED, the API key or its owner has
+            used a spend budget: do not retry automatically. A budget response carries
+            the header x-should-retry: false, and Retry-After with the seconds until
+            the budget resets, except for a total budget.'
           headers:
             RateLimit-Limit:
               $ref: '#/components/headers/RateLimit-Limit'
@@ -507,7 +577,9 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/RateLimitExceededError'
+                anyOf:
+                - $ref: '#/components/schemas/RateLimitExceededError'
+                - $ref: '#/components/schemas/BudgetExceededError'
         '503':
           description: A backing data store is temporarily unavailable.
           content:
@@ -1216,7 +1288,10 @@ paths:
                 $ref: '#/components/schemas/RetrievalAgentStreamEnvelope'
         '400':
           description: 'Invalid request: for example, a blank query, a malformed body,
-            or an output_schema, which the company agent doesn''t support.'
+            or an output_schema, which the company agent doesn''t support. A query
+            over its effort''s size limit gets the code input_too_large: 500 tokens
+            for low, 1,500 for medium, and 5,000 for high, counted with the o200k_base
+            tokenizer (about 4 characters of English per token).'
           content:
             application/json:
               schema:
@@ -3864,6 +3939,75 @@ components:
       - type
       - name
       title: GraphNode
+    GraphNodeResponse:
+      properties:
+        id:
+          type: string
+          title: Id
+          description: Opaque, human-friendly public id (<prefix>::<name>::<hash>,
+            where prefix is ent for an entity or mt for a metric). Ids are not durable
+            across knowledge-graph rebuilds — resolve them at request time rather
+            than storing them.
+        type:
+          $ref: '#/components/schemas/GraphNodeType'
+          description: Whether the node is a metric or an entity.
+        name:
+          type: string
+          title: Name
+          description: Display name. Several metrics can share a name when publishers
+            report different series, such as two GDP metrics; read `description` to
+            tell them apart.
+        aliases:
+          items:
+            type: string
+          type: array
+          title: Aliases
+          description: Other names Tako matches to this node, such as abbreviations,
+            tickers, and former names. /v1/graph/search matches `q` against these
+            as well as `name`.
+        description:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Description
+          description: What the node is. For a metric, what it measures, often with
+            its unit and basis. For an entity, a short identification. Absent when
+            Tako has none.
+        subtype:
+          anyOf:
+          - $ref: '#/components/schemas/EntityClassName'
+          - type: 'null'
+          description: The entity's class, such as Companies, Countries, or People.
+            Absent for metrics, and for an entity whose class Tako didn't resolve
+            for this response. /v1/graph/search and /v1/graph/related resolve it;
+            /v1/graph/node doesn't.
+        label:
+          anyOf:
+          - $ref: '#/components/schemas/NerLabel'
+          - type: 'null'
+          description: Public NER label of the node (PERSON, ORG, GPE, ...). Derived
+            from the node's stored annotation; null when the internal annotation has
+            no public equivalent.
+        match_kind:
+          anyOf:
+          - $ref: '#/components/schemas/GraphMatchKind'
+          - type: 'null'
+          description: 'How this result matched `q`: `name` when `q` is the node''s
+            name, `alias` when `q` is one of its aliases, `mention` when a phrase
+            in `q` is the node''s name or alias (Apple Inc. for `q=Apple revenue`),
+            and `fuzzy` for any other partial or approximate match. A `fuzzy` result
+            can be unrelated to what you asked for, so check it before you rely on
+            it. Set on /v1/graph/search results only.'
+        usage:
+          anyOf:
+          - $ref: '#/components/schemas/Usage'
+          - type: 'null'
+      type: object
+      required:
+      - id
+      - type
+      - name
+      title: GraphNodeResponse
     GraphNodeType:
       type: string
       enum:
@@ -3898,6 +4042,10 @@ components:
             (boost applied). An empty list means inference ran and found nothing.
             The field is absent when you supplied an explicit `label`, when infer_label=false,
             or when there was no q.
+        usage:
+          anyOf:
+          - $ref: '#/components/schemas/Usage'
+          - type: 'null'
       type: object
       required:
       - node
@@ -3995,6 +4143,10 @@ components:
             (boost applied). An empty list means inference ran and found nothing.
             The field is absent when you supplied an explicit `label`, when infer_label=false,
             or when there was no q.
+        usage:
+          anyOf:
+          - $ref: '#/components/schemas/Usage'
+          - type: 'null'
       type: object
       required:
       - results
