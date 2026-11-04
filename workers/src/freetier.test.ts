@@ -25,7 +25,7 @@ import {
 import { FREE_TIER_TOOL_NAMES } from "./tools/_surface.js";
 import worker from "./index.js";
 import { SERVER_INSTRUCTIONS } from "./instructions.js";
-import { BUDGET_EXCEEDED_RETRY_GUIDANCE } from "./mcp.js";
+import { BUDGET_EXCEEDED_MESSAGE, BUDGET_EXCEEDED_RETRY_GUIDANCE } from "./mcp.js";
 import { GENERIC_SIGN_IN_HINT } from "./tools/_shared_prose.js";
 import { mockFetchSequence, requestFrom } from "./tools/__test_helpers.js";
 
@@ -1598,6 +1598,43 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
       expect(body.result._meta["tako/error"]?.kind).toBe("budget_exceeded");
       expect(body.result._meta["tako/error"]?.status).toBe(429);
     }
+  });
+
+  it("a spend-budget 429 on /mcp/chatgpt gets the fixed cause, never the backend's wording", async () => {
+    mockFetchSequence([
+      new Response(
+        JSON.stringify({
+          error_type: "BUDGET_EXCEEDED",
+          error_message: "This API key has used its spend budget. Upgrade your plan at https://tako.com/pricing.",
+        }),
+        { status: 429, headers: { "content-type": "application/json" } },
+      ),
+    ]);
+    const res = await worker.fetch(
+      new Request("https://example.com/mcp/chatgpt", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+          authorization: "Bearer real-user-token",
+        },
+        body: JSON.stringify(SEARCH_CALL_BODY),
+      }),
+      freeEnv(fakeLimiter(true)),
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      result: {
+        content: Array<{ text: string }>;
+        isError: boolean;
+        _meta: Record<string, { kind?: string }>;
+      };
+    };
+    expect(body.result.isError).toBe(true);
+    expect(body.result.content[0]?.text).toBe(
+      `${BUDGET_EXCEEDED_MESSAGE} ${BUDGET_EXCEEDED_RETRY_GUIDANCE}`,
+    );
+    expect(body.result._meta["tako/error"]?.kind).toBe("budget_exceeded");
   });
 
   it("a free-tier spend-budget 429 surfaces as the capacity message", async () => {

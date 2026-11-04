@@ -900,7 +900,7 @@ function registerTool(
             if (budgetMessage !== undefined) {
               return callCtx.tier === "free"
                 ? freeTierCreditsToolResult(options.commerceCopyAllowed)
-                : budgetExceededToolResult(err, budgetMessage);
+                : budgetExceededToolResult(err, budgetMessage, options.commerceCopyAllowed);
             }
           }
           const mapped = djangoErrorToToolResult(err);
@@ -1343,15 +1343,22 @@ export function paymentRequiredToolResult(
 
 export const BUDGET_EXCEEDED_RETRY_GUIDANCE = "Retrying the same call won't help.";
 
+export const BUDGET_EXCEEDED_MESSAGE =
+  "A spend budget on this Tako API key is used up, so the call couldn't run.";
+
 /**
- * Convert an authenticated-tier spend-budget 429 into a tool result. The text
- * is the backend's own `budgetMessage`, which says whose budget ran out and
- * when requests resume, followed by `BUDGET_EXCEEDED_RETRY_GUIDANCE`. The
- * generic 429 mapping would tell the agent to retry instead.
+ * Convert an authenticated-tier spend-budget 429 into a tool result, followed
+ * by `BUDGET_EXCEEDED_RETRY_GUIDANCE`. The generic 429 mapping would tell the
+ * agent to retry instead. Where `commerceCopyAllowed`, the text is the
+ * backend's own `budgetMessage`, which says whose budget ran out and when
+ * requests resume. Elsewhere it's the fixed `BUDGET_EXCEEDED_MESSAGE`, so
+ * backend wording never reaches a surface that bans commerce copy, the same
+ * gate `paymentRequiredToolResult` applies.
  */
 export function budgetExceededToolResult(
   err: DjangoHttpError,
   budgetMessage: string,
+  commerceCopyAllowed: boolean,
 ): {
   content: Array<{ type: "text"; text: string }>;
   _meta: Record<string, unknown>;
@@ -1365,8 +1372,9 @@ export function budgetExceededToolResult(
   };
   const body = errorResponseBody(err);
   if (body !== undefined) detail.body = body;
+  const cause = commerceCopyAllowed ? budgetMessage : BUDGET_EXCEEDED_MESSAGE;
   return {
-    content: [{ type: "text", text: `${budgetMessage} ${BUDGET_EXCEEDED_RETRY_GUIDANCE}` }],
+    content: [{ type: "text", text: `${cause} ${BUDGET_EXCEEDED_RETRY_GUIDANCE}` }],
     _meta: { "tako/error": detail },
     isError: true,
   };
