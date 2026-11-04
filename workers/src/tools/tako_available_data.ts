@@ -1,7 +1,7 @@
 /**
  * `tako_available_data` — the one-shot "what data does Tako have on X?" tool.
  *
- * Runs graph/search → graph/related as a single free, low-latency pipeline and
+ * Runs graph/search → graph/related as a single low-latency pipeline and
  * reports what data Tako holds. It is the entry point that
  * RESOLVES a name to a node; `tako_graph_related` is the one primitive left,
  * for drilling into a node this tool already resolved.
@@ -24,7 +24,7 @@
  */
 import { z } from "zod";
 
-import { djangoGet } from "../django.js";
+import { djangoGet, isBillingRefusal } from "../django.js";
 import {
   ALTERNATES_SHOWN,
   buildMatch,
@@ -82,9 +82,9 @@ import {
 } from "./_pair_confirm.js";
 import type { PairVerdict } from "./_pair_confirm.js";
 import {
-  graphErrorMessage,
   graphRelatedOutputShape,
   graphSearchOutputShape,
+  graphToolError,
 } from "./_graph.js";
 import {
   availableDataSlimOutputShape,
@@ -307,11 +307,7 @@ const tako_available_data = {
           { query, timeoutMs: 15_000, caller: ctx.caller },
         );
       } catch (err) {
-        // Log the original transport error — wrapping in a plain Error below
-        // drops the DjangoError envelope, so this line is the only server-side
-        // record of what actually failed.
-        console.error("[tako] tool error tool=tako_available_data stage=graph/search:", err);
-        throw new Error(graphErrorMessage(err, "search", undefined, "tako_available_data"));
+        throw graphToolError(err, "search", undefined, "tako_available_data");
       }
       const parsed = searchShape.safeParse(raw);
       if (!parsed.success) {
@@ -401,6 +397,7 @@ const tako_available_data = {
             } while (cursor !== null && items.length < COVERAGE_ITEMS_SHOWN && pages < MAX_COVERAGE_PAGES);
             return buildMatch(node, group === null ? null : { ...group, items });
           } catch (err) {
+            if (isBillingRefusal(err)) throw err;
             console.warn(
               `[tako] tool error tool=tako_available_data stage=graph/related node=${node.id} (degraded to "unavailable"):`,
               err,
@@ -436,6 +433,7 @@ const tako_available_data = {
           capped: parsed.success ? (parsed.data.relation?.total_capped ?? false) : false,
         };
       } catch (err) {
+        if (isBillingRefusal(err)) throw err;
         console.warn(
           `[tako] coverage probe failed tool=tako_available_data node=${node.id} (treated as zero):`,
           err,
@@ -481,6 +479,7 @@ const tako_available_data = {
         // No filter was sent, so `relation: null` really is "no metrics group".
         return parsed.data.relation?.total ?? 0;
       } catch (err) {
+        if (isBillingRefusal(err)) throw err;
         console.warn(
           `[tako] bind verify failed tool=tako_available_data node=${nodeId} (kept rank 0):`,
           err,
@@ -508,10 +507,10 @@ const tako_available_data = {
     // `relation.total` ignores the `q` filter entirely (Lockheed reports
     // 250/capped with and without `q=Backlog`).
     //
-    // Never throws. Auth and connectivity are already proven by the entity
-    // search that ran before it, so the only failures reachable here are
-    // transient — and today's behaviour (no pair evidence at all) is a
-    // perfectly good landing for them.
+    // Throws only a billing refusal: credits or a spend budget can run out
+    // after the entity search. Auth and connectivity are already proven by
+    // that search, so every other failure here is transient — and today's
+    // behaviour (no pair evidence at all) is a perfectly good landing for them.
     const pairProbe = async (
       entityNodeId: string,
       filter: string | null,
@@ -560,6 +559,7 @@ const tako_available_data = {
           capped: page.total_capped,
         };
       } catch (err) {
+        if (isBillingRefusal(err)) throw err;
         console.warn(
           `[tako] pair confirm failed tool=tako_available_data node=${entityNodeId} q=${filter} (degraded to no pair evidence):`,
           err,
@@ -570,7 +570,7 @@ const tako_available_data = {
 
     // ---- LOOKUP path: the caller named the metric ------------------------
     //
-    // Two parallel free probes instead of a paginated coverage drill. Measured
+    // Two parallel probes instead of a paginated coverage drill. Measured
     // on staging: ~0.63s vs ~3.0s for the drill, and ~600 chars of output vs
     // ~8.5k. Splitting the halves is what makes it accurate — the combined
     // phrase resolves the metric fine but can destroy entity resolution
@@ -585,7 +585,11 @@ const tako_available_data = {
       // measured, 18/18 entity strings ranked an entity first and 18/18 metric
       // strings ranked a metric first.
       const swapProbe = (q: string): Promise<GraphNode[]> =>
-        probe(q).catch(() => [] as GraphNode[]);
+        probe(q).catch((err: unknown) => {
+          if (isBillingRefusal(err)) throw err;
+          console.warn(`[tako] swap probe failed tool=tako_available_data q=${q} (degraded to no hits):`, err);
+          return [] as GraphNode[];
+        });
       const [entityHits, metricHits, qUntyped, metricUntyped] = await Promise.all([
         // The entity probe is load-bearing: it proves auth/connectivity and
         // there is nothing to fall back to without it, so its failure throws.
@@ -597,6 +601,7 @@ const tako_available_data = {
         // has, instead of 503-ing a call that could still be useful. Auth
         // failures still surface: the entity probe runs in parallel and throws.
         probe(metricQuery, "metric").catch((err: unknown) => {
+          if (isBillingRefusal(err)) throw err;
           console.warn(
             `[tako] metric probe failed tool=tako_available_data metric=${metricQuery} (degraded to no-match):`,
             err,
@@ -726,7 +731,7 @@ const tako_available_data = {
       // It cannot answer "does this entity hold it", and that is the failure
       // that reaches production: Lockheed/backlog, Shopify/GMV and
       // UNH/change-in-unearned-revenues all resolve a perfectly-named metric
-      // and return ZERO cards. Only the graph knows, and asking it is free.
+      // and return ZERO cards. Only the graph knows.
       //
       // Fix 3: two substring filters per entity, in the same round trip.
       // `verbatim` is the caller's phrase — its hits are the entity's own

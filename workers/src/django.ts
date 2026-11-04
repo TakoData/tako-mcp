@@ -17,6 +17,8 @@
  * are explicitly out of scope for this ticket.
  */
 
+import { z } from "zod";
+
 import {
   CALLER_HEADER,
   type CallerStamp,
@@ -24,6 +26,7 @@ import {
   serializeCallerHeader,
 } from "./caller.js";
 import type { Env } from "./env.js";
+import { APIErrorType, BudgetExceededError } from "./generated/schemas.js";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 
@@ -542,6 +545,39 @@ export function extractErrorDetail(body: string): string | undefined {
   }
   // A JSON object with no recognisable message (e.g. a bare discriminator).
   return undefined;
+}
+
+const BudgetExceededBody = BudgetExceededError.pick({ error_message: true }).extend({
+  error_type: z.literal(APIErrorType.enum.BUDGET_EXCEEDED),
+});
+
+/**
+ * The backend's `error_message` when a 429 is a spend-budget refusal, or
+ * `undefined` for any other error. Reads only `error_type` and
+ * `error_message`, so a new budget scope or period still counts as a budget
+ * refusal.
+ */
+export function budgetExceededMessage(err: DjangoHttpError): string | undefined {
+  if (err.status !== 429) return undefined;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(err.body);
+  } catch {
+    return undefined;
+  }
+  const result = BudgetExceededBody.safeParse(parsed);
+  return result.success ? result.data.error_message : undefined;
+}
+
+/**
+ * True when Django refused a priced call for billing: a 402 (no credits) or a
+ * spend-budget 429. A retry of the same call fails the same way.
+ */
+export function isBillingRefusal(err: unknown): err is DjangoHttpError {
+  return (
+    err instanceof DjangoHttpError &&
+    (err.status === 402 || budgetExceededMessage(err) !== undefined)
+  );
 }
 
 async function safeReadText(response: Response): Promise<string> {

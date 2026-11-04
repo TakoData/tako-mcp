@@ -302,6 +302,9 @@ const NER_LABEL_LIST =
  *   - 403 → observed as a Cloudflare/edge block on direct probes; not a query
  *     problem, so it is surfaced as an infra issue, not a "fix your input".
  *
+ * A 402 and a spend-budget 429 never show this text: `mcp.ts` maps billing
+ * refusals before it reads `modelGuidance`.
+ *
  * `ref` is the node id (related) echoed back so the agent sees what failed.
  * Non-transport errors are passed through unmasked.
  */
@@ -376,4 +379,24 @@ export function graphErrorMessage(
 
   // Not a transport error — surface it rather than masking it.
   return `${tool}: unexpected error — ${err instanceof Error ? err.message : String(err)}`;
+}
+
+/**
+ * The error a graph tool throws. A `DjangoError` comes back as itself with
+ * `graphErrorMessage` attached as `modelGuidance`, so `mcp.ts` keeps its
+ * `_meta["tako/error"]` envelope and maps billing refusals. Any other throw is
+ * wrapped in a plain `Error`.
+ */
+export function graphToolError(
+  err: unknown,
+  op: GraphOp,
+  ref: string | undefined,
+  toolName: string,
+): Error {
+  const message = graphErrorMessage(err, op, ref, toolName);
+  if (err instanceof DjangoError) {
+    err.modelGuidance = message;
+    return err;
+  }
+  return new Error(message);
 }

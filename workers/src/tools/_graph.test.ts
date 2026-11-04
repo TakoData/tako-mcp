@@ -12,6 +12,7 @@ import {
   FOCAL_ALIASES_MAX,
   FOCAL_DESCRIPTION_MAX,
   graphErrorMessage,
+  graphToolError,
   kindOf,
   OVERVIEW_PREVIEW_N,
   projectItem,
@@ -64,6 +65,19 @@ describe("graphErrorMessage", () => {
     );
     expect(msg).toMatch(/rate limited \(429\)/);
     expect(msg).toMatch(/180 requests\/min/);
+  });
+
+  it("graphToolError returns a DjangoError itself, carrying the graph guidance as modelGuidance", () => {
+    const rateLimited = new DjangoHttpError({ ...P, status: 429, body: "" });
+    const thrown = graphToolError(rateLimited, "related", "n1", TOOL);
+    expect(thrown).toBe(rateLimited);
+    expect(rateLimited.modelGuidance).toMatch(/rate limited \(429\)/);
+  });
+
+  it("graphToolError wraps a non-Django throw in a plain Error with the graph message", () => {
+    const thrown = graphToolError(new TypeError("boom"), "related", "n1", TOOL);
+    expect(thrown).not.toBeInstanceOf(DjangoHttpError);
+    expect(thrown.message).toBe(`${TOOL}: unexpected error — boom`);
   });
 
   it("503 → transient store-unavailable guidance", () => {
