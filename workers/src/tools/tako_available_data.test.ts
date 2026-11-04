@@ -461,9 +461,21 @@ describe("tako_available_data", () => {
 
   it("surfaces a search-level auth error labeled as tako_available_data", async () => {
     mockFetchSequence([jsonResponse(401, { detail: "bad key" })]);
-    await expect(takoAvailableData.handler({ q: "apple" }, CTX)).rejects.toThrow(
-      /tako_available_data: Tako rejected the API key \(401\)/,
-    );
+    await expect(takoAvailableData.handler({ q: "apple" }, CTX)).rejects.toMatchObject({
+      modelGuidance: expect.stringMatching(/tako_available_data: Tako rejected the API key \(401\)/),
+    });
+  });
+
+  it("rethrows a 402 from the coverage drill instead of reporting the node unavailable", async () => {
+    mockFetchSequence([
+      jsonResponse(200, { results: [searchHit("a", "Alpha Corp")] }),
+      jsonResponse(402, {
+        error_type: "PAYMENT_REQUIRED",
+        error_message: "Your API credit balance is exhausted. Add credits to continue.",
+        balance_cents: 0,
+      }),
+    ]);
+    await expect(takoAvailableData.handler({ q: "Alpha" }, CTX)).rejects.toMatchObject({ status: 402 });
   });
 
   it("throws a self-correcting message when graph/search returns an unexpected shape", async () => {

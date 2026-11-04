@@ -67,35 +67,17 @@ describe("graphErrorMessage", () => {
     expect(msg).toMatch(/180 requests\/min/);
   });
 
-  it("429 BUDGET_EXCEEDED → the budget message and no retry advice", () => {
-    const msg = graphErrorMessage(
-      new DjangoHttpError({
-        ...P,
-        status: 429,
-        body: JSON.stringify({
-          error_type: "BUDGET_EXCEEDED",
-          error_message: "This API key has used its $5.00 daily budget.",
-          budget_scope: "api_key",
-          budget_cents: 500,
-          period: "day",
-          resets_at: "2026-11-06T00:00:00+00:00",
-        }),
-      }),
-      "search",
-      undefined,
-      TOOL,
-    );
-    expect(msg).toMatch(/used its \$5\.00 daily budget/);
-    expect(msg).toMatch(/until 2026-11-06T00:00:00\+00:00/);
-    expect(msg).not.toMatch(/back off/);
+  it("graphToolError returns a DjangoError itself, carrying the graph guidance as modelGuidance", () => {
+    const rateLimited = new DjangoHttpError({ ...P, status: 429, body: "" });
+    const thrown = graphToolError(rateLimited, "related", "n1", TOOL);
+    expect(thrown).toBe(rateLimited);
+    expect(rateLimited.modelGuidance).toMatch(/rate limited \(429\)/);
   });
 
-  it("a 402 stays a DjangoHttpError so mcp.ts maps it to the out-of-credits result", () => {
-    const err = new DjangoHttpError({ ...P, status: 402, body: "{}" });
-    expect(graphToolError(err, "related", "n1", TOOL)).toBe(err);
-    const rateLimited = graphToolError(new DjangoHttpError({ ...P, status: 429, body: "" }), "related", "n1", TOOL);
-    expect(rateLimited).not.toBeInstanceOf(DjangoHttpError);
-    expect(rateLimited.message).toMatch(/rate limited \(429\)/);
+  it("graphToolError wraps a non-Django throw in a plain Error with the graph message", () => {
+    const thrown = graphToolError(new TypeError("boom"), "related", "n1", TOOL);
+    expect(thrown).not.toBeInstanceOf(DjangoHttpError);
+    expect(thrown.message).toBe(`${TOOL}: unexpected error — boom`);
   });
 
   it("503 → transient store-unavailable guidance", () => {

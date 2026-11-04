@@ -25,6 +25,7 @@ import {
 import { FREE_TIER_TOOL_NAMES } from "./tools/_surface.js";
 import worker from "./index.js";
 import { SERVER_INSTRUCTIONS } from "./instructions.js";
+import { BUDGET_EXCEEDED_RETRY_GUIDANCE } from "./mcp.js";
 import { GENERIC_SIGN_IN_HINT } from "./tools/_shared_prose.js";
 import { mockFetchSequence, requestFrom } from "./tools/__test_helpers.js";
 
@@ -1552,6 +1553,95 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
       expect(text).not.toMatch(/Retry once/);
       expect(body.result._meta["tako/error"]?.kind).toBe("payment_required");
     }
+  });
+
+  const BUDGET_MESSAGE =
+    "This API key has used its spend budget for today. " +
+    "Requests resume when the budget resets or the key's owner raises it.";
+  const BUDGET_429 = () =>
+    new Response(
+      JSON.stringify({
+        error_type: "BUDGET_EXCEEDED",
+        error_message: BUDGET_MESSAGE,
+        budget_scope: "api_key",
+        budget_cents: 500,
+        period: "day",
+        resets_at: "2026-11-06T00:00:00+00:00",
+      }),
+      { status: 429, headers: { "content-type": "application/json" } },
+    );
+
+  it("an authenticated spend-budget 429 gets the backend's budget message and no retry advice on every tool", async () => {
+    for (const params of [
+      { name: "tako_search", arguments: { query: "US GDP" } },
+      { name: "tako_graph_related", arguments: { node_id: "gdp-tok" } },
+      { name: "tako_available_data", arguments: { q: "GDP" } },
+    ]) {
+      mockFetchSequence([BUDGET_429()]);
+      const res = await worker.fetch(
+        post(
+          { jsonrpc: "2.0", id: 4, method: "tools/call", params },
+          { authorization: "Bearer real-user-token", "user-agent": "claude-code/2.1.220 (sdk-cli)" },
+        ),
+        freeEnv(fakeLimiter(true)),
+      );
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as {
+        result: {
+          content: Array<{ text: string }>;
+          isError: boolean;
+          _meta: Record<string, { kind?: string; status?: number }>;
+        };
+      };
+      expect(body.result.isError).toBe(true);
+      expect(body.result.content[0]?.text).toBe(`${BUDGET_MESSAGE} ${BUDGET_EXCEEDED_RETRY_GUIDANCE}`);
+      expect(body.result._meta["tako/error"]?.kind).toBe("budget_exceeded");
+      expect(body.result._meta["tako/error"]?.status).toBe(429);
+    }
+  });
+
+  it("a free-tier spend-budget 429 surfaces as the capacity message", async () => {
+    mockFetchSequence([BUDGET_429()]);
+    const res = await worker.fetch(post(SEARCH_CALL_BODY), freeEnv(fakeLimiter(true)));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      result: { content: Array<{ text: string }>; isError: boolean };
+    };
+    expect(body.result.isError).toBe(true);
+    expect(body.result.content[0]?.text).toBe(
+      `${FREE_TIER_CREDITS_MESSAGE} ${FREE_TIER_COMMERCE_UPSELL}`,
+    );
+  });
+
+  it("a graph rate-limit 429 keeps the graph guidance and the Django error envelope", async () => {
+    mockFetchSequence([
+      new Response("", { status: 429 }),
+    ]);
+    const res = await worker.fetch(
+      post(
+        {
+          jsonrpc: "2.0",
+          id: 4,
+          method: "tools/call",
+          params: { name: "tako_graph_related", arguments: { node_id: "gdp-tok" } },
+        },
+        { authorization: "Bearer real-user-token", "user-agent": "claude-code/2.1.220 (sdk-cli)" },
+      ),
+      freeEnv(fakeLimiter(true)),
+    );
+    const body = (await res.json()) as {
+      result: {
+        content: Array<{ text: string }>;
+        isError: boolean;
+        _meta: Record<string, { kind?: string; status?: number }>;
+      };
+    };
+    expect(body.result.isError).toBe(true);
+    const text = body.result.content[0]?.text ?? "";
+    expect(text).toMatch(/^tako_graph_related: rate limited \(429\)/);
+    expect(text).not.toMatch(/retry the SAME call once/);
+    expect(body.result._meta["tako/error"]?.kind).toBe("http");
+    expect(body.result._meta["tako/error"]?.status).toBe(429);
   });
 
   it("authenticated credit exhaustion on /mcp carries the remedy for every UA — and /mcp/chatgpt never does", async () => {

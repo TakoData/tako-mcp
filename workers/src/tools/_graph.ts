@@ -18,7 +18,7 @@ import {
   DjangoTimeoutError,
   DjangoUnauthorizedError,
 } from "../django.js";
-import { BudgetExceededError, GraphRelation } from "../generated/schemas.js";
+import { GraphRelation } from "../generated/schemas.js";
 
 /**
  * The relation keys the API documents as fixed, read from the generated wire
@@ -302,6 +302,9 @@ const NER_LABEL_LIST =
  *   - 403 → observed as a Cloudflare/edge block on direct probes; not a query
  *     problem, so it is surfaced as an infra issue, not a "fix your input".
  *
+ * A 402 and a spend-budget 429 never show this text: `mcp.ts` maps billing
+ * refusals before it reads `modelGuidance`.
+ *
  * `ref` is the node id (related) echoed back so the agent sees what failed.
  * Non-transport errors are passed through unmasked.
  */
@@ -357,11 +360,6 @@ export function graphErrorMessage(
 
   if (err instanceof DjangoHttpError) {
     if (err.status === 429) {
-      const budget = budgetExceeded(err.body);
-      if (budget !== undefined) {
-        const resumes = budget.resets_at === null ? "until the budget is raised" : `until ${budget.resets_at}`;
-        return `${tool}: ${budget.error_message} (429 BUDGET_EXCEEDED). Retrying won't help: priced calls keep failing ${resumes}.`;
-      }
       return `${tool}: rate limited (429). The graph API allows ~180 requests/min — back off briefly (jittered) and retry, and pace any parallel fan-out.`;
     }
     if (err.status === 503) {
@@ -383,23 +381,22 @@ export function graphErrorMessage(
   return `${tool}: unexpected error — ${err instanceof Error ? err.message : String(err)}`;
 }
 
-function budgetExceeded(body: string): z.infer<typeof BudgetExceededError> | undefined {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(body);
-  } catch {
-    return undefined;
-  }
-  const result = BudgetExceededError.safeParse(parsed);
-  return result.success && result.data.error_type === "BUDGET_EXCEEDED" ? result.data : undefined;
-}
-
+/**
+ * The error a graph tool throws. A `DjangoError` comes back as itself with
+ * `graphErrorMessage` attached as `modelGuidance`, so `mcp.ts` keeps its
+ * `_meta["tako/error"]` envelope and maps billing refusals. Any other throw is
+ * wrapped in a plain `Error`.
+ */
 export function graphToolError(
   err: unknown,
   op: GraphOp,
   ref: string | undefined,
   toolName: string,
 ): Error {
-  if (err instanceof DjangoHttpError && err.status === 402) return err;
-  return new Error(graphErrorMessage(err, op, ref, toolName));
+  const message = graphErrorMessage(err, op, ref, toolName);
+  if (err instanceof DjangoError) {
+    err.modelGuidance = message;
+    return err;
+  }
+  return new Error(message);
 }
