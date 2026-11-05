@@ -10,9 +10,11 @@ import {
   DjangoResponseParseError,
   DjangoTimeoutError,
   DjangoUnauthorizedError,
+  budgetExceededMessage,
   djangoGet,
   djangoOpenStream,
   djangoPost,
+  isBillingRefusal,
 } from "./django.js";
 
 const BASE_URL = "https://trytako.com";
@@ -419,5 +421,52 @@ describe("djangoOpenStream", () => {
     const err = await pending;
     expect(err).not.toBeInstanceOf(DjangoTimeoutError);
     expect((err as Error).name).toBe("AbortError");
+  });
+});
+
+describe("budgetExceededMessage and isBillingRefusal", () => {
+  const P = { path: "/api/v1/graph/search", method: "GET" as const };
+  const BACKEND_MESSAGE =
+    "This API key has used its spend budget for today. " +
+    "Requests resume when the budget resets or the key's owner raises it.";
+  const budget429 = (fields: Record<string, unknown>) =>
+    new DjangoHttpError({
+      ...P,
+      status: 429,
+      body: JSON.stringify({ error_type: "BUDGET_EXCEEDED", error_message: BACKEND_MESSAGE, ...fields }),
+    });
+
+  it("returns the backend's message for a spend-budget 429", () => {
+    const err = budget429({ budget_scope: "api_key", budget_cents: 500, period: "day", resets_at: null });
+    expect(budgetExceededMessage(err)).toBe(BACKEND_MESSAGE);
+    expect(isBillingRefusal(err)).toBe(true);
+  });
+
+  it("still recognizes a budget 429 whose scope and period the generated schema doesn't list", () => {
+    const err = budget429({ budget_scope: "organization", period: "quarter" });
+    expect(budgetExceededMessage(err)).toBe(BACKEND_MESSAGE);
+  });
+
+  it("ignores a rate-limit 429, a non-JSON 429, and a budget body on another status", () => {
+    const rateLimited = new DjangoHttpError({
+      ...P,
+      status: 429,
+      body: JSON.stringify({ error_type: "RATE_LIMIT_EXCEEDED", error_message: "Slow down." }),
+    });
+    const edgePage = new DjangoHttpError({ ...P, status: 429, body: "<html>429</html>" });
+    const wrongStatus = new DjangoHttpError({
+      ...P,
+      status: 400,
+      body: JSON.stringify({ error_type: "BUDGET_EXCEEDED", error_message: BACKEND_MESSAGE }),
+    });
+    for (const err of [rateLimited, edgePage, wrongStatus]) {
+      expect(budgetExceededMessage(err)).toBeUndefined();
+      expect(isBillingRefusal(err)).toBe(false);
+    }
+  });
+
+  it("treats a 402 as a billing refusal and a non-Django error as not one", () => {
+    expect(isBillingRefusal(new DjangoHttpError({ ...P, status: 402, body: "" }))).toBe(true);
+    expect(isBillingRefusal(new Error("boom"))).toBe(false);
   });
 });

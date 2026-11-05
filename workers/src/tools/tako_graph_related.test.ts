@@ -150,7 +150,9 @@ describe("tako_graph_related", () => {
     mockFetchSequence([jsonResponse(404, { detail: "not found" })]);
     await expect(
       takoGraphRelated.handler({ node_id: "bogus-node-9" }, CTX),
-    ).rejects.toThrow(/no graph node with id "bogus-node-9" \(404\)/);
+    ).rejects.toMatchObject({
+      modelGuidance: expect.stringMatching(/no graph node with id "bogus-node-9" \(404\)/),
+    });
   });
 
   const fatItem = (i: number) => ({

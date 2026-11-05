@@ -5,7 +5,7 @@
  * group's key, label, total and a preview of its names; drill mode
  * (relation=<key>) pages one group with the id of every item. `q` is a single
  * substring filter — to cover several name-variants of a metric, call once per
- * variant (graph calls are free). Wire-guarded against the loose
+ * variant. Wire-guarded against the loose
  * `graphRelatedOutputShape` facade (not the strict generated schema, whose
  * RelationKind enum drifts — see the handler note), then projected by
  * `projectRelated` before either channel reads it.
@@ -15,8 +15,8 @@ import { z } from "zod";
 import { djangoGet } from "../django.js";
 import {
   FIXED_RELATION_KEYS,
-  graphErrorMessage,
   graphRelatedOutputShape,
+  graphToolError,
   OVERVIEW_PREVIEW_N,
   projectRelated,
   type ProjectedRelated,
@@ -133,10 +133,7 @@ const tako_graph_related = {
         { query, timeoutMs: 15_000, caller: ctx.caller },
       );
     } catch (err) {
-      // Log before wrapping: the plain-Error wrap drops the DjangoError
-      // envelope, so this is the only server-side record of the failure.
-      console.error("[tako] tool error tool=tako_graph_related stage=graph/related:", err);
-      throw new Error(graphErrorMessage(err, "related", input.node_id, "tako_graph_related"));
+      throw graphToolError(err, "related", input.node_id, "tako_graph_related");
     }
     // Validate against the LOOSE wire facade, NOT the generated schema. The
     // generated GraphRelatedResponse enforces a strict RelationKind enum

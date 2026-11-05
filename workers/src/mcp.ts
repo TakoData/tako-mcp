@@ -20,6 +20,7 @@ import {
   DjangoResponseParseError,
   DjangoTimeoutError,
   DjangoUnauthorizedError,
+  budgetExceededMessage,
   extractErrorDetail,
 } from "./django.js";
 import type { AuthMode, CallerStamp } from "./caller.js";
@@ -894,6 +895,14 @@ function registerTool(
               ? freeTierCreditsToolResult(options.commerceCopyAllowed)
               : paymentRequiredToolResult(err, options.commerceCopyAllowed);
           }
+          if (err instanceof DjangoHttpError) {
+            const budgetMessage = budgetExceededMessage(err);
+            if (budgetMessage !== undefined) {
+              return callCtx.tier === "free"
+                ? freeTierCreditsToolResult(options.commerceCopyAllowed)
+                : budgetExceededToolResult(err, budgetMessage, options.commerceCopyAllowed);
+            }
+          }
           const mapped = djangoErrorToToolResult(err);
           // A 401 from Django on an AUTHENTICATED connection means the
           // caller's own credential was rejected — a stale/revoked OAuth
@@ -1327,6 +1336,45 @@ export function paymentRequiredToolResult(
     : PAYMENT_REQUIRED_MESSAGE;
   return {
     content: [{ type: "text", text }],
+    _meta: { "tako/error": detail },
+    isError: true,
+  };
+}
+
+export const BUDGET_EXCEEDED_RETRY_GUIDANCE = "Retrying the same call won't help.";
+
+export const BUDGET_EXCEEDED_MESSAGE =
+  "A spend budget on this Tako API key is used up, so the call couldn't run.";
+
+/**
+ * Convert an authenticated-tier spend-budget 429 into a tool result, followed
+ * by `BUDGET_EXCEEDED_RETRY_GUIDANCE`. The generic 429 mapping would tell the
+ * agent to retry instead. Where `commerceCopyAllowed`, the text is the
+ * backend's own `budgetMessage`, which says whose budget ran out and when
+ * requests resume. Elsewhere it's the fixed `BUDGET_EXCEEDED_MESSAGE`, so
+ * backend wording never reaches a surface that bans commerce copy, the same
+ * gate `paymentRequiredToolResult` applies.
+ */
+export function budgetExceededToolResult(
+  err: DjangoHttpError,
+  budgetMessage: string,
+  commerceCopyAllowed: boolean,
+): {
+  content: Array<{ type: "text"; text: string }>;
+  _meta: Record<string, unknown>;
+  isError: true;
+} {
+  const detail: Record<string, unknown> = {
+    kind: "budget_exceeded",
+    path: err.path,
+    method: err.method,
+    status: err.status,
+  };
+  const body = errorResponseBody(err);
+  if (body !== undefined) detail.body = body;
+  const cause = commerceCopyAllowed ? budgetMessage : BUDGET_EXCEEDED_MESSAGE;
+  return {
+    content: [{ type: "text", text: `${cause} ${BUDGET_EXCEEDED_RETRY_GUIDANCE}` }],
     _meta: { "tako/error": detail },
     isError: true,
   };
