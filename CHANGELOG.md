@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.9.1](https://github.com/TakoData/tako-mcp/compare/v1.9.0...v1.9.1) (2026-11-05)
+
+
+### Bug Fixes
+
+* **mcp:** stop telling agents to retry a call refused for credits or a spend budget ([#399](https://github.com/TakoData/tako-mcp/issues/399)) ([e48c873](https://github.com/TakoData/tako-mcp/commit/e48c87351c525cf248fcb52e33b278eca8388757))
+
+
+### Chores
+
+* regenerate schemas + registry from synced spec ([94f7bd0](https://github.com/TakoData/tako-mcp/commit/94f7bd04273117210524c17be46fc64f1420a984))
+* sync OpenAPI spec from monorepo ([b7d364b](https://github.com/TakoData/tako-mcp/commit/b7d364b94192411dd7280ea26ee6f4baedaf769e))
+* sync OpenAPI spec from TakoData/tako ([3fc5c82](https://github.com/TakoData/tako-mcp/commit/3fc5c82b2fc6de1f67e4c7ba3d466b637e8c1b32))
+
 ## [1.9.0](https://github.com/TakoData/tako-mcp/compare/v1.8.3...v1.9.0) (2026-11-03)
 
 
