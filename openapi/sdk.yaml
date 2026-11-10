@@ -173,6 +173,388 @@ paths:
                 $ref: '#/components/schemas/BaseAPIError'
       security:
       - apiKey: []
+  /v1/companies/search:
+    post:
+      tags:
+      - tako
+      summary: Search companies (beta)
+      description: Screen active companies by location, size, industry, funding stage,
+        ownership and founding year. Returns the list as one Tako card, with its total
+        and the filters applied. Set include_contents to inline the card's first rows.
+        For the rest of the list and for premium fields, call POST /api/v1/contents
+        with the card's webpage_url, an offset and premium=true. A filter that can't
+        run returns a 400 that names the field.
+      operationId: searchCompanies
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CompanySearchRequest'
+      responses:
+        '200':
+          description: The active companies that match the filters, as a card
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CompanySearchResponse'
+        '400':
+          description: A filter or input that can't run. field names the request field,
+            code says why, and suggestions holds values to use instead.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnrichInputError'
+        '401':
+          description: Missing or invalid API key.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BaseAPIError'
+        '402':
+          description: Payment required. The PAYG API-credit balance is empty or depleted
+            (error_type, error_message, balance_cents).
+          content:
+            application/json:
+              schema:
+                properties:
+                  error_type:
+                    type: string
+                  error_message:
+                    type: string
+                  balance_cents:
+                    type: integer
+                type: object
+                required:
+                - error_type
+                - error_message
+                - balance_cents
+        '403':
+          description: 'The account may not call this endpoint: it needs access to
+            People Data Labs data.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BaseAPIError'
+        '429':
+          description: 'Too many requests. With error_type RATE_LIMIT_EXCEEDED, the
+            request hit a rate limit: retry after the interval in the Retry-After
+            header. With error_type BUDGET_EXCEEDED, the API key or its owner has
+            used a spend budget: do not retry automatically. A budget response carries
+            the header x-should-retry: false, and Retry-After with the seconds until
+            the budget resets, except for a total budget.'
+          headers:
+            RateLimit-Limit:
+              $ref: '#/components/headers/RateLimit-Limit'
+            RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimit-Remaining'
+            RateLimit-Reset:
+              $ref: '#/components/headers/RateLimit-Reset'
+            RateLimit-Policy:
+              $ref: '#/components/headers/RateLimit-Policy'
+            Retry-After:
+              $ref: '#/components/headers/Retry-After'
+          content:
+            application/json:
+              schema:
+                anyOf:
+                - $ref: '#/components/schemas/RateLimitExceededError'
+                - $ref: '#/components/schemas/BudgetExceededError'
+        '503':
+          description: The screen or a lookup it needs didn't finish in time or failed,
+            its index isn't available, or the result's card couldn't be saved. Try
+            again later.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BaseAPIError'
+      security:
+      - apiKey: []
+  /v1/people/search:
+    post:
+      tags:
+      - tako
+      summary: Search people (beta)
+      description: Screen employees by role, employer, employer profile and location.
+        Email, phone and LinkedIn identifiers narrow the screen to the people they
+        name, beside at least one other filter, up to 50 values in all. Returns the
+        list as one Tako card, with its total and the filters applied. Set include_contents
+        to inline the card's first rows. For the rest of the list and for premium
+        fields, call POST /api/v1/contents with the card's webpage_url, an offset
+        and premium=true.
+      operationId: searchPeople
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PersonSearchRequest'
+      responses:
+        '200':
+          description: Search people (beta)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PersonSearchResponse'
+        '400':
+          description: A filter or input that can't run. field names the request field,
+            code says why, and suggestions holds values to use instead.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnrichInputError'
+        '401':
+          description: Missing or invalid API key.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BaseAPIError'
+        '402':
+          description: Payment required. The PAYG API-credit balance is empty or depleted
+            (error_type, error_message, balance_cents).
+          content:
+            application/json:
+              schema:
+                properties:
+                  error_type:
+                    type: string
+                  error_message:
+                    type: string
+                  balance_cents:
+                    type: integer
+                type: object
+                required:
+                - error_type
+                - error_message
+                - balance_cents
+        '403':
+          description: 'The account may not call this endpoint: it needs access to
+            People Data Labs data.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BaseAPIError'
+        '429':
+          description: 'Too many requests. With error_type RATE_LIMIT_EXCEEDED, the
+            request hit a rate limit: retry after the interval in the Retry-After
+            header. With error_type BUDGET_EXCEEDED, the API key or its owner has
+            used a spend budget: do not retry automatically. A budget response carries
+            the header x-should-retry: false, and Retry-After with the seconds until
+            the budget resets, except for a total budget.'
+          headers:
+            RateLimit-Limit:
+              $ref: '#/components/headers/RateLimit-Limit'
+            RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimit-Remaining'
+            RateLimit-Reset:
+              $ref: '#/components/headers/RateLimit-Reset'
+            RateLimit-Policy:
+              $ref: '#/components/headers/RateLimit-Policy'
+            Retry-After:
+              $ref: '#/components/headers/Retry-After'
+          content:
+            application/json:
+              schema:
+                anyOf:
+                - $ref: '#/components/schemas/RateLimitExceededError'
+                - $ref: '#/components/schemas/BudgetExceededError'
+        '503':
+          description: The screen or a lookup it needs didn't finish in time or failed,
+            its index isn't available, or the result's card couldn't be saved. Try
+            again later.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BaseAPIError'
+      security:
+      - apiKey: []
+  /v1/companies/enrich:
+    post:
+      tags:
+      - tako
+      summary: Enrich companies (beta)
+      description: 'Match up to 25 companies, each by website, LinkedIn page or name.
+        For a name, the optional city, region, country and industry hints rank the
+        companies it matches; they never exclude one. Returns one result per item,
+        in order: the match''s id with a confidence, and a count of the other companies
+        that match nearly as well. The matched companies come back as one Tako card,
+        in request order. A no-match is a result, not an error.'
+      operationId: enrichCompanies
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CompanyEnrichRequest'
+      responses:
+        '200':
+          description: Enrich companies (beta)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CompanyEnrichResponse'
+        '400':
+          description: A filter or input that can't run. field names the request field,
+            code says why, and suggestions holds values to use instead.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnrichInputError'
+        '401':
+          description: Missing or invalid API key.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BaseAPIError'
+        '402':
+          description: Payment required. The PAYG API-credit balance is empty or depleted
+            (error_type, error_message, balance_cents).
+          content:
+            application/json:
+              schema:
+                properties:
+                  error_type:
+                    type: string
+                  error_message:
+                    type: string
+                  balance_cents:
+                    type: integer
+                type: object
+                required:
+                - error_type
+                - error_message
+                - balance_cents
+        '403':
+          description: 'The account may not call this endpoint: it needs access to
+            People Data Labs data.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BaseAPIError'
+        '429':
+          description: 'Too many requests. With error_type RATE_LIMIT_EXCEEDED, the
+            request hit a rate limit: retry after the interval in the Retry-After
+            header. With error_type BUDGET_EXCEEDED, the API key or its owner has
+            used a spend budget: do not retry automatically. A budget response carries
+            the header x-should-retry: false, and Retry-After with the seconds until
+            the budget resets, except for a total budget.'
+          headers:
+            RateLimit-Limit:
+              $ref: '#/components/headers/RateLimit-Limit'
+            RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimit-Remaining'
+            RateLimit-Reset:
+              $ref: '#/components/headers/RateLimit-Reset'
+            RateLimit-Policy:
+              $ref: '#/components/headers/RateLimit-Policy'
+            Retry-After:
+              $ref: '#/components/headers/Retry-After'
+          content:
+            application/json:
+              schema:
+                anyOf:
+                - $ref: '#/components/schemas/RateLimitExceededError'
+                - $ref: '#/components/schemas/BudgetExceededError'
+        '503':
+          description: No item in the batch could be looked up, or the matched records'
+            card couldn't be saved. The call isn't charged. Try again later.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BaseAPIError'
+      security:
+      - apiKey: []
+  /v1/people/enrich:
+    post:
+      tags:
+      - tako
+      summary: Enrich people (beta)
+      description: 'Match up to 25 people, each by email, phone or LinkedIn profile,
+        or by name with employer and title hints. Returns one result per item, in
+        order: the match''s id with a confidence, and a count of the other people
+        who match nearly as well. The matched people come back as one Tako card, in
+        request order. A no-match is a result, not an error.'
+      operationId: enrichPeople
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PersonEnrichRequest'
+      responses:
+        '200':
+          description: Enrich people (beta)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PersonEnrichResponse'
+        '400':
+          description: A filter or input that can't run. field names the request field,
+            code says why, and suggestions holds values to use instead.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnrichInputError'
+        '401':
+          description: Missing or invalid API key.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BaseAPIError'
+        '402':
+          description: Payment required. The PAYG API-credit balance is empty or depleted
+            (error_type, error_message, balance_cents).
+          content:
+            application/json:
+              schema:
+                properties:
+                  error_type:
+                    type: string
+                  error_message:
+                    type: string
+                  balance_cents:
+                    type: integer
+                type: object
+                required:
+                - error_type
+                - error_message
+                - balance_cents
+        '403':
+          description: 'The account may not call this endpoint: it needs access to
+            People Data Labs data.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BaseAPIError'
+        '429':
+          description: 'Too many requests. With error_type RATE_LIMIT_EXCEEDED, the
+            request hit a rate limit: retry after the interval in the Retry-After
+            header. With error_type BUDGET_EXCEEDED, the API key or its owner has
+            used a spend budget: do not retry automatically. A budget response carries
+            the header x-should-retry: false, and Retry-After with the seconds until
+            the budget resets, except for a total budget.'
+          headers:
+            RateLimit-Limit:
+              $ref: '#/components/headers/RateLimit-Limit'
+            RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimit-Remaining'
+            RateLimit-Reset:
+              $ref: '#/components/headers/RateLimit-Reset'
+            RateLimit-Policy:
+              $ref: '#/components/headers/RateLimit-Policy'
+            Retry-After:
+              $ref: '#/components/headers/Retry-After'
+          content:
+            application/json:
+              schema:
+                anyOf:
+                - $ref: '#/components/schemas/RateLimitExceededError'
+                - $ref: '#/components/schemas/BudgetExceededError'
+        '503':
+          description: No item in the batch could be looked up, or the matched records'
+            card couldn't be saved. The call isn't charged. Try again later.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BaseAPIError'
+      security:
+      - apiKey: []
   /v1/graph/search:
     get:
       tags:
@@ -2617,6 +2999,369 @@ components:
       - status
       - created_at
       title: CompanyAgentRunSummary
+    CompanyEnrichItem:
+      properties:
+        domain:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Domain
+          description: The company's website, matched exactly.
+        name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Name
+          description: The company's name, matched by the scored lookup.
+        linkedin_url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Linkedin Url
+          description: The company's LinkedIn page, matched exactly.
+        city:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: City
+          description: 'A hint for a name match: ranks companies based in this city
+            or town higher, and never excludes one.'
+        region:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Region
+          description: 'A hint for a name match: ranks companies based in this state
+            or province higher, and never excludes one.'
+        country:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Country
+          description: 'A hint for a name match: ranks companies based in this country
+            higher, and never excludes one.'
+        industry:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Industry
+          description: 'A hint for a name match: ranks companies in this industry,
+            in words such as ''aircraft parts'' higher, and never excludes one.'
+      additionalProperties: false
+      type: object
+      title: CompanyEnrichItem
+    CompanyEnrichRequest:
+      properties:
+        include_contents:
+          type: boolean
+          title: Include Contents
+          description: 'Inline the card''s rows in the response, under card.content.
+            Premium fields are never inlined: pass the card''s webpage_url to POST
+            /api/v1/contents with premium=true to unlock them.'
+          default: false
+        max_rows:
+          anyOf:
+          - type: integer
+            minimum: 1
+          - type: 'null'
+          title: Max Rows
+          description: Maximum number of rows to inline when include_contents is true.
+            Omit it and Tako uses your account's inline row cap. Tako clamps a larger
+            value to the card's export_pricing.max_rows_ceiling (at most 100,000).
+            Every inlined row is billed at the POST /api/v1/contents rate. For the
+            rest of the list, call POST /api/v1/contents with the card's webpage_url
+            and an offset.
+        content_format:
+          $ref: '#/components/schemas/ContentsFormat'
+          description: 'Serialization for the inlined rows: ''json_compact'', ''json_records'',
+            ''csv'', or ''card_json''.'
+          default: json_compact
+        items:
+          items:
+            $ref: '#/components/schemas/CompanyEnrichItem'
+          type: array
+          maxItems: 25
+          minItems: 1
+          title: Items
+      additionalProperties: false
+      type: object
+      required:
+      - items
+      title: CompanyEnrichRequest
+    CompanyEnrichResponse:
+      properties:
+        results:
+          items:
+            $ref: '#/components/schemas/CompanyEnrichResult'
+          type: array
+          title: Results
+          description: One result per item, in request order.
+        card:
+          anyOf:
+          - $ref: '#/components/schemas/TakoCard'
+          - type: 'null'
+          description: 'The matched records as one Tako card, in request order: embed
+            it, inline its rows with include_contents, or pass its webpage_url to
+            POST /api/v1/contents for premium fields (premium=true). Null when nothing
+            matched.'
+      type: object
+      required:
+      - results
+      title: CompanyEnrichResponse
+    CompanyEnrichResult:
+      properties:
+        status:
+          type: string
+          enum:
+          - matched
+          - no_match
+          - failed
+          title: Status
+          description: no_match is an answer, not an error; failed means the lookup
+            failed.
+        match_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Match Id
+          description: The matched company's id; its profile is a row of card.
+        confidence:
+          anyOf:
+          - type: string
+            enum:
+            - exact
+            - high
+            - ambiguous
+          - type: 'null'
+          title: Confidence
+          description: 'exact: a domain or LinkedIn page named the company. Registry
+            records that only list the same website, such as a subsidiary''s local
+            registration, don''t count against it, unless the name you give picks
+            one out: that registration is then the match, as ambiguous. high: the
+            name match is well ahead of the next. ambiguous: other companies match
+            nearly as well, or the domain or LinkedIn page names more than one company;
+            alternates counts them.'
+        matched_on:
+          anyOf:
+          - type: string
+            enum:
+            - domain
+            - linkedin_url
+            - name
+          - type: 'null'
+          title: Matched On
+        alternates:
+          type: integer
+          title: Alternates
+          description: How many other records match nearly as well, up to 3.
+          default: 0
+        unresolved:
+          items:
+            type: string
+          type: array
+          title: Unresolved
+          description: Inputs that named nothing, as field=value.
+          default: []
+        failed:
+          items:
+            type: string
+          type: array
+          title: Failed
+          description: 'Inputs whose lookup failed or timed out, as field=value: retry
+            them. Not a miss.'
+          default: []
+      type: object
+      required:
+      - status
+      title: CompanyEnrichResult
+    CompanySearchRequest:
+      properties:
+        include_contents:
+          type: boolean
+          title: Include Contents
+          description: 'Inline the card''s rows in the response, under card.content.
+            Premium fields are never inlined: pass the card''s webpage_url to POST
+            /api/v1/contents with premium=true to unlock them.'
+          default: false
+        max_rows:
+          anyOf:
+          - type: integer
+            minimum: 1
+          - type: 'null'
+          title: Max Rows
+          description: Maximum number of rows to inline when include_contents is true.
+            Omit it and Tako uses your account's inline row cap. Tako clamps a larger
+            value to the card's export_pricing.max_rows_ceiling (at most 100,000).
+            Every inlined row is billed at the POST /api/v1/contents rate. For the
+            rest of the list, call POST /api/v1/contents with the card's webpage_url
+            and an offset.
+        content_format:
+          $ref: '#/components/schemas/ContentsFormat'
+          description: 'Serialization for the inlined rows: ''json_compact'', ''json_records'',
+            ''csv'', or ''card_json''.'
+          default: json_compact
+        country:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Country
+          description: ISO 3166-1 alpha-2 code or English name.
+        region:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Region
+          description: State or province, as a name or an ISO 3166-2 code.
+        town:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Town
+          description: Town of the headquarters, or of the registered office when
+            there's no headquarters. Needs country or region beside it.
+        min_employees:
+          anyOf:
+          - type: integer
+            minimum: 0
+          - type: 'null'
+          title: Min Employees
+          description: People Data Labs' employee estimate.
+        max_employees:
+          anyOf:
+          - type: integer
+            minimum: 0
+          - type: 'null'
+          title: Max Employees
+          description: People Data Labs' employee estimate.
+        industry:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Industry
+          description: An industry's name or id, such as 'fintech' or 'aerospace_and_defense'.
+            applied names the industries the screen ran on. An industry Tako doesn't
+            recognize is a 400 unknown_industry whose suggestions are the closest
+            industry ids.
+        funding_stages:
+          anyOf:
+          - items:
+              type: string
+              enum:
+              - angel
+              - convertible_note
+              - corporate_round
+              - debt_financing
+              - equity_crowdfunding
+              - grant
+              - initial_coin_offering
+              - non_equity_assistance
+              - post_ipo_debt
+              - post_ipo_equity
+              - post_ipo_secondary
+              - pre_seed
+              - private_equity
+              - product_crowdfunding
+              - secondary_market
+              - seed
+              - series_a
+              - series_b
+              - series_c
+              - series_d
+              - series_e
+              - series_f
+              - series_g
+              - series_h
+              - series_i
+              - series_j
+              - series_unknown
+              - undisclosed
+            type: array
+          - type: 'null'
+          title: Funding Stages
+          description: Latest funding stages.
+        ownership:
+          anyOf:
+          - type: string
+            enum:
+            - public
+            - private
+          - type: 'null'
+          title: Ownership
+        startups:
+          type: boolean
+          title: Startups
+          description: 'Startups: private companies founded in the last ten years
+            (unless founded_after or founded_before names other years), of a startup
+            type (not a government body, nonprofit, school or public company''s subsidiary),
+            that raised a venture round or have at most 500 employees.'
+          default: false
+        founded_after:
+          anyOf:
+          - type: integer
+            maximum: 2100
+            minimum: 1600
+          - type: 'null'
+          title: Founded After
+        founded_before:
+          anyOf:
+          - type: integer
+            maximum: 2100
+            minimum: 1600
+          - type: 'null'
+          title: Founded Before
+        order_by:
+          anyOf:
+          - type: string
+            enum:
+            - employees
+            - -employees
+            - founded
+            - -founded
+          - type: 'null'
+          title: Order By
+          description: A field to sort by. A leading minus sorts it in descending
+            order.
+      additionalProperties: false
+      type: object
+      title: CompanySearchRequest
+      description: A company screen. Every filter is optional; the screen covers active
+        companies only.
+    CompanySearchResponse:
+      properties:
+        card:
+          anyOf:
+          - $ref: '#/components/schemas/TakoCard'
+          - type: 'null'
+          description: 'The list as a Tako card: embed it, inline its rows with include_contents,
+            or pass its webpage_url to POST /api/v1/contents for every row (with an
+            offset) and for premium fields (premium=true). Null when nothing matched.'
+        total:
+          type: integer
+          title: Total
+        total_is_lower_bound:
+          type: boolean
+          title: Total Is Lower Bound
+          description: True when total is the count cap (500), not an exact count.
+            POST /api/v1/contents with the card's webpage_url reads past it.
+        applied:
+          items:
+            type: string
+          type: array
+          title: Applied
+          description: The filters the screen ran, with their resolved values.
+        notes:
+          items:
+            type: string
+          type: array
+          title: Notes
+      type: object
+      required:
+      - card
+      - total
+      - total_is_lower_bound
+      - applied
+      - notes
+      title: CompanySearchResponse
     ComponentConfig:
       properties:
         component_type:
@@ -3531,6 +4276,41 @@ components:
         base SourceSettings: Tako always inlines web content as raw text, so web
 
         carries neither field.'
+    EnrichInputError:
+      properties:
+        error_message:
+          type: string
+          title: Error Message
+        error_type:
+          $ref: '#/components/schemas/APIErrorType'
+          default: BAD_REQUEST
+        code:
+          type: string
+          title: Code
+        field:
+          type: string
+          title: Field
+        suggestions:
+          items:
+            type: string
+          type: array
+          title: Suggestions
+          default: []
+      type: object
+      required:
+      - error_message
+      - code
+      - field
+      title: EnrichInputError
+      description: 'Input the API can''t run. code is a list-screen error code (such
+        as unknown_industry), or one of
+
+        invalid_body (the body isn''t valid JSON), invalid_value, no_filters,
+
+        contacts_need_a_filter and unavailable_filter. field is the request field
+        at fault, or "" for an
+
+        error about the whole request. suggestions holds near-miss values to use instead.'
     EntityClassName:
       type: string
       enum:
@@ -4262,6 +5042,394 @@ components:
       type: object
       title: OutputSettings
       description: Settings that control the response shape.
+    PersonEnrichItem:
+      properties:
+        name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Name
+          description: The person's name, matched by the scored lookup.
+        linkedin_url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Linkedin Url
+          description: A LinkedIn profile URL, matched exactly.
+        email:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Email
+          description: An email address, matched exactly.
+        phone:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Phone
+          description: A phone number, matched exactly.
+        company_domain:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Company Domain
+          description: 'A hint for a name: the employer''s website.'
+        company_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Company Name
+          description: 'A hint for a name: the employer''s name.'
+        title:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Title
+          description: 'A hint for a name: the person''s job title.'
+      additionalProperties: false
+      type: object
+      title: PersonEnrichItem
+    PersonEnrichRequest:
+      properties:
+        include_contents:
+          type: boolean
+          title: Include Contents
+          description: 'Inline the card''s rows in the response, under card.content.
+            Premium fields are never inlined: pass the card''s webpage_url to POST
+            /api/v1/contents with premium=true to unlock them.'
+          default: false
+        max_rows:
+          anyOf:
+          - type: integer
+            minimum: 1
+          - type: 'null'
+          title: Max Rows
+          description: Maximum number of rows to inline when include_contents is true.
+            Omit it and Tako uses your account's inline row cap. Tako clamps a larger
+            value to the card's export_pricing.max_rows_ceiling (at most 100,000).
+            Every inlined row is billed at the POST /api/v1/contents rate. For the
+            rest of the list, call POST /api/v1/contents with the card's webpage_url
+            and an offset.
+        content_format:
+          $ref: '#/components/schemas/ContentsFormat'
+          description: 'Serialization for the inlined rows: ''json_compact'', ''json_records'',
+            ''csv'', or ''card_json''.'
+          default: json_compact
+        items:
+          items:
+            $ref: '#/components/schemas/PersonEnrichItem'
+          type: array
+          maxItems: 25
+          minItems: 1
+          title: Items
+      additionalProperties: false
+      type: object
+      required:
+      - items
+      title: PersonEnrichRequest
+    PersonEnrichResponse:
+      properties:
+        results:
+          items:
+            $ref: '#/components/schemas/PersonEnrichResult'
+          type: array
+          title: Results
+          description: One result per item, in request order.
+        card:
+          anyOf:
+          - $ref: '#/components/schemas/TakoCard'
+          - type: 'null'
+          description: 'The matched records as one Tako card, in request order: embed
+            it, inline its rows with include_contents, or pass its webpage_url to
+            POST /api/v1/contents for premium fields (premium=true). Null when nothing
+            matched.'
+      type: object
+      required:
+      - results
+      title: PersonEnrichResponse
+    PersonEnrichResult:
+      properties:
+        status:
+          type: string
+          enum:
+          - matched
+          - no_match
+          - failed
+          title: Status
+          description: no_match is an answer, not an error; failed means the lookup
+            failed.
+        match_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Match Id
+          description: The matched person's id; their profile is a row of card.
+        confidence:
+          anyOf:
+          - type: string
+            enum:
+            - exact
+            - high
+            - ambiguous
+          - type: 'null'
+          title: Confidence
+          description: 'exact: an email, phone or LinkedIn profile named the person.
+            high: the name match is well ahead of the next. ambiguous: other people
+            match nearly as well; alternates counts them.'
+        matched_on:
+          anyOf:
+          - type: string
+            enum:
+            - linkedin_url
+            - email
+            - phone
+            - name
+          - type: 'null'
+          title: Matched On
+        alternates:
+          type: integer
+          title: Alternates
+          description: How many other records match nearly as well, up to 3.
+          default: 0
+        unresolved:
+          items:
+            type: string
+          type: array
+          title: Unresolved
+          description: Inputs that named no one, as field=value.
+          default: []
+        failed:
+          items:
+            type: string
+          type: array
+          title: Failed
+          description: 'Inputs whose lookup failed or timed out, as field=value: retry
+            them. Not a miss.'
+          default: []
+      type: object
+      required:
+      - status
+      title: PersonEnrichResult
+    PersonSearchRequest:
+      properties:
+        include_contents:
+          type: boolean
+          title: Include Contents
+          description: 'Inline the card''s rows in the response, under card.content.
+            Premium fields are never inlined: pass the card''s webpage_url to POST
+            /api/v1/contents with premium=true to unlock them.'
+          default: false
+        max_rows:
+          anyOf:
+          - type: integer
+            minimum: 1
+          - type: 'null'
+          title: Max Rows
+          description: Maximum number of rows to inline when include_contents is true.
+            Omit it and Tako uses your account's inline row cap. Tako clamps a larger
+            value to the card's export_pricing.max_rows_ceiling (at most 100,000).
+            Every inlined row is billed at the POST /api/v1/contents rate. For the
+            rest of the list, call POST /api/v1/contents with the card's webpage_url
+            and an offset.
+        content_format:
+          $ref: '#/components/schemas/ContentsFormat'
+          description: 'Serialization for the inlined rows: ''json_compact'', ''json_records'',
+            ''csv'', or ''card_json''.'
+          default: json_compact
+        role:
+          anyOf:
+          - items:
+              type: string
+            type: array
+            maxItems: 20
+          - type: 'null'
+          title: Role
+          description: Title, seniority or function phrases, such as 'head of sales'.
+        company_ids:
+          anyOf:
+          - items:
+              type: string
+            type: array
+            maxItems: 100
+          - type: 'null'
+          title: Company Ids
+          description: Employer ids from the companies endpoints.
+        company_domains:
+          anyOf:
+          - items:
+              type: string
+            type: array
+            maxItems: 100
+          - type: 'null'
+          title: Company Domains
+          description: Employer websites.
+        person_country:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Person Country
+        person_region:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Person Region
+        person_metro:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Person Metro
+        person_town:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Person Town
+          description: Needs person_country or person_region beside it.
+        company_industry:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Company Industry
+          description: The employer's industry, by name or id, as companies/search
+            takes it.
+        company_min_employees:
+          anyOf:
+          - type: integer
+            minimum: 0
+          - type: 'null'
+          title: Company Min Employees
+        company_max_employees:
+          anyOf:
+          - type: integer
+            minimum: 0
+          - type: 'null'
+          title: Company Max Employees
+        company_funding_stages:
+          anyOf:
+          - items:
+              type: string
+              enum:
+              - angel
+              - convertible_note
+              - corporate_round
+              - debt_financing
+              - equity_crowdfunding
+              - grant
+              - initial_coin_offering
+              - non_equity_assistance
+              - post_ipo_debt
+              - post_ipo_equity
+              - post_ipo_secondary
+              - pre_seed
+              - private_equity
+              - product_crowdfunding
+              - secondary_market
+              - seed
+              - series_a
+              - series_b
+              - series_c
+              - series_d
+              - series_e
+              - series_f
+              - series_g
+              - series_h
+              - series_i
+              - series_j
+              - series_unknown
+              - undisclosed
+            type: array
+          - type: 'null'
+          title: Company Funding Stages
+          description: The employer's latest funding stages.
+        company_startups:
+          type: boolean
+          title: Company Startups
+          description: 'Employers that are startups: private companies founded in
+            the last ten years, of a startup type, that raised a venture round or
+            have at most 500 employees.'
+          default: false
+        linkedin_urls:
+          anyOf:
+          - items:
+              type: string
+            type: array
+            maxItems: 50
+          - type: 'null'
+          title: Linkedin Urls
+          description: LinkedIn profile URLs.
+        emails:
+          anyOf:
+          - items:
+              type: string
+            type: array
+            maxItems: 50
+          - type: 'null'
+          title: Emails
+        phones:
+          anyOf:
+          - items:
+              type: string
+            type: array
+            maxItems: 50
+          - type: 'null'
+          title: Phones
+      additionalProperties: false
+      type: object
+      title: PersonSearchRequest
+      description: 'A screen of employees. Contact identifiers narrow it to the people
+        they name, beside at least one
+
+        other filter.'
+    PersonSearchResponse:
+      properties:
+        card:
+          anyOf:
+          - $ref: '#/components/schemas/TakoCard'
+          - type: 'null'
+          description: 'The list as a Tako card: embed it, inline its rows with include_contents,
+            or pass its webpage_url to POST /api/v1/contents for every row (with an
+            offset) and for premium fields (premium=true). Null when nothing matched.'
+        total:
+          type: integer
+          title: Total
+        total_is_lower_bound:
+          type: boolean
+          title: Total Is Lower Bound
+          description: True when total is the count cap (500), not an exact count.
+            POST /api/v1/contents with the card's webpage_url reads past it.
+        applied:
+          items:
+            type: string
+          type: array
+          title: Applied
+          description: The filters the screen ran, with their resolved values.
+        unresolved:
+          items:
+            type: string
+          type: array
+          title: Unresolved
+          description: Inputs that named nothing, as field=value.
+        failed:
+          items:
+            type: string
+          type: array
+          title: Failed
+          description: 'Inputs whose lookup failed or timed out, as field=value: retry
+            them. Not a miss.'
+          default: []
+        notes:
+          items:
+            type: string
+          type: array
+          title: Notes
+          default: []
+      type: object
+      required:
+      - card
+      - total
+      - total_is_lower_bound
+      - applied
+      - unresolved
+      title: PersonSearchResponse
     PlaceholderInfo:
       properties:
         withheld_source:
