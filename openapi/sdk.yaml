@@ -1885,6 +1885,169 @@ components:
         in `columns` order. The rows come directly from the data source; the LLM
 
         never transcribes them.'
+    CompanyListField:
+      type: string
+      enum:
+      - name
+      - status
+      - company_type
+      - estimated_revenue
+      - headcount
+      - linkedin_followers
+      - industry
+      - funding_stage
+      - total_raised
+      - last_funding_date
+      - investors
+      - location
+      - website
+      - linkedin_url
+      - ticker
+      - established
+      - parent
+      - subsidiaries
+      - description
+      - headcount_range
+      - tags
+      - metro
+      - naics_codes
+      - postcode
+      - funding_round_count
+      - funding_rounds
+      - sic_codes
+      - also_known_as
+      - other_domains
+      - street_address
+      - twitter_url
+      - facebook_url
+      - sources
+      - tako_url
+      description: Every field of the company list card that `POST /v1/companies/search`
+        and `POST /v1/companies/enrich` return, in column order. `POST /api/v1/contents`
+        returns each one in its csv and JSON row formats, except the `CompanyListCardOnlyField`
+        fields.
+    CompanyListPreviewField:
+      type: string
+      enum:
+      - name
+      - status
+      - estimated_revenue
+      - headcount
+      - industry
+      - funding_stage
+      - total_raised
+      - last_funding_date
+      - investors
+      - location
+      - website
+      - tako_url
+      description: The fields in the `description` table of the company list card
+        that `POST /v1/companies/search` and `POST /v1/companies/enrich` return. The
+        table shows the first rows, and leaves out a field that's empty on each of
+        them.
+    CompanyListCardOnlyField:
+      type: string
+      enum:
+      - last_funding_date
+      - investors
+      description: The fields that only the card shows, on the company list card that
+        `POST /v1/companies/search` and `POST /v1/companies/enrich` return. `POST
+        /api/v1/contents` doesn't return them.
+    CompanyListPremiumField:
+      type: string
+      enum:
+      - estimated_revenue
+      - linkedin_followers
+      - parent
+      - subsidiaries
+      description: The premium fields of the company list card that `POST /v1/companies/search`
+        and `POST /v1/companies/enrich` return. `POST /api/v1/contents` withholds
+        them unless the call sets `premium=true`. `content_format=card_json` carries
+        no premium fields and rejects `premium=true`.
+    PersonListField:
+      type: string
+      enum:
+      - name
+      - title
+      - department
+      - seniority
+      - employer
+      - schools
+      - in_role_since
+      - location
+      - registry_companies
+      - linkedin_url
+      - work_email
+      - phone
+      - personal_email
+      - description
+      - education
+      - experience
+      - registry_seats
+      - sub_role
+      - business_area
+      - occupation
+      - job_summary
+      - skills
+      - industry
+      - metro
+      - job_verified_on
+      - twitter_url
+      - github_url
+      - all_emails
+      - all_personal_emails
+      - employer_industry
+      - employer_tako_industries
+      - employer_tags
+      - employer_size
+      - employer_funding_stage
+      - employer_founded
+      - employer_location
+      - employer_listing
+      - sources
+      - tako_url
+      description: Every field of the person list card that `POST /v1/people/search`
+        and `POST /v1/people/enrich` return, in column order. `POST /api/v1/contents`
+        returns each one in its csv and JSON row formats, except the `PersonListCardOnlyField`
+        fields.
+    PersonListPreviewField:
+      type: string
+      enum:
+      - name
+      - title
+      - department
+      - employer
+      - schools
+      - in_role_since
+      - location
+      - linkedin_url
+      - work_email
+      - phone
+      - personal_email
+      - tako_url
+      description: The fields in the `description` table of the person list card that
+        `POST /v1/people/search` and `POST /v1/people/enrich` return. The table shows
+        the first rows, and leaves out a field that's empty on each of them.
+    PersonListCardOnlyField:
+      type: string
+      enum:
+      - schools
+      - registry_companies
+      description: The fields that only the card shows, on the person list card that
+        `POST /v1/people/search` and `POST /v1/people/enrich` return. `POST /api/v1/contents`
+        doesn't return them.
+    PersonListPremiumField:
+      type: string
+      enum:
+      - work_email
+      - phone
+      - personal_email
+      - all_emails
+      - all_personal_emails
+      description: The premium fields of the person list card that `POST /v1/people/search`
+        and `POST /v1/people/enrich` return. `POST /api/v1/contents` withholds them
+        unless the call sets `premium=true`. `content_format=card_json` carries no
+        premium fields and rejects `premium=true`.
     APIErrorType:
       type: string
       enum:
@@ -3102,8 +3265,8 @@ components:
           - type: 'null'
           description: 'The matched records as one Tako card, in request order: embed
             it, inline its rows with include_contents, or pass its webpage_url to
-            POST /api/v1/contents for premium fields (premium=true). Null when nothing
-            matched.'
+            POST /api/v1/contents for premium fields (premium=true). `CompanyListField`
+            names its fields. Null when nothing matched.'
       type: object
       required:
       - results
@@ -3334,7 +3497,8 @@ components:
           - type: 'null'
           description: 'The list as a Tako card: embed it, inline its rows with include_contents,
             or pass its webpage_url to POST /api/v1/contents for every row (with an
-            offset) and for premium fields (premium=true). Null when nothing matched.'
+            offset) and for premium fields (premium=true). `CompanyListField` names
+            its fields. Null when nothing matched.'
         total:
           type: integer
           title: Total
@@ -5141,8 +5305,8 @@ components:
           - type: 'null'
           description: 'The matched records as one Tako card, in request order: embed
             it, inline its rows with include_contents, or pass its webpage_url to
-            POST /api/v1/contents for premium fields (premium=true). Null when nothing
-            matched.'
+            POST /api/v1/contents for premium fields (premium=true). `PersonListField`
+            names its fields. Null when nothing matched.'
       type: object
       required:
       - results
@@ -5387,7 +5551,8 @@ components:
           - type: 'null'
           description: 'The list as a Tako card: embed it, inline its rows with include_contents,
             or pass its webpage_url to POST /api/v1/contents for every row (with an
-            offset) and for premium fields (premium=true). Null when nothing matched.'
+            offset) and for premium fields (premium=true). `PersonListField` names
+            its fields. Null when nothing matched.'
         total:
           type: integer
           title: Total
