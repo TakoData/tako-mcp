@@ -16,7 +16,7 @@ Hosted endpoint: `https://mcp.tako.com/mcp` (Streamable HTTP). The ChatGPT app u
 - No token needed: paste the URL and sign in when the client prompts — a per-host key is minted automatically, and a new account gets up to 2,000 free requests. Anonymous connections work immediately: `tako_search` runs (rate-limited, shared capacity); every other tool stays listed and answers with sign-in instructions when called.
 - CI, headless runs, and clients without an OAuth flow: pass `Authorization: Bearer <TAKO_API_KEY>` on the same URL. Get a key at tako.com/console/api-keys.
 
-Choosing tools: `?tools=` on the endpoint URL is an ALLOWLIST that REPLACES the default listing, so name every tool you want in one comma-separated list. Tokens are tool names with the `tako_` prefix optional, e.g. `https://mcp.tako.com/mcp?tools=search,available_data,contents,agent`. Listed by default: `tako_search`, `tako_available_data`, `tako_contents`, `tako_graph_related`. Opt-in, so reachable only by naming them: `tako_search_advanced` (the whole v3 search body, plus `include_answer` for one synthesized, citation-backed answer and `output_schema` for structured output), `tako_agent` (the multi-step Answer Agent; listed by default on `/mcp/chatgpt`), `tako_company_agent` (the multi-step Company Agent, for which companies or people match registry facts; name `company_agent`; listed by default on `/mcp/chatgpt`), `tako_visualize` (listed by default on `/mcp/chatgpt`, the surface whose host renders its chart widget inline). Unknown tokens are ignored, and a param that names nothing recognizable serves the defaults, so a typo never breaks the connection. `/mcp/chatgpt` ignores the param: its listing is fixed.
+Choosing tools: `?tools=` on the endpoint URL is an ALLOWLIST that REPLACES the default listing, so name every tool you want in one comma-separated list. Tokens are tool names with the `tako_` prefix optional, e.g. `https://mcp.tako.com/mcp?tools=search,available_data,contents,agent`. Listed by default: `tako_search`, `tako_available_data`, `tako_contents`, `tako_graph_related`. Opt-in, so reachable only by naming them: `tako_search_advanced` (the whole v3 search body, plus `include_answer` for one synthesized, citation-backed answer and `output_schema` for structured output), `tako_agent` (the multi-step Answer Agent; listed by default on `/mcp/chatgpt`), `tako_company_agent` (the multi-step Company Agent, for which companies or people match registry facts; name `company_agent`; listed by default on `/mcp/chatgpt`), `tako_company_search` and `tako_people_search` (build a list of companies or people from filters; name `company_search`, `people_search`), `tako_company_enrich` and `tako_person_enrich` (match up to 25 known companies or people; name `company_enrich`, `person_enrich`); name `contents` beside these four, as in `?tools=contents,company_search,people_search,company_enrich,person_enrich`, since `tako_contents` fetches the rows of the card each returns), `tako_visualize` (listed by default on `/mcp/chatgpt`, the surface whose host renders its chart widget inline). Unknown tokens are ignored, and a param that names nothing recognizable serves the defaults, so a typo never breaks the connection. `/mcp/chatgpt` ignores the param: its listing is fixed.
 
 Pinning sources: `?sources=` on the `/mcp` URL pins the sources for the whole connection, for evaluating Tako data on its own. `?sources=data` searches Tako data only, `?sources=web` searches the web only, and `?sources=data,web` always searches both, e.g. `https://mcp.tako.com/mcp?sources=data`. It applies to `tako_search`, `tako_search_advanced`, `tako_agent`, and `tako_company_agent`: the `sources` input (on `tako_search_advanced`, the other source's block) leaves the tool's schema, and every call sends the pinned value, agent thread follow-ups included. `tako_contents`, `tako_available_data`, and `tako_graph_related` take no `sources` input; for web only, you can also drop the graph tools with `?tools=`, e.g. `?tools=search&sources=web`. An invalid or empty value fails the connection with an HTTP 400 that names the parameter; other unknown parameters are ignored. The server instructions state the pin when it applies. `/mcp/chatgpt` ignores the param.
 
@@ -146,3 +146,52 @@ Parameters:
 - `sources` (array, optional): Which corpora to search; default is both (`["data","web"]`).
 - `thread_id` (string UUID, optional): A `thread_id` from an earlier run. Pass it back to ask a follow-up in that conversation; omit it to start a new one.
 - `effort` (string, optional): Research depth. `medium` is the default; `high` is stronger and slower. `low` can't filter or rank by financial metrics such as revenue or headcount. Effort is fixed for a thread.
+
+### tako_company_search
+Opt-in tool — connect with `?tools=contents,company_search` on the endpoint URL (see Connecting); `tako_contents` fetches the rows of the card it returns. Screen active companies by industry, place, size, founding year, funding stage and ownership. It returns `total` (it stops at 500, and `total_is_lower_bound` says when), the filters as `applied`, `notes`, and one list `card`. A null `card` means nothing matched. It can't filter or sort by revenue.
+
+Fields: Card `description` previews 10 rows: name, status, estimated_revenue*, headcount, industry, funding_stage, total_raised, last_funding_date, investors, location, website, tako_url. `tako_contents` on its `url` returns every row: those fields except last_funding_date and investors, plus company_type, linkedin_followers*, linkedin_url, ticker, established, parent*, subsidiaries*, description, headcount_range, tags, metro, naics_codes, postcode, funding_round_count, funding_rounds, sic_codes, also_known_as, other_domains, street_address, twitter_url, facebook_url, sources. * is premium: null unless that call sets `premium: true`.
+
+Parameters (all optional; set at least one filter):
+- `country` (string): ISO 3166-1 alpha-2 code or English name.
+- `region` (string): State or province, as a name or an ISO 3166-2 code.
+- `town` (string): Town of the headquarters. Needs `country` or `region` beside it.
+- `min_employees`, `max_employees` (integer): Employee range, on People Data Labs' estimate.
+- `industry` (string): An industry name, alias or id, such as fintech. `applied` shows what it was read as, and an unknown one returns the closest ids.
+- `funding_stages` (array): Latest funding stages, such as `series_b`.
+- `ownership` (string): `public` or `private`.
+- `startups` (boolean): Startups only.
+- `founded_after`, `founded_before` (integer): Founding year range, inclusive.
+- `order_by` (string): `employees` or `founded`; a leading minus sorts in descending order.
+
+### tako_people_search
+Opt-in tool — connect with `?tools=contents,people_search` on the endpoint URL (see Connecting); `tako_contents` fetches the rows of the card it returns. Screen employees by role, place and employer. It returns `total`, `total_is_lower_bound`, `applied`, `notes` and one list `card`, as `tako_company_search` does, plus `unresolved` (inputs that named nothing) and `failed` (inputs whose lookup failed; retry them).
+
+Fields: Card `description` previews 10 rows: name, title, department, employer, schools, in_role_since, location, linkedin_url, work_email*, phone*, personal_email*, tako_url. `tako_contents` on its `url` returns every row: those fields except schools, plus seniority, description, education, experience, registry_seats, sub_role, business_area, occupation, job_summary, skills, industry, metro, job_verified_on, twitter_url, github_url, all_emails*, all_personal_emails*, employer_{industry, tako_industries, tags, size, funding_stage, founded, location, listing}, sources. * is premium: null unless that call sets `premium: true`.
+
+Parameters (all optional; set at least one filter):
+- `role` (array): Title, seniority or function phrases, such as "head of sales".
+- `company_ids` (array): Employer ids, such as the `match_id` of a matched company.
+- `company_domains` (array): Employer websites.
+- `person_country`, `person_region`, `person_metro`, `person_town` (string): Where the person is. `person_town` needs `person_country` or `person_region` beside it.
+- `company_industry` (string): The employer's industry, as a name, alias or id.
+- `company_min_employees`, `company_max_employees` (integer): The employer's size.
+- `company_funding_stages` (array): The employer's latest funding stages.
+- `company_startups` (boolean): Employers that are startups only.
+- `linkedin_urls`, `emails`, `phones` (array): Contact identifiers. They narrow a search, so set another filter beside them; 50 values in all.
+
+### tako_company_enrich
+Opt-in tool — connect with `?tools=contents,company_enrich` on the endpoint URL (see Connecting); `tako_contents` fetches the rows of the card it returns. Match up to 25 companies you already know. `results` has one entry per item, in order, with its `index`, the `input` as sent, `status` (`matched`, `no_match` or `failed`), `match_id`, `confidence` (`exact`, `high` or `ambiguous`), `matched_on`, `alternates`, `unresolved` and `failed`. The matches come back as one list `card`; a null `card` means nothing matched.
+
+Fields: Card `description` previews 10 rows: name, status, estimated_revenue*, headcount, industry, funding_stage, total_raised, last_funding_date, investors, location, website, tako_url. `tako_contents` on its `url` returns every row: those fields except last_funding_date and investors, plus company_type, linkedin_followers*, linkedin_url, ticker, established, parent*, subsidiaries*, description, headcount_range, tags, metro, naics_codes, postcode, funding_round_count, funding_rounds, sic_codes, also_known_as, other_domains, street_address, twitter_url, facebook_url, sources. * is premium: null unless that call sets `premium: true`.
+
+Parameters:
+- `items` (array, required): 1 to 25 companies. Each needs `domain`, `linkedin_url` or `name`; `city`, `region`, `country` and `industry` rank a name's matches and never exclude one.
+
+### tako_person_enrich
+Opt-in tool — connect with `?tools=contents,person_enrich` on the endpoint URL (see Connecting); `tako_contents` fetches the rows of the card it returns. Match up to 25 people you already know. It returns `results` in the shape `tako_company_enrich` returns, and the matches as one list `card`.
+
+Fields: Card `description` previews 10 rows: name, title, department, employer, schools, in_role_since, location, linkedin_url, work_email*, phone*, personal_email*, tako_url. `tako_contents` on its `url` returns every row: those fields except schools, plus seniority, description, education, experience, registry_seats, sub_role, business_area, occupation, job_summary, skills, industry, metro, job_verified_on, twitter_url, github_url, all_emails*, all_personal_emails*, employer_{industry, tako_industries, tags, size, funding_stage, founded, location, listing}, sources. * is premium: null unless that call sets `premium: true`.
+
+Parameters:
+- `items` (array, required): 1 to 25 people. Each needs `email`, `phone`, `linkedin_url` or `name`; `company_domain`, `company_name` and `title` are hints for a name. Give a phone with its country code.

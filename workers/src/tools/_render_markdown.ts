@@ -60,6 +60,7 @@ import {
   type ProjectedRef,
 } from "./_available_data.js";
 import type { ContentsOutput, ProjectedContentsItem } from "./_contents.js";
+import type { EnrichCard, EnrichOutput, EnrichResultRow, ListSearchOutput } from "./_enrich.js";
 import {
   projectedFocalNodeShape,
   projectedRelationPageShape,
@@ -375,13 +376,17 @@ function renderFooter(usage: Usage | null): string | undefined {
 // before data), usage as the final line.
 // ---------------------------------------------------------------------------
 
-function renderProjectedCard(c: ProjectedCard): string {
-  const lines: string[] = [`### ${oneLine(c.title ?? "Untitled card")}`];
-  // `oneLine`, for the same reason the reference maps flatten their values: a
-  // description was the one card field neither flattened nor fenced, so a
-  // newline followed by `## ` in upstream prose opened a heading in this
-  // document.
-  if (c.description !== undefined) lines.push(oneLine(c.description));
+/**
+ * A card's access line: its `tako_contents` handle and whether rows are behind
+ * it. Shared by every renderer that shows a card, so "exportable, N rows" and
+ * "rows locked" read the same on a search card and a list card.
+ */
+export function cardAccessLine(c: {
+  url?: string | undefined;
+  exportable: boolean;
+  total_rows?: number | undefined;
+  description?: string | undefined;
+}): string {
   const access: string[] = [];
   if (c.url !== undefined) access.push(`url: ${c.url}`);
   access.push(
@@ -397,7 +402,17 @@ function renderProjectedCard(c: ProjectedCard): string {
           "rows locked — the headline value is in this card's `description`"
         : "rows locked",
   );
-  lines.push(`- ${access.join(" · ")}`);
+  return `- ${access.join(" · ")}`;
+}
+
+function renderProjectedCard(c: ProjectedCard): string {
+  const lines: string[] = [`### ${oneLine(c.title ?? "Untitled card")}`];
+  // `oneLine`, for the same reason the reference maps flatten their values: a
+  // description was the one card field neither flattened nor fenced, so a
+  // newline followed by `## ` in upstream prose opened a heading in this
+  // document.
+  if (c.description !== undefined) lines.push(oneLine(c.description));
+  lines.push(cardAccessLine(c));
   const meta: string[] = [];
   if (c.source !== undefined) meta.push(`source: ${oneLine(c.source)}`);
   // "data through", first, because it is the one a reader judging currency
@@ -970,4 +985,83 @@ export function renderContentsText(o: ContentsOutput): string {
   const header = `## Contents (${items.length} urls${failed > 0 ? `, ${failed} failed` : ""})`;
   const sections = items.map((r, i) => `### ${i + 1}. ${renderContentsItem(r, true)}`);
   return [header, ...sections, footer].join("\n\n");
+}
+
+// ---------------------------------------------------------------------------
+// Enrichment tools: tako_company_search, tako_people_search,
+// tako_company_enrich, tako_person_enrich. Each returns one list card, whose
+// description is a markdown table of the first rows. It renders FENCED, where
+// a search card's description is flattened to one line: a flattened table is
+// unreadable, and the fence keeps upstream text from forging this document's
+// headings.
+// ---------------------------------------------------------------------------
+
+function renderListCard(card: EnrichCard): string {
+  const lines = [`### ${oneLine(card.title ?? "Untitled list")}`, cardAccessLine(card)];
+  if (card.source !== undefined) lines.push(`- source: ${oneLine(card.source)}`);
+  if (card.description !== undefined) lines.push(fenced(card.description));
+  return lines.join("\n");
+}
+
+const listLine = (label: string, values: readonly string[]): string =>
+  `- ${label}: ${values.map(oneLine).join(" · ")}`;
+
+/** The text channel of an enrichment search: the count, what ran, then the card. */
+export function renderListSearchMarkdown(output: ListSearchOutput, noun: string): string {
+  const blocks: string[] = [];
+  const facts: string[] = [];
+  if (output.applied.length > 0) facts.push(listLine("applied", output.applied));
+  if (output.notes.length > 0) facts.push(listLine("notes", output.notes));
+  if (output.unresolved !== undefined && output.unresolved.length > 0) {
+    facts.push(listLine("unresolved (named nothing)", output.unresolved));
+  }
+  if (output.failed !== undefined && output.failed.length > 0) {
+    facts.push(listLine("failed (lookup failed, retry these)", output.failed));
+  }
+  if (output.card === null) {
+    blocks.push(`## No ${noun} match`);
+    blocks.push(
+      `The search ran and matched no ${noun} (total: ${String(output.total)}). That's an answer, not an error. Loosen or drop a filter to widen it.`,
+    );
+    if (facts.length > 0) blocks.push(facts.join("\n"));
+    return blocks.join("\n\n");
+  }
+  const count = output.total_is_lower_bound
+    ? `at least ${String(output.total)} (the count stops there; the card's rows go past it)`
+    : String(output.total);
+  blocks.push(`## ${noun}: ${count}`);
+  if (facts.length > 0) blocks.push(facts.join("\n"));
+  blocks.push(renderListCard(output.card));
+  if (output.guidance !== undefined) blocks.push(`> ${output.guidance}`);
+  return blocks.join("\n\n");
+}
+
+function renderEnrichResult(row: EnrichResultRow): string {
+  const input = Object.entries(row.input)
+    .map(([key, value]) => `${key}=${oneLine(value)}`)
+    .join(", ");
+  const facts: string[] = [oneLine(row.status)];
+  if (row.confidence !== undefined) facts.push(`confidence ${oneLine(row.confidence)}`);
+  if (row.matched_on !== undefined) facts.push(`matched on ${oneLine(row.matched_on)}`);
+  if (row.match_id !== undefined) facts.push(`match_id \`${oneLine(row.match_id)}\``);
+  if (row.alternates > 0) facts.push(`${String(row.alternates)} alternates`);
+  if (row.unresolved.length > 0) facts.push(`unresolved: ${row.unresolved.map(oneLine).join(", ")}`);
+  if (row.failed.length > 0) facts.push(`failed, retry: ${row.failed.map(oneLine).join(", ")}`);
+  return `${String(row.index)}. ${input} → ${facts.join(" · ")}`;
+}
+
+/** The text channel of an enrich call: one line per item, then the card. */
+export function renderEnrichMarkdown(output: EnrichOutput, noun: string): string {
+  const matched = output.results.filter((row) => row.status === "matched").length;
+  const blocks = [
+    `## Results: ${String(matched)} of ${String(output.results.length)} matched`,
+    output.results.map(renderEnrichResult).join("\n"),
+  ];
+  if (output.card === null) {
+    blocks.push(`No ${noun} matched, so there's no card. That's an answer, not an error.`);
+    return blocks.join("\n\n");
+  }
+  blocks.push(renderListCard(output.card));
+  if (output.guidance !== undefined) blocks.push(`> ${output.guidance}`);
+  return blocks.join("\n\n");
 }

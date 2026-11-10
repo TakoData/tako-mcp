@@ -15,8 +15,12 @@ import type { AnyToolModule } from "./types.js";
 import tako_agent from "./tako_agent.js";
 import tako_available_data from "./tako_available_data.js";
 import tako_company_agent from "./tako_company_agent.js";
+import tako_company_enrich from "./tako_company_enrich.js";
+import tako_company_search from "./tako_company_search.js";
 import tako_contents from "./tako_contents.js";
 import tako_graph_related from "./tako_graph_related.js";
+import tako_people_search from "./tako_people_search.js";
+import tako_person_enrich from "./tako_person_enrich.js";
 import tako_search from "./tako_search.js";
 import tako_search_advanced from "./tako_search_advanced.js";
 import tako_visualize from "./tako_visualize.js";
@@ -29,8 +33,12 @@ export const TOOL_REGISTRY: ReadonlyArray<AnyToolModule> = [
   tako_agent as unknown as AnyToolModule,
   tako_available_data as unknown as AnyToolModule,
   tako_company_agent as unknown as AnyToolModule,
+  tako_company_enrich as unknown as AnyToolModule,
+  tako_company_search as unknown as AnyToolModule,
   tako_contents as unknown as AnyToolModule,
   tako_graph_related as unknown as AnyToolModule,
+  tako_people_search as unknown as AnyToolModule,
+  tako_person_enrich as unknown as AnyToolModule,
   tako_search as unknown as AnyToolModule,
   tako_search_advanced as unknown as AnyToolModule,
   tako_visualize as unknown as AnyToolModule,

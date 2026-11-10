@@ -38,7 +38,7 @@
  * argument and the two guards that keep the omission honest are on
  * `outputSettingsBlock` below.
  *
- * `optionalWithoutDefaults` is load-bearing, not cosmetic. `.partial()` alone
+ * `optionalWithoutDefaults` (`_optional_without_defaults.ts`) is load-bearing, not cosmetic. `.partial()` alone
  * is NOT enough: zod keeps the inner `ZodDefault`, so `data: {}` parsed back
  * `{count: 5, include_contents: false, content_format: "json_compact",
  * strict: false}` and naming a block would have silently sent four values the
@@ -81,6 +81,7 @@ import {
   searchAdvancedOutputShape,
 } from "./_render_markdown.js";
 import { type InputPinApplier, type InputPins, type Source, soleSource } from "./_input_pins.js";
+import { optionalWithoutDefaults } from "./_optional_without_defaults.js";
 import type { SearchOutput } from "./_search_results.js";
 import { runSearch, type SearchCall, type SearchEndpoint } from "./_run_search.js";
 import type { ToolModule } from "./types.js";
@@ -141,36 +142,6 @@ export function describeSearchAdvanced(sources: readonly Source[]): string {
   return only === undefined ? BOTH_PINNED_DESCRIPTION : PINNED_DESCRIPTIONS[only];
 }
 
-
-/**
- * Make every field of a generated settings schema optional AND drop the
- * default it carries, so an omitted field never reaches the wire.
- *
- * `.partial()` on its own leaves `ZodOptional<ZodDefault<T>>`, and the default
- * still fires when the key is absent from a block the caller DID name. That is
- * how `data: {}` came back carrying four values.
- *
- * ONE LEVEL ONLY. A field whose VALUE is an object keeps that object's own
- * generated defaults, and the generated schemas wrap every such field as
- * `z.union([z.lazy(() => T), z.null()])`, so no amount of unwrapping here
- * reaches `T`. `output_settings` is the one top-level field that hits this and
- * it is rebuilt by hand below; `noDefaultsLeak` in the test file is what fails
- * when the backend adds a second one.
- */
-function optionalWithoutDefaults<T extends z.ZodRawShape>(
-  shape: T,
-  describes: Partial<Record<keyof T & string, string>> = {},
-): {
-  [K in keyof T]: z.ZodOptional<T[K] extends z.ZodDefault<infer Inner> ? Inner : T[K]>;
-} {
-  const out: Record<string, z.ZodType> = {};
-  for (const [key, field] of Object.entries(shape)) {
-    const bare = field instanceof z.ZodDefault ? field.unwrap() : field;
-    const override = describes[key as keyof T & string];
-    out[key] = override === undefined ? (bare as z.ZodType).optional() : (bare as z.ZodType).describe(override).optional();
-  }
-  return out as never;
-}
 
 /**
  * Model-facing rewrites of the generated `.describe()` on the nested block

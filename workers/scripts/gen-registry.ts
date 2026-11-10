@@ -37,6 +37,7 @@ import {
   resolveToolSet,
   toolAnnotationsForSurface,
 } from "../src/tools/_surface.js";
+import { ENRICH_ENDPOINTS, enrichFieldSentences, type EnrichTool } from "../src/tools/_enrich.js";
 import { TOOL_NAME_PREFIX } from "../src/tools/_tools_param.js";
 import { pickDeclared } from "../src/tools/_pick_declared.js";
 import { inputSchemaForSurface, outputSchemaForSurface, publishedOutputJsonSchema } from "../src/tools/_surface.js";
@@ -103,8 +104,12 @@ export const MCP_TOOL_ALLOWLIST = [
   "tako_agent",
   "tako_available_data",
   "tako_company_agent",
+  "tako_company_enrich",
+  "tako_company_search",
   "tako_contents",
   "tako_graph_related",
+  "tako_people_search",
+  "tako_person_enrich",
   "tako_search",
   "tako_search_advanced",
   "tako_visualize",
@@ -183,6 +188,57 @@ export function assertLlmsFullCoverage(
       `llms-full.txt drift — hand-written docs out of sync with tool modules:\n  ${problems.join(
         "\n  ",
       )}\nUpdate llms-full.txt to match the tool surface.`,
+    );
+  }
+}
+
+/**
+ * Assert `registry/smithery.yaml` has a `tools:` entry for every tool.
+ *
+ * The opt-in disclosure guard reads a listing by the tool names it finds
+ * there, so a tool the listing never names is never checked. The four
+ * enrichment tools shipped without entries, and the guard stayed green.
+ */
+export function assertSmitheryNamesEveryTool(toolNames: ReadonlyArray<string>, smithery: string): void {
+  const listed = new Set([...smithery.matchAll(/^\s*- name: (tako_[a-z0-9_]+)\s*$/gm)].map((m) => m[1]));
+  const missing = toolNames.filter((name) => !listed.has(name));
+  if (missing.length > 0) {
+    throw new Error(
+      `registry/smithery.yaml has no tools entry for: ${missing.join(", ")}\n` +
+        `Add one, with the \`?tools=\` form if the tool is opt-in on /mcp.`,
+    );
+  }
+}
+
+/**
+ * Assert `llms-full.txt` carries each enrichment tool's field sentences
+ * exactly as its description does.
+ *
+ * Those sentences say which fields the tool returns and which are premium,
+ * and they are generated from `_enrich_fields.ts`. A hand-written copy of the
+ * list drifted within one review round, so the doc carries the generated text
+ * and this fails when the two differ.
+ */
+export function assertEnrichFieldSentences(llmsFull: string): void {
+  const problems: string[] = [];
+  for (const tool of Object.keys(ENRICH_ENDPOINTS) as EnrichTool[]) {
+    const start = llmsFull.indexOf(`### ${tool}\n`);
+    if (start === -1) {
+      problems.push(`no "### ${tool}" section`);
+      continue;
+    }
+    const next = llmsFull.indexOf("\n### ", start + 1);
+    const section = next === -1 ? llmsFull.slice(start) : llmsFull.slice(start, next);
+    const sentences = enrichFieldSentences(tool);
+    if (!section.includes(sentences)) {
+      problems.push(`section "### ${tool}" must contain, verbatim:\n    ${sentences}`);
+    }
+  }
+  if (problems.length > 0) {
+    throw new Error(
+      `llms-full.txt drift — an enrichment tool's field list differs from its description:\n  ${problems.join(
+        "\n  ",
+      )}`,
     );
   }
 }
@@ -513,8 +569,9 @@ const TOOLS_DOC_PATH = resolve(REPO_ROOT, "docs", "TOOLS.md");
  * opt-in-disclosure guard for the same reason the skills are: close the gap
  * by enumeration rather than waiting for the next survivor.
  */
+const SMITHERY_PATH = resolve(REPO_ROOT, "registry", "smithery.yaml");
 const LISTING_PATHS = [
-  resolve(REPO_ROOT, "registry", "smithery.yaml"),
+  SMITHERY_PATH,
   resolve(REPO_ROOT, "agent.json"),
 ];
 
@@ -1830,7 +1887,8 @@ async function main(): Promise<void> {
   //     listing, so a tool moving surface fails here instead of drifting.
   //
   //     KEYED ON TOOL NAMES, so it only sees a listing that names them.
-  //     `smithery.yaml` names every tool and is fully covered; `agent.json`
+  //     `smithery.yaml` names every tool (`assertSmitheryNamesEveryTool`
+  //     below fails when it doesn't), so it is fully covered; `agent.json`
   //     describes capabilities in prose ("Create an embeddable Tako
   //     chart/card") and names one tool per entry. A prose claim about a
   //     default — which is what actually went stale in `agent.json`, "on by
@@ -1840,6 +1898,10 @@ async function main(): Promise<void> {
   //
   //     `?tools=` is an allowlist of tool NAMES (spec D1), with the `tako_`
   //     prefix optional, so both forms count as disclosure.
+  assertSmitheryNamesEveryTool(
+    modules.map((m) => m.tool.name),
+    readFileSync(SMITHERY_PATH, "utf8"),
+  );
   const genericDefaults = resolveToolSet("generic", null);
   const optInNames = modules
     .map((m) => m.tool.name)
@@ -1931,6 +1993,7 @@ async function main(): Promise<void> {
   //    and any tool with a `### <name>` section must document all its params.
   const llmsFull = readFileSync(LLMS_FULL_PATH, "utf8");
   assertLlmsFullCoverage(registryTools, llmsFull);
+  assertEnrichFieldSentences(llmsFull);
   // Same check against the short index, which agents fetch just as readily.
   const llms = readFileSync(LLMS_PATH, "utf8");
   assertLlmsFullCoverage(registryTools, llms);

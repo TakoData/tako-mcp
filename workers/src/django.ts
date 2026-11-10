@@ -495,7 +495,8 @@ function isAbortError(err: unknown): boolean {
  * model-visible text channel, or `undefined` when the body is NOT a
  * recognisable structured envelope.
  *
- * Django/DRF errors arrive as JSON envelopes — `{"detail": "…"}`
+ * Django/DRF errors arrive as JSON envelopes — `{"error_message": "…"}` (the
+ * `/api/v1` endpoints' `BaseAPIError`), `{"detail": "…"}`
  * (APIException), `{"error": "…"}` / `{"message": "…"}` (custom handlers),
  * `{"detail": ["…"]}` (nested list), or a field-keyed validation map
  * `{"field": ["…"], …}`. We lift the message out of those.
@@ -519,7 +520,10 @@ export function extractErrorDetail(body: string): string | undefined {
   if (typeof parsed === "string") return parsed !== "" ? parsed : undefined;
   if (parsed === null || typeof parsed !== "object") return undefined;
   const obj = parsed as Record<string, unknown>;
-  for (const key of ["detail", "error", "message"]) {
+  // `error_message` first: it's the field every `/api/v1` endpoint's own error
+  // body carries (`BaseAPIError`), written for the caller. The other three are
+  // DRF's and older handlers' keys, read when a body has no `error_message`.
+  for (const key of ["error_message", "detail", "error", "message"]) {
     const value = obj[key];
     if (typeof value === "string" && value !== "") return value;
     // DRF sometimes nests a list of strings, e.g. {"detail": ["…", "…"]}.

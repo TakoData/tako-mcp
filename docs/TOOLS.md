@@ -23,6 +23,10 @@ Opt-in (name them in `?tools=`):
 
 - `tako_agent` — `?tools=available_data,contents,graph_related,search,agent` (skills: `tako-search`)
 - `tako_company_agent` — `?tools=available_data,contents,graph_related,search,company_agent` (skills: `tako-search`)
+- `tako_company_enrich` — `?tools=available_data,contents,graph_related,search,company_enrich` (skills: `tako-search`)
+- `tako_company_search` — `?tools=available_data,contents,graph_related,search,company_search` (skills: `tako-search`)
+- `tako_people_search` — `?tools=available_data,contents,graph_related,search,people_search` (skills: `tako-search`)
+- `tako_person_enrich` — `?tools=available_data,contents,graph_related,search,person_enrich` (skills: `tako-search`)
 - `tako_search_advanced` — `?tools=available_data,contents,graph_related,search,search_advanced` (skills: `tako-search`)
 - `tako_visualize` — `?tools=available_data,contents,graph_related,search,visualize` (skills: `tako-search`)
 - The Claude Code plugin and Gemini CLI extension — `?tools=agent,available_data,company_agent,contents,graph_related,search,visualize` (skills: `tako-agent`, `tako-search`)
@@ -1261,6 +1265,587 @@ usage: $0.04127
 ```
 </details>
 
+### tako_company_enrich
+
+**Tako: Company Enrich**
+
+- Listed by default on: none (opt-in on `/mcp`)
+- Runs anonymously (on `/mcp`): no (answers with sign-in instructions)
+
+Description:
+
+Match up to 25 known companies by website, LinkedIn page or name. Returns per-item `results` and one list card of matches.
+
+Use to look up companies you can name, such as a list of domains.
+
+`results` has one entry per item, in order: status (matched, no_match, failed), match_id, confidence (exact, high, ambiguous), matched_on, alternates, unresolved, failed. Card `description` previews 10 rows: name, status, estimated_revenue*, headcount, industry, funding_stage, total_raised, last_funding_date, investors, location, website, tako_url. `tako_contents` on its `url` returns every row: those fields except last_funding_date and investors, plus company_type, linkedin_followers*, linkedin_url, ticker, established, parent*, subsidiaries*, description, headcount_range, tags, metro, naics_codes, postcode, funding_round_count, funding_rounds, sic_codes, also_known_as, other_domains, street_address, twitter_url, facebook_url, sources. * is premium: null unless that call sets `premium: true`.
+
+Parameters:
+
+| Name | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `items` | array | yes |  | The companies to match, 1 to 25. Each needs `domain`, `linkedin_url` or `name`. `domain` and `linkedin_url` match exactly, and `name` by score. `city`, `region`, `country` and `industry` rank a name's matches and never exclude one. |
+
+Fixed request inputs (the caller cannot change these):
+
+_none_
+
+Annotations:
+
+- `/mcp`: title: Tako: Company Enrich; readOnlyHint: true; destructiveHint: false; idempotentHint: true; openWorldHint: true
+- `/mcp/chatgpt`: title: Tako: Company Enrich; readOnlyHint: true; destructiveHint: false; idempotentHint: true; openWorldHint: true
+
+<details><summary>wire — Published input schema (JSON Schema)</summary>
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "items": {
+      "minItems": 1,
+      "maxItems": 25,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "domain": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The company's website, matched exactly."
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The company's name, matched by the scored lookup."
+          },
+          "linkedin_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The company's LinkedIn page, matched exactly."
+          },
+          "city": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A hint for a name match: ranks companies based in this city or town higher, and never excludes one."
+          },
+          "region": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A hint for a name match: ranks companies based in this state or province higher, and never excludes one."
+          },
+          "country": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A hint for a name match: ranks companies based in this country higher, and never excludes one."
+          },
+          "industry": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A hint for a name match: ranks companies in this industry, in words such as 'aircraft parts' higher, and never excludes one."
+          }
+        },
+        "additionalProperties": false
+      },
+      "description": "The companies to match, 1 to 25. Each needs `domain`, `linkedin_url` or `name`. `domain` and `linkedin_url` match exactly, and `name` by score. `city`, `region`, `country` and `industry` rank a name's matches and never exclude one."
+    }
+  },
+  "required": [
+    "items"
+  ],
+  "additionalProperties": false
+}
+```
+</details>
+
+<details><summary>wire — Published output schema (JSON Schema)</summary>
+
+```json
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "index": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991,
+            "description": "The item's position in `items`, from 0."
+          },
+          "input": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "The item as sent."
+          },
+          "status": {
+            "type": "string",
+            "description": "matched, no_match (an answer, not an error) or failed (retry the item)."
+          },
+          "match_id": {
+            "type": "string"
+          },
+          "confidence": {
+            "description": "exact, high, or ambiguous: others match nearly as well.",
+            "type": "string"
+          },
+          "matched_on": {
+            "type": "string"
+          },
+          "alternates": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991,
+            "description": "Other near matches, up to 3."
+          },
+          "unresolved": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Inputs that named nothing, as field=value."
+          },
+          "failed": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Inputs whose lookup failed. Retry them."
+          }
+        },
+        "required": [
+          "index",
+          "input",
+          "status",
+          "alternates",
+          "unresolved",
+          "failed"
+        ],
+        "additionalProperties": {}
+      },
+      "description": "One result per item, in `items` order."
+    },
+    "card": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "title": {
+              "type": "string"
+            },
+            "description": {
+              "description": "A markdown table of the first 10 rows. 🔒 marks a premium cell.",
+              "type": "string"
+            },
+            "url": {
+              "description": "Pass it to tako_contents for the rows.",
+              "type": "string"
+            },
+            "exportable": {
+              "type": "boolean",
+              "description": "true → tako_contents returns the rows."
+            },
+            "total_rows": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            "source": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "exportable"
+          ],
+          "additionalProperties": {}
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "The matches as one card, in `items` order. null → nothing matched."
+    },
+    "guidance": {
+      "description": "What to do about premium cells the card withholds.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "results",
+    "card"
+  ],
+  "additionalProperties": false
+}
+```
+</details>
+
+### tako_company_search
+
+**Tako: Company Search**
+
+- Listed by default on: none (opt-in on `/mcp`)
+- Runs anonymously (on `/mcp`): no (answers with sign-in instructions)
+
+Description:
+
+Screen active companies by industry, place, size, founding year, funding stage and ownership. Returns `total`, the filters `applied`, `notes` and one list card.
+
+Use to build a list of companies from filters, such as Series B enterprise SaaS companies in the US.
+
+Card `description` previews 10 rows: name, status, estimated_revenue*, headcount, industry, funding_stage, total_raised, last_funding_date, investors, location, website, tako_url. `tako_contents` on its `url` returns every row: those fields except last_funding_date and investors, plus company_type, linkedin_followers*, linkedin_url, ticker, established, parent*, subsidiaries*, description, headcount_range, tags, metro, naics_codes, postcode, funding_round_count, funding_rounds, sic_codes, also_known_as, other_domains, street_address, twitter_url, facebook_url, sources. * is premium: null unless that call sets `premium: true`. `total` stops at 500, and `total_is_lower_bound` says when. It can't filter or sort by revenue.
+
+Parameters:
+
+| Name | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `country` | string | no |  | ISO 3166-1 alpha-2 code or English name. |
+| `region` | string | no |  | State or province, as a name or an ISO 3166-2 code. |
+| `town` | string | no |  | Town of the headquarters, or of the registered office when there's no headquarters. Needs country or region beside it. |
+| `min_employees` | integer | no |  | People Data Labs' employee estimate. |
+| `max_employees` | integer | no |  | People Data Labs' employee estimate. |
+| `industry` | string | no |  | An industry name, alias or id, such as fintech or aerospace and defense. `applied` shows what it was read as. |
+| `funding_stages` | array | no |  | Latest funding stages. |
+| `ownership` | string | no |  | Publicly traded or privately held. |
+| `startups` | boolean | no |  | Startups: private companies founded in the last ten years (unless founded_after or founded_before names other years), of a startup type (not a government body, nonprofit, school or public company's subsidiary), that raised a venture round or have at most 500 employees. |
+| `founded_after` | integer | no |  | Founded in this year or later. |
+| `founded_before` | integer | no |  | Founded in this year or earlier. |
+| `order_by` | string | no |  | A field to sort by. A leading minus sorts it in descending order. |
+
+Fixed request inputs (the caller cannot change these):
+
+_none_
+
+Annotations:
+
+- `/mcp`: title: Tako: Company Search; readOnlyHint: true; destructiveHint: false; idempotentHint: true; openWorldHint: true
+- `/mcp/chatgpt`: title: Tako: Company Search; readOnlyHint: true; destructiveHint: false; idempotentHint: true; openWorldHint: true
+
+<details><summary>wire — Published input schema (JSON Schema)</summary>
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "country": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "ISO 3166-1 alpha-2 code or English name."
+    },
+    "region": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "State or province, as a name or an ISO 3166-2 code."
+    },
+    "town": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Town of the headquarters, or of the registered office when there's no headquarters. Needs country or region beside it."
+    },
+    "min_employees": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "People Data Labs' employee estimate."
+    },
+    "max_employees": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "People Data Labs' employee estimate."
+    },
+    "industry": {
+      "description": "An industry name, alias or id, such as fintech or aerospace and defense. `applied` shows what it was read as.",
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "funding_stages": {
+      "anyOf": [
+        {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "angel",
+              "convertible_note",
+              "corporate_round",
+              "debt_financing",
+              "equity_crowdfunding",
+              "grant",
+              "initial_coin_offering",
+              "non_equity_assistance",
+              "post_ipo_debt",
+              "post_ipo_equity",
+              "post_ipo_secondary",
+              "pre_seed",
+              "private_equity",
+              "product_crowdfunding",
+              "secondary_market",
+              "seed",
+              "series_a",
+              "series_b",
+              "series_c",
+              "series_d",
+              "series_e",
+              "series_f",
+              "series_g",
+              "series_h",
+              "series_i",
+              "series_j",
+              "series_unknown",
+              "undisclosed"
+            ]
+          }
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Latest funding stages."
+    },
+    "ownership": {
+      "description": "Publicly traded or privately held.",
+      "anyOf": [
+        {
+          "type": "string",
+          "enum": [
+            "public",
+            "private"
+          ]
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "startups": {
+      "type": "boolean",
+      "description": "Startups: private companies founded in the last ten years (unless founded_after or founded_before names other years), of a startup type (not a government body, nonprofit, school or public company's subsidiary), that raised a venture round or have at most 500 employees."
+    },
+    "founded_after": {
+      "description": "Founded in this year or later.",
+      "anyOf": [
+        {
+          "type": "integer",
+          "minimum": 1600,
+          "maximum": 2100
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "founded_before": {
+      "description": "Founded in this year or earlier.",
+      "anyOf": [
+        {
+          "type": "integer",
+          "minimum": 1600,
+          "maximum": 2100
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "order_by": {
+      "anyOf": [
+        {
+          "type": "string",
+          "enum": [
+            "employees",
+            "-employees",
+            "founded",
+            "-founded"
+          ]
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "A field to sort by. A leading minus sorts it in descending order."
+    }
+  },
+  "additionalProperties": false
+}
+```
+</details>
+
+<details><summary>wire — Published output schema (JSON Schema)</summary>
+
+```json
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "total": {
+      "type": "integer",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991,
+      "description": "Matching records. It stops at 500."
+    },
+    "total_is_lower_bound": {
+      "type": "boolean",
+      "description": "true → `total` is the 500 cap, not an exact count. The card's rows go past it."
+    },
+    "applied": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "The filters the search ran, with their resolved values."
+    },
+    "notes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "card": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "title": {
+              "type": "string"
+            },
+            "description": {
+              "description": "A markdown table of the first 10 rows. 🔒 marks a premium cell.",
+              "type": "string"
+            },
+            "url": {
+              "description": "Pass it to tako_contents for the rows.",
+              "type": "string"
+            },
+            "exportable": {
+              "type": "boolean",
+              "description": "true → tako_contents returns the rows."
+            },
+            "total_rows": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            "source": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "exportable"
+          ],
+          "additionalProperties": {}
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "The list as one card. null → nothing matched."
+    },
+    "guidance": {
+      "description": "What to do about premium cells the card withholds.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "total",
+    "total_is_lower_bound",
+    "applied",
+    "notes",
+    "card"
+  ],
+  "additionalProperties": false
+}
+```
+</details>
+
 ### tako_contents
 
 **Tako: Fetch Contents**
@@ -2067,6 +2652,649 @@ Pass `relation` with a key to page one group, or `q` to filter by substring.
 
 ## About
 NVIDIA Corporation operates as a data center scale AI infrastructure company. The company operates through two segments, Compute & Networking, and Graphics. The Compute & Networking segment provides data center accelerated computing and networking platforms, artificial intelligence solutions and sof…
+```
+</details>
+
+### tako_people_search
+
+**Tako: People Search**
+
+- Listed by default on: none (opt-in on `/mcp`)
+- Runs anonymously (on `/mcp`): no (answers with sign-in instructions)
+
+Description:
+
+Screen employees by role, place and employer. Returns `total`, the filters `applied`, `notes`, `unresolved`, `failed` and one list card.
+
+Use to build a list of people from filters, such as heads of sales at Series B startups in Texas.
+
+Card `description` previews 10 rows: name, title, department, employer, schools, in_role_since, location, linkedin_url, work_email*, phone*, personal_email*, tako_url. `tako_contents` on its `url` returns every row: those fields except schools, plus seniority, description, education, experience, registry_seats, sub_role, business_area, occupation, job_summary, skills, industry, metro, job_verified_on, twitter_url, github_url, all_emails*, all_personal_emails*, employer_{industry, tako_industries, tags, size, funding_stage, founded, location, listing}, sources. * is premium: null unless that call sets `premium: true`. `total` stops at 500, and `total_is_lower_bound` says when.
+
+Parameters:
+
+| Name | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `role` | array | no |  | Title, seniority or function phrases, such as 'head of sales'. |
+| `company_ids` | array | no |  | Employer ids, such as the `match_id` of a matched company. |
+| `company_domains` | array | no |  | Employer websites. |
+| `person_country` | string | no |  | Where the person is: ISO 3166-1 alpha-2 code or English name. |
+| `person_region` | string | no |  | Where the person is: state or province. |
+| `person_metro` | string | no |  | Where the person is: metropolitan area. |
+| `person_town` | string | no |  | Needs person_country or person_region beside it. |
+| `company_industry` | string | no |  | The employer's industry: a name, alias or id, such as fintech. `applied` shows what it was read as. |
+| `company_min_employees` | integer | no |  | The employer's fewest employees. |
+| `company_max_employees` | integer | no |  | The employer's most employees. |
+| `company_funding_stages` | array | no |  | The employer's latest funding stages. |
+| `company_startups` | boolean | no |  | Employers that are startups: private companies founded in the last ten years, of a startup type, that raised a venture round or have at most 500 employees. |
+| `linkedin_urls` | array | no |  | LinkedIn profile URLs. It narrows a search, so set another filter beside it. |
+| `emails` | array | no |  | Email addresses. It narrows a search, so set another filter beside it. |
+| `phones` | array | no |  | Phone numbers. It narrows a search, so set another filter beside it. |
+
+Fixed request inputs (the caller cannot change these):
+
+_none_
+
+Annotations:
+
+- `/mcp`: title: Tako: People Search; readOnlyHint: true; destructiveHint: false; idempotentHint: true; openWorldHint: true
+- `/mcp/chatgpt`: title: Tako: People Search; readOnlyHint: true; destructiveHint: false; idempotentHint: true; openWorldHint: true
+
+<details><summary>wire — Published input schema (JSON Schema)</summary>
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "role": {
+      "anyOf": [
+        {
+          "maxItems": 20,
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Title, seniority or function phrases, such as 'head of sales'."
+    },
+    "company_ids": {
+      "description": "Employer ids, such as the `match_id` of a matched company.",
+      "anyOf": [
+        {
+          "maxItems": 100,
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "company_domains": {
+      "anyOf": [
+        {
+          "maxItems": 100,
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Employer websites."
+    },
+    "person_country": {
+      "description": "Where the person is: ISO 3166-1 alpha-2 code or English name.",
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "person_region": {
+      "description": "Where the person is: state or province.",
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "person_metro": {
+      "description": "Where the person is: metropolitan area.",
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "person_town": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Needs person_country or person_region beside it."
+    },
+    "company_industry": {
+      "description": "The employer's industry: a name, alias or id, such as fintech. `applied` shows what it was read as.",
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "company_min_employees": {
+      "description": "The employer's fewest employees.",
+      "anyOf": [
+        {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "company_max_employees": {
+      "description": "The employer's most employees.",
+      "anyOf": [
+        {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "company_funding_stages": {
+      "anyOf": [
+        {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "angel",
+              "convertible_note",
+              "corporate_round",
+              "debt_financing",
+              "equity_crowdfunding",
+              "grant",
+              "initial_coin_offering",
+              "non_equity_assistance",
+              "post_ipo_debt",
+              "post_ipo_equity",
+              "post_ipo_secondary",
+              "pre_seed",
+              "private_equity",
+              "product_crowdfunding",
+              "secondary_market",
+              "seed",
+              "series_a",
+              "series_b",
+              "series_c",
+              "series_d",
+              "series_e",
+              "series_f",
+              "series_g",
+              "series_h",
+              "series_i",
+              "series_j",
+              "series_unknown",
+              "undisclosed"
+            ]
+          }
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "The employer's latest funding stages."
+    },
+    "company_startups": {
+      "type": "boolean",
+      "description": "Employers that are startups: private companies founded in the last ten years, of a startup type, that raised a venture round or have at most 500 employees."
+    },
+    "linkedin_urls": {
+      "description": "LinkedIn profile URLs. It narrows a search, so set another filter beside it.",
+      "anyOf": [
+        {
+          "maxItems": 50,
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "emails": {
+      "description": "Email addresses. It narrows a search, so set another filter beside it.",
+      "anyOf": [
+        {
+          "maxItems": 50,
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "phones": {
+      "description": "Phone numbers. It narrows a search, so set another filter beside it.",
+      "anyOf": [
+        {
+          "maxItems": 50,
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "additionalProperties": false
+}
+```
+</details>
+
+<details><summary>wire — Published output schema (JSON Schema)</summary>
+
+```json
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "total": {
+      "type": "integer",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991,
+      "description": "Matching records. It stops at 500."
+    },
+    "total_is_lower_bound": {
+      "type": "boolean",
+      "description": "true → `total` is the 500 cap, not an exact count. The card's rows go past it."
+    },
+    "applied": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "The filters the search ran, with their resolved values."
+    },
+    "notes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "unresolved": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Inputs that named nothing, as field=value."
+    },
+    "failed": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Inputs whose lookup failed, as field=value. Retry them; they aren't misses."
+    },
+    "card": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "title": {
+              "type": "string"
+            },
+            "description": {
+              "description": "A markdown table of the first 10 rows. 🔒 marks a premium cell.",
+              "type": "string"
+            },
+            "url": {
+              "description": "Pass it to tako_contents for the rows.",
+              "type": "string"
+            },
+            "exportable": {
+              "type": "boolean",
+              "description": "true → tako_contents returns the rows."
+            },
+            "total_rows": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            "source": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "exportable"
+          ],
+          "additionalProperties": {}
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "The list as one card. null → nothing matched."
+    },
+    "guidance": {
+      "description": "What to do about premium cells the card withholds.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "total",
+    "total_is_lower_bound",
+    "applied",
+    "notes",
+    "unresolved",
+    "failed",
+    "card"
+  ],
+  "additionalProperties": false
+}
+```
+</details>
+
+### tako_person_enrich
+
+**Tako: Person Enrich**
+
+- Listed by default on: none (opt-in on `/mcp`)
+- Runs anonymously (on `/mcp`): no (answers with sign-in instructions)
+
+Description:
+
+Match up to 25 known people by email, phone, LinkedIn profile or name. Returns per-item `results` and one list card of matches.
+
+Use to look up known people, such as a contact list.
+
+`results` has one entry per item, in order: status (matched, no_match, failed), match_id, confidence (exact, high, ambiguous), matched_on, alternates, unresolved, failed. Card `description` previews 10 rows: name, title, department, employer, schools, in_role_since, location, linkedin_url, work_email*, phone*, personal_email*, tako_url. `tako_contents` on its `url` returns every row: those fields except schools, plus seniority, description, education, experience, registry_seats, sub_role, business_area, occupation, job_summary, skills, industry, metro, job_verified_on, twitter_url, github_url, all_emails*, all_personal_emails*, employer_{industry, tako_industries, tags, size, funding_stage, founded, location, listing}, sources. * is premium: null unless that call sets `premium: true`.
+
+Parameters:
+
+| Name | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `items` | array | yes |  | The people to match, 1 to 25. Each needs `email`, `phone`, `linkedin_url` or `name`. The first three match exactly, and `name` by score. `company_domain`, `company_name` and `title` are hints for a name. Give a phone with its country code. |
+
+Fixed request inputs (the caller cannot change these):
+
+_none_
+
+Annotations:
+
+- `/mcp`: title: Tako: Person Enrich; readOnlyHint: true; destructiveHint: false; idempotentHint: true; openWorldHint: true
+- `/mcp/chatgpt`: title: Tako: Person Enrich; readOnlyHint: true; destructiveHint: false; idempotentHint: true; openWorldHint: true
+
+<details><summary>wire — Published input schema (JSON Schema)</summary>
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "items": {
+      "minItems": 1,
+      "maxItems": 25,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The person's name, matched by the scored lookup."
+          },
+          "linkedin_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A LinkedIn profile URL, matched exactly."
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "An email address, matched exactly."
+          },
+          "phone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A phone number, matched exactly."
+          },
+          "company_domain": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A hint for a name: the employer's website."
+          },
+          "company_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A hint for a name: the employer's name."
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A hint for a name: the person's job title."
+          }
+        },
+        "additionalProperties": false
+      },
+      "description": "The people to match, 1 to 25. Each needs `email`, `phone`, `linkedin_url` or `name`. The first three match exactly, and `name` by score. `company_domain`, `company_name` and `title` are hints for a name. Give a phone with its country code."
+    }
+  },
+  "required": [
+    "items"
+  ],
+  "additionalProperties": false
+}
+```
+</details>
+
+<details><summary>wire — Published output schema (JSON Schema)</summary>
+
+```json
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "index": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991,
+            "description": "The item's position in `items`, from 0."
+          },
+          "input": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "The item as sent."
+          },
+          "status": {
+            "type": "string",
+            "description": "matched, no_match (an answer, not an error) or failed (retry the item)."
+          },
+          "match_id": {
+            "type": "string"
+          },
+          "confidence": {
+            "description": "exact, high, or ambiguous: others match nearly as well.",
+            "type": "string"
+          },
+          "matched_on": {
+            "type": "string"
+          },
+          "alternates": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991,
+            "description": "Other near matches, up to 3."
+          },
+          "unresolved": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Inputs that named nothing, as field=value."
+          },
+          "failed": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Inputs whose lookup failed. Retry them."
+          }
+        },
+        "required": [
+          "index",
+          "input",
+          "status",
+          "alternates",
+          "unresolved",
+          "failed"
+        ],
+        "additionalProperties": {}
+      },
+      "description": "One result per item, in `items` order."
+    },
+    "card": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "title": {
+              "type": "string"
+            },
+            "description": {
+              "description": "A markdown table of the first 10 rows. 🔒 marks a premium cell.",
+              "type": "string"
+            },
+            "url": {
+              "description": "Pass it to tako_contents for the rows.",
+              "type": "string"
+            },
+            "exportable": {
+              "type": "boolean",
+              "description": "true → tako_contents returns the rows."
+            },
+            "total_rows": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            "source": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "exportable"
+          ],
+          "additionalProperties": {}
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "The matches as one card, in `items` order. null → nothing matched."
+    },
+    "guidance": {
+      "description": "What to do about premium cells the card withholds.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "results",
+    "card"
+  ],
+  "additionalProperties": false
+}
 ```
 </details>
 
