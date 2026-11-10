@@ -156,6 +156,85 @@
       }
     },
     {
+      "name": "tako_company_enrich",
+      "description": "Match up to 25 known companies by website, LinkedIn page or name. Returns per-item `results` and one list card of matches.\n\nUse to look up companies you can name, such as a list of domains.\n\n`results` has one entry per item, in order: status (matched, no_match, failed), match_id, confidence (exact, high, ambiguous), matched_on, alternates, unresolved, failed. Card `description` previews 10 rows: name, status, estimated_revenue*, headcount, industry, funding_stage, total_raised, last_funding_date, investors, location, website, tako_url. `tako_contents` on its `url` returns every row: those fields except last_funding_date and investors, plus company_type, linkedin_followers*, linkedin_url, ticker, established, parent*, subsidiaries*, description, headcount_range, tags, metro, naics_codes, postcode, funding_round_count, funding_rounds, sic_codes, also_known_as, other_domains, street_address, twitter_url, facebook_url, sources. * is premium: null unless that call sets `premium: true`.",
+      "parameters": {
+        "items": {
+          "type": "array",
+          "description": "The companies to match, 1 to 25. Each needs `domain`, `linkedin_url` or `name`. `domain` and `linkedin_url` match exactly, and `name` by score. `city`, `region`, `country` and `industry` rank a name's matches and never exclude one.",
+          "required": true
+        }
+      },
+      "annotations": {
+        "title": "Tako: Company Enrich",
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "tako_company_search",
+      "description": "Screen active companies by industry, place, size, founding year, funding stage and ownership. Returns `total`, the filters `applied`, `notes` and one list card.\n\nUse to build a list of companies from filters, such as Series B enterprise SaaS companies in the US.\n\nCard `description` previews 10 rows: name, status, estimated_revenue*, headcount, industry, funding_stage, total_raised, last_funding_date, investors, location, website, tako_url. `tako_contents` on its `url` returns every row: those fields except last_funding_date and investors, plus company_type, linkedin_followers*, linkedin_url, ticker, established, parent*, subsidiaries*, description, headcount_range, tags, metro, naics_codes, postcode, funding_round_count, funding_rounds, sic_codes, also_known_as, other_domains, street_address, twitter_url, facebook_url, sources. * is premium: null unless that call sets `premium: true`. `total` stops at 500, and `total_is_lower_bound` says when. It can't filter or sort by revenue.",
+      "parameters": {
+        "country": {
+          "type": "string",
+          "description": "ISO 3166-1 alpha-2 code or English name."
+        },
+        "region": {
+          "type": "string",
+          "description": "State or province, as a name or an ISO 3166-2 code."
+        },
+        "town": {
+          "type": "string",
+          "description": "Town of the headquarters, or of the registered office when there's no headquarters. Needs country or region beside it."
+        },
+        "min_employees": {
+          "type": "integer",
+          "description": "Fewest employees, on People Data Labs' estimate."
+        },
+        "max_employees": {
+          "type": "integer",
+          "description": "Most employees, on People Data Labs' estimate."
+        },
+        "industry": {
+          "type": "string",
+          "description": "An industry name, alias or id, such as fintech or aerospace and defense. `applied` shows what it was read as."
+        },
+        "funding_stages": {
+          "type": "array",
+          "description": "Latest funding stages."
+        },
+        "ownership": {
+          "type": "string",
+          "description": "Publicly traded or privately held."
+        },
+        "startups": {
+          "type": "boolean",
+          "description": "Startups only: private companies founded in the last ten years (unless the founded filters name other years), of a startup type, that raised a venture round or have at most 500 employees."
+        },
+        "founded_after": {
+          "type": "integer",
+          "description": "Founded in this year or later."
+        },
+        "founded_before": {
+          "type": "integer",
+          "description": "Founded in this year or earlier."
+        },
+        "order_by": {
+          "type": "string",
+          "description": "A field to sort by. A leading minus sorts it in descending order."
+        }
+      },
+      "annotations": {
+        "title": "Tako: Company Search",
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      }
+    },
+    {
       "name": "tako_contents",
       "description": "Fetch the full content behind a url: a web page's text, or an exportable Tako card's data rows. Batch up to 10 urls in one call — each fails on its own.\n\nFetch only cards that `tako_search` marked `exportable: true`. Set `max_rows` when the recent rows are enough. If a page is long, such as a filing or an annual report, set `query` to a question to get back only the passages that answer it.\n\nBest for: reading one source in full — a page you need to quote, or the rows behind a card you need to compute over.",
       "parameters": {
@@ -258,6 +337,97 @@
       },
       "annotations": {
         "title": "Tako: Graph Related",
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "tako_people_search",
+      "description": "Screen employees by role, place and employer. Returns `total`, the filters `applied`, `notes`, `unresolved`, `failed` and one list card.\n\nUse to build a list of people from filters, such as heads of sales at Series B startups in Texas.\n\nCard `description` previews 10 rows: name, title, department, employer, schools, in_role_since, location, linkedin_url, work_email*, phone*, personal_email*, tako_url. `tako_contents` on its `url` returns every row: those fields except schools, plus seniority, description, education, experience, registry_seats, sub_role, business_area, occupation, job_summary, skills, industry, metro, job_verified_on, twitter_url, github_url, all_emails*, all_personal_emails*, employer_{industry, tako_industries, tags, size, funding_stage, founded, location, listing}, sources. * is premium: null unless that call sets `premium: true`. `total` stops at 500, and `total_is_lower_bound` says when.",
+      "parameters": {
+        "role": {
+          "type": "array",
+          "description": "Title, seniority or function phrases, such as 'head of sales'."
+        },
+        "company_ids": {
+          "type": "array",
+          "description": "Employer ids, such as the `match_id` of a matched company."
+        },
+        "company_domains": {
+          "type": "array",
+          "description": "Employer websites."
+        },
+        "person_country": {
+          "type": "string",
+          "description": "Where the person is: ISO 3166-1 alpha-2 code or English name."
+        },
+        "person_region": {
+          "type": "string",
+          "description": "Where the person is: state or province."
+        },
+        "person_metro": {
+          "type": "string",
+          "description": "Where the person is: metropolitan area."
+        },
+        "person_town": {
+          "type": "string",
+          "description": "Where the person is: town. Needs person_country or person_region beside it."
+        },
+        "company_industry": {
+          "type": "string",
+          "description": "The employer's industry: a name, alias or id, such as fintech. `applied` shows what it was read as."
+        },
+        "company_min_employees": {
+          "type": "integer",
+          "description": "The employer's fewest employees."
+        },
+        "company_max_employees": {
+          "type": "integer",
+          "description": "The employer's most employees."
+        },
+        "company_funding_stages": {
+          "type": "array",
+          "description": "The employer's latest funding stages."
+        },
+        "company_startups": {
+          "type": "boolean",
+          "description": "Employers that are startups only."
+        },
+        "linkedin_urls": {
+          "type": "array",
+          "description": "LinkedIn profile URLs. It narrows a search, so set another filter beside it."
+        },
+        "emails": {
+          "type": "array",
+          "description": "Email addresses. It narrows a search, so set another filter beside it."
+        },
+        "phones": {
+          "type": "array",
+          "description": "Phone numbers. It narrows a search, so set another filter beside it."
+        }
+      },
+      "annotations": {
+        "title": "Tako: People Search",
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "tako_person_enrich",
+      "description": "Match up to 25 known people by email, phone, LinkedIn profile or name. Returns per-item `results` and one list card of matches.\n\nUse to look up known people, such as a contact list.\n\n`results` has one entry per item, in order: status (matched, no_match, failed), match_id, confidence (exact, high, ambiguous), matched_on, alternates, unresolved, failed. Card `description` previews 10 rows: name, title, department, employer, schools, in_role_since, location, linkedin_url, work_email*, phone*, personal_email*, tako_url. `tako_contents` on its `url` returns every row: those fields except schools, plus seniority, description, education, experience, registry_seats, sub_role, business_area, occupation, job_summary, skills, industry, metro, job_verified_on, twitter_url, github_url, all_emails*, all_personal_emails*, employer_{industry, tako_industries, tags, size, funding_stage, founded, location, listing}, sources. * is premium: null unless that call sets `premium: true`.",
+      "parameters": {
+        "items": {
+          "type": "array",
+          "description": "The people to match, 1 to 25. Each needs `email`, `phone`, `linkedin_url` or `name`. The first three match exactly, and `name` by score. `company_domain`, `company_name` and `title` are hints for a name. Give a phone with its country code.",
+          "required": true
+        }
+      },
+      "annotations": {
+        "title": "Tako: Person Enrich",
         "readOnlyHint": true,
         "destructiveHint": false,
         "idempotentHint": true,

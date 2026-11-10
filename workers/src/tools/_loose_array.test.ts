@@ -199,14 +199,24 @@ describe("registry guard: top-level array inputs", () => {
    * Bump this deliberately: a new array input means wrapping it in
    * `looseArray` and raising the count in the same commit.
    */
-  it("finds all 5 known array-typed input fields", () => {
+  it("finds all 15 known array-typed input fields", () => {
     // tako_answer's two dropped with the tool. tako_search_advanced adds none:
     // its array fields (data.node_ids, web.include_domains, …) sit INSIDE the
     // source blocks, and this guard walks top-level inputs only.
     expect(found.map((f) => `${f.tool.name}.${f.field}`).sort()).toEqual([
       "tako_agent.sources",
       "tako_company_agent.sources",
+      "tako_company_enrich.items",
+      "tako_company_search.funding_stages",
       "tako_contents.urls",
+      "tako_people_search.company_domains",
+      "tako_people_search.company_funding_stages",
+      "tako_people_search.company_ids",
+      "tako_people_search.emails",
+      "tako_people_search.linkedin_urls",
+      "tako_people_search.phones",
+      "tako_people_search.role",
+      "tako_person_enrich.items",
       "tako_search.sources",
       "tako_visualize.components",
     ]);
@@ -272,6 +282,10 @@ const REQUIRED_SIBLINGS: Record<string, Record<string, unknown>> = {
   tako_agent: { query: "q" },
   tako_contents: {},
   tako_visualize: {},
+  tako_company_search: {},
+  tako_people_search: {},
+  tako_company_enrich: {},
+  tako_person_enrich: {},
 };
 
 /** A valid JSON-text payload per wrapped field. */
@@ -284,6 +298,16 @@ const VALID_JSON_TEXT: Record<string, string> = {
   "tako_agent.sources": '["data","web"]',
   "tako_contents.urls": '["https://trytako.com/charts/c1"]',
   "tako_visualize.components": JSON.stringify([VALID_COMPONENT]),
+  "tako_company_search.funding_stages": '["series_a","series_b"]',
+  "tako_people_search.role": '["head of sales"]',
+  "tako_people_search.company_ids": '["co_1"]',
+  "tako_people_search.company_domains": '["stripe.com"]',
+  "tako_people_search.company_funding_stages": '["seed"]',
+  "tako_people_search.linkedin_urls": '["https://www.linkedin.com/in/jo-doe"]',
+  "tako_people_search.emails": '["a@b.co"]',
+  "tako_people_search.phones": '["+1 415 555 0100"]',
+  "tako_company_enrich.items": '[{"domain":"stripe.com"}]',
+  "tako_person_enrich.items": '[{"email":"a@b.co"}]',
 };
 
 /**

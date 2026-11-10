@@ -5,6 +5,7 @@ import {
   SERVER_INSTRUCTIONS,
   serverInstructionsFor,
 } from "../instructions.js";
+import { COMPANY_LIST_FIELDS, describeListFields, PERSON_LIST_FIELDS } from "./_enrich_fields.js";
 import { TOOL_REGISTRY } from "./_registry.js";
 import { isToolOnSurface, outputSchemaForSurface, resolveToolSet } from "./_surface.js";
 import type { Surface } from "../surface.js";
@@ -112,7 +113,26 @@ function inputParamNames(tool: (typeof TOOL_REGISTRY)[number]): Set<string> {
  * single-word phantoms (`effort`, `strict`, `mode`, `count`) are NOT caught here.
  * `strict` is covered by _pin_form.test.ts; the rest are not covered anywhere.
  */
+/**
+ * The field lists the enrichment tool descriptions build from
+ * `_enrich_fields.ts`. They name the COLUMNS a card returns, and a column can
+ * share its name with another tool's parameter: `linkedin_url` is a column of
+ * both list cards and an input of the two enrich tools. Naming a returned
+ * column tells the model nothing about what to send, so the parameter check
+ * reads a description without these generated sentences. Only the exact
+ * generated text is removed, so a parameter named anywhere else still fails.
+ */
+const RETURNED_FIELD_LISTS = [COMPANY_LIST_FIELDS, PERSON_LIST_FIELDS].map(describeListFields);
+const withoutReturnedFieldLists = (text: string): string =>
+  RETURNED_FIELD_LISTS.reduce((rest, list) => rest.split(list).join(""), text);
+
 describe("no listed tool names a parameter that is off its surface", () => {
+  it("still sees a parameter named outside a returned-field list", () => {
+    const list = RETURNED_FIELD_LISTS[0] ?? "";
+    expect(list).toContain("linkedin_url");
+    expect(withoutReturnedFieldLists(`${list} Send linkedin_url.`)).toBe(" Send linkedin_url.");
+  });
+
   const multiWordParams = new Set<string>();
   for (const tool of TOOL_REGISTRY) {
     for (const param of inputParamNames(tool)) {
@@ -170,7 +190,7 @@ describe("no listed tool names a parameter that is off its surface", () => {
 
       it(`${tool.name} on ${surface}${via} names only parameters reachable there`, () => {
         const named = unreachable.filter((p) =>
-          new RegExp(`\\b${p}\\b`).test(publishedText(tool, surface)),
+          new RegExp(`\\b${p}\\b`).test(withoutReturnedFieldLists(publishedText(tool, surface))),
         );
         expect(named, `${tool.name} names off-surface parameters`).toEqual([]);
       });

@@ -29,6 +29,11 @@
  *        c. `tako_contents {urls}` — a card's rows in BOTH channels, the same card as a download link, then a web url's page text (read-only)
  *        c2. `tako_company_agent` at `effort: "low"` — starts one billable
  *            company-agent run, which the smoke doesn't cancel
+ *        c3. `tako_company_search` and `tako_people_search` — one billed
+ *            search each, then one row of each card through `tako_contents`.
+ *            Fails when the card's columns differ from the lists in
+ *            `_enrich_fields.ts`, which the tool descriptions are built from.
+ *            Soft-warns when the smoke account can't use the enrichment API.
  *        d. `tako_visualize`              — creates a card (charges 1 credit)
  *   6. Native-card proxy on the card step 5d just created — all three of its
  *      routes, since the feature is only as live as its weakest one:
@@ -100,6 +105,13 @@ import { EMBED_DATA_PREFIX } from "../src/embed_proxy.js";
 // assert kept the deploy smoke red for 17 days after PR #210 removed it.
 import type { ProjectedCard } from "../src/tools/_search_results.js";
 import { LIVE_CARD_RESOURCE_URI } from "../src/tools/_chart_widget.js";
+import {
+  COMPANY_LIST_FIELDS,
+  type ListCardFields,
+  PERSON_LIST_FIELDS,
+  previewLabels,
+  rowColumns,
+} from "../src/tools/_enrich_fields.js";
 import { TOOL_REGISTRY } from "../src/tools/_registry.js";
 import takoVisualize from "../src/tools/tako_visualize.js";
 import { skillsForSurface } from "../src/skills.js";
@@ -150,6 +162,71 @@ async function callOk(
     );
   }
   return result;
+}
+
+/** The names in one list and not the other, for a drift message. */
+function listDiff(expected: readonly string[], actual: readonly string[]): string {
+  const missing = expected.filter((name) => !actual.includes(name));
+  const added = actual.filter((name) => !expected.includes(name));
+  return `the API dropped [${missing.join(", ")}] and added [${added.join(", ")}]`;
+}
+
+/** The header cells of the first markdown table in a card description. */
+function previewHeader(description: string): string[] {
+  const header = description.split("\n").find((line) => line.startsWith("| "));
+  if (header === undefined) return [];
+  return header.split("|").map((cell) => cell.trim()).filter((cell) => cell !== "");
+}
+
+/**
+ * Run one enrichment search and compare its card's columns with the constants
+ * the tool descriptions are built from: the preview table in the result, then
+ * the row columns `tako_contents` returns. Each description tells a model
+ * which fields the tool returns, so a column the API renamed, added or dropped
+ * has to fail here until `_enrich_fields.ts` follows.
+ */
+async function assertEnrichFieldsMatch(
+  client: Client,
+  tool: string,
+  args: Record<string, unknown>,
+  fields: ListCardFields,
+): Promise<void> {
+  const result = await client.callTool({ name: tool, arguments: args });
+  const status = (result._meta as { "tako/error"?: { status?: number } } | undefined)?.["tako/error"]?.status;
+  if (result.isError && status === 403) {
+    console.warn(
+      `[warn] ${tool} → 403: this account can't use the enrichment API, so the ${fields.record} field lists are unchecked`,
+    );
+    return;
+  }
+  assert(!result.isError, `${tool} returned isError=true: ${JSON.stringify(result.content).slice(0, 400)}`);
+  const card = (result.structuredContent as { card?: { url?: string; description?: string } | null } | undefined)
+    ?.card;
+  assert(
+    typeof card?.url === "string" && typeof card.description === "string",
+    `${tool} returned no card with a url and a description: ${JSON.stringify(result.structuredContent)?.slice(0, 200)}`,
+  );
+  const expectedPreview = previewLabels(fields);
+  const preview = previewHeader(card.description);
+  // The table leaves out a column that's empty on every shown row, so the
+  // header is the expected labels in order, with any of them missing.
+  const kept = expectedPreview.filter((label) => preview.includes(label));
+  assert(
+    preview.length > 0 && preview.join("|") === kept.join("|"),
+    `${tool} preview table drifted from _enrich_fields.ts (${fields.record}.preview): ${listDiff(kept, preview)}`,
+  );
+  const contents = await callOk(client, "tako_contents", { urls: [card.url], max_rows: 1 });
+  const columns = (
+    contents.structuredContent as { results?: Array<{ rows?: { columns?: string[] } }> } | undefined
+  )?.results?.[0]?.rows?.columns;
+  assert(Array.isArray(columns), `tako_contents returned no columns for the ${tool} card`);
+  const expectedColumns = rowColumns(fields);
+  assert(
+    columns.join("|") === expectedColumns.join("|"),
+    `${tool} row columns drifted from _enrich_fields.ts (${fields.record}.columns or .cardOnly): ${listDiff(expectedColumns, columns)}. ` +
+      `Update the constants, which rebuild the four enrichment tool descriptions, then run registry:gen.`,
+  );
+  ok(`${tool} → ${preview.length} preview columns and ${columns.length} row columns match _enrich_fields.ts`);
 }
 
 console.log(`smoke target: ${baseUrl}`);
@@ -379,7 +456,7 @@ try {
   // with a useful diff if a registry change drops one of them. We don't
   // assert on the *full* tool list because the surface evolves (e.g.
   // explore_knowledge_graph removal in PR #47).
-  const requiredTools = ["tako_search", "tako_search_advanced", "tako_contents", "tako_available_data", "tako_visualize", "tako_graph_related"];
+  const requiredTools = ["tako_search", "tako_search_advanced", "tako_contents", "tako_available_data", "tako_visualize", "tako_graph_related", "tako_company_search", "tako_people_search", "tako_company_enrich", "tako_person_enrich"];
   for (const required of requiredTools) {
     if (!toolNames.includes(required)) {
       fail(
@@ -648,6 +725,20 @@ try {
     `tako_company_agent run_id expected a company_run_ prefix, got ${JSON.stringify(caStructured.run_id)}`,
   );
   ok(`tako_company_agent start → ${caStructured.status} (${caStructured.run_id})`);
+
+  // ----- c3) enrichment field lists (two billed searches, two one-row fetches) ----
+  await assertEnrichFieldsMatch(
+    client,
+    "tako_company_search",
+    { country: "US", funding_stages: ["series_b"] },
+    COMPANY_LIST_FIELDS,
+  );
+  await assertEnrichFieldsMatch(
+    client,
+    "tako_people_search",
+    { role: ["chief financial officer"], person_country: "US" },
+    PERSON_LIST_FIELDS,
+  );
 
   // ----- d) tako_visualize canary (creates a tiny card; CHARGES 1 CREDIT) ----
   const tvResult = await callOk(client, "tako_visualize", {
