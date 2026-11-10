@@ -105,7 +105,7 @@ describe("tako_people_search", () => {
     expect(plain).not.toMatch(/tako_person_enrich|\/api\//);
   });
 
-  it("passes a 503's advice through instead of a bare status", async () => {
+  it("leaves a 503 to the default mapping: a retry, and no body", async () => {
     mockFetchSequence([
       jsonResponse(503, {
         error_message: "The filters' lookups didn't finish in time. Pass fewer values and try again.",
@@ -113,7 +113,9 @@ describe("tako_people_search", () => {
       }),
     ]);
     const text = await errorTextOf(() => takoPeopleSearch.handler({ role: ["cfo"] }, CTX));
-    expect(text).toBe("The filters' lookups didn't finish in time. Pass fewer values and try again.");
+    expect(text).toBe(
+      "Django returned 503 for POST /api/v1/people/search This is a transient upstream condition, not a bad request: retry the SAME call once after a short backoff before changing approach.",
+    );
   });
 
   it("says in its description what it returns", () => {

@@ -185,6 +185,48 @@ describe("tako_contents handler", () => {
     expect(out.results[1]?.error).not.toBe("Django returned 404 for POST /api/v1/contents/.");
   });
 
+  it("a failed url in a batch says why, from the API's own error_message", async () => {
+    vi.mocked(djangoPost)
+      .mockResolvedValueOnce(page("page A"))
+      .mockRejectedValueOnce(
+        new DjangoHttpError({
+          path: "/api/v1/contents/", method: "POST", status: 422,
+          body: JSON.stringify({ error_message: "This url can't be fetched.", error_type: "BAD_REQUEST" }),
+        }),
+      );
+    const out = await tool.handler({ urls: ["https://a", "https://b"] }, ctx);
+    expect(out.results[1]?.error).toBe("Fetch failed (422: This url can't be fetched.).");
+  });
+
+  it("a billing refusal on one url of a batch keeps the backend's remedy out of the result", async () => {
+    // The remedy is commerce copy. `mcp.ts` shows it only where the surface
+    // allows, and only when the whole call fails; an item error is on every
+    // surface, `/mcp/chatgpt` included.
+    vi.mocked(djangoPost)
+      .mockResolvedValueOnce(page("page A"))
+      .mockRejectedValueOnce(
+        new DjangoHttpError({
+          path: "/api/v1/contents/", method: "POST", status: 402,
+          body: JSON.stringify({
+            error_type: "PAYMENT_REQUIRED",
+            error_message: "Your API credit balance is exhausted. Add credits to continue.",
+          }),
+        }),
+      )
+      .mockRejectedValueOnce(
+        new DjangoHttpError({
+          path: "/api/v1/contents/", method: "POST", status: 429,
+          body: JSON.stringify({
+            error_type: "BUDGET_EXCEEDED",
+            error_message: "This API key has used its spend budget. Upgrade your plan at https://tako.com/pricing.",
+          }),
+        }),
+      );
+    const out = await tool.handler({ urls: ["https://a", "https://b", "https://c"] }, ctx);
+    expect(out.results[1]?.error).toBe("Fetch failed (402).");
+    expect(out.results[2]?.error).toBe("Fetch failed (429).");
+  });
+
   it("a 401 failing alongside other urls in a batch does not leak the internal request path", async () => {
     vi.mocked(djangoPost)
       .mockResolvedValueOnce(page("page A"))

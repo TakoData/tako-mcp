@@ -1551,12 +1551,12 @@ Parameters:
 | `country` | string | no |  | ISO 3166-1 alpha-2 code or English name. |
 | `region` | string | no |  | State or province, as a name or an ISO 3166-2 code. |
 | `town` | string | no |  | Town of the headquarters, or of the registered office when there's no headquarters. Needs country or region beside it. |
-| `min_employees` | integer | no |  | Fewest employees, on People Data Labs' estimate. |
-| `max_employees` | integer | no |  | Most employees, on People Data Labs' estimate. |
+| `min_employees` | integer | no |  | People Data Labs' employee estimate. |
+| `max_employees` | integer | no |  | People Data Labs' employee estimate. |
 | `industry` | string | no |  | An industry name, alias or id, such as fintech or aerospace and defense. `applied` shows what it was read as. |
 | `funding_stages` | array | no |  | Latest funding stages. |
 | `ownership` | string | no |  | Publicly traded or privately held. |
-| `startups` | boolean | no |  | Startups only: private companies founded in the last ten years (unless the founded filters name other years), of a startup type, that raised a venture round or have at most 500 employees. |
+| `startups` | boolean | no |  | Startups: private companies founded in the last ten years (unless founded_after or founded_before names other years), of a startup type (not a government body, nonprofit, school or public company's subsidiary), that raised a venture round or have at most 500 employees. |
 | `founded_after` | integer | no |  | Founded in this year or later. |
 | `founded_before` | integer | no |  | Founded in this year or earlier. |
 | `order_by` | string | no |  | A field to sort by. A leading minus sorts it in descending order. |
@@ -1621,7 +1621,7 @@ Annotations:
           "type": "null"
         }
       ],
-      "description": "Fewest employees, on People Data Labs' estimate."
+      "description": "People Data Labs' employee estimate."
     },
     "max_employees": {
       "anyOf": [
@@ -1634,9 +1634,10 @@ Annotations:
           "type": "null"
         }
       ],
-      "description": "Most employees, on People Data Labs' estimate."
+      "description": "People Data Labs' employee estimate."
     },
     "industry": {
+      "description": "An industry name, alias or id, such as fintech or aerospace and defense. `applied` shows what it was read as.",
       "anyOf": [
         {
           "type": "string"
@@ -1644,8 +1645,7 @@ Annotations:
         {
           "type": "null"
         }
-      ],
-      "description": "An industry name, alias or id, such as fintech or aerospace and defense. `applied` shows what it was read as."
+      ]
     },
     "funding_stages": {
       "anyOf": [
@@ -1692,6 +1692,7 @@ Annotations:
       "description": "Latest funding stages."
     },
     "ownership": {
+      "description": "Publicly traded or privately held.",
       "anyOf": [
         {
           "type": "string",
@@ -1703,14 +1704,14 @@ Annotations:
         {
           "type": "null"
         }
-      ],
-      "description": "Publicly traded or privately held."
+      ]
     },
     "startups": {
       "type": "boolean",
-      "description": "Startups only: private companies founded in the last ten years (unless the founded filters name other years), of a startup type, that raised a venture round or have at most 500 employees."
+      "description": "Startups: private companies founded in the last ten years (unless founded_after or founded_before names other years), of a startup type (not a government body, nonprofit, school or public company's subsidiary), that raised a venture round or have at most 500 employees."
     },
     "founded_after": {
+      "description": "Founded in this year or later.",
       "anyOf": [
         {
           "type": "integer",
@@ -1720,10 +1721,10 @@ Annotations:
         {
           "type": "null"
         }
-      ],
-      "description": "Founded in this year or later."
+      ]
     },
     "founded_before": {
+      "description": "Founded in this year or earlier.",
       "anyOf": [
         {
           "type": "integer",
@@ -1733,8 +1734,7 @@ Annotations:
         {
           "type": "null"
         }
-      ],
-      "description": "Founded in this year or earlier."
+      ]
     },
     "order_by": {
       "anyOf": [
@@ -2680,12 +2680,12 @@ Parameters:
 | `person_country` | string | no |  | Where the person is: ISO 3166-1 alpha-2 code or English name. |
 | `person_region` | string | no |  | Where the person is: state or province. |
 | `person_metro` | string | no |  | Where the person is: metropolitan area. |
-| `person_town` | string | no |  | Where the person is: town. Needs person_country or person_region beside it. |
+| `person_town` | string | no |  | Needs person_country or person_region beside it. |
 | `company_industry` | string | no |  | The employer's industry: a name, alias or id, such as fintech. `applied` shows what it was read as. |
 | `company_min_employees` | integer | no |  | The employer's fewest employees. |
 | `company_max_employees` | integer | no |  | The employer's most employees. |
 | `company_funding_stages` | array | no |  | The employer's latest funding stages. |
-| `company_startups` | boolean | no |  | Employers that are startups only. |
+| `company_startups` | boolean | no |  | Employers that are startups: private companies founded in the last ten years, of a startup type, that raised a venture round or have at most 500 employees. |
 | `linkedin_urls` | array | no |  | LinkedIn profile URLs. It narrows a search, so set another filter beside it. |
 | `emails` | array | no |  | Email addresses. It narrows a search, so set another filter beside it. |
 | `phones` | array | no |  | Phone numbers. It narrows a search, so set another filter beside it. |
@@ -2722,6 +2722,7 @@ Annotations:
       "description": "Title, seniority or function phrases, such as 'head of sales'."
     },
     "company_ids": {
+      "description": "Employer ids, such as the `match_id` of a matched company.",
       "anyOf": [
         {
           "maxItems": 100,
@@ -2733,8 +2734,7 @@ Annotations:
         {
           "type": "null"
         }
-      ],
-      "description": "Employer ids, such as the `match_id` of a matched company."
+      ]
     },
     "company_domains": {
       "anyOf": [
@@ -2752,6 +2752,7 @@ Annotations:
       "description": "Employer websites."
     },
     "person_country": {
+      "description": "Where the person is: ISO 3166-1 alpha-2 code or English name.",
       "anyOf": [
         {
           "type": "string"
@@ -2759,10 +2760,10 @@ Annotations:
         {
           "type": "null"
         }
-      ],
-      "description": "Where the person is: ISO 3166-1 alpha-2 code or English name."
+      ]
     },
     "person_region": {
+      "description": "Where the person is: state or province.",
       "anyOf": [
         {
           "type": "string"
@@ -2770,10 +2771,10 @@ Annotations:
         {
           "type": "null"
         }
-      ],
-      "description": "Where the person is: state or province."
+      ]
     },
     "person_metro": {
+      "description": "Where the person is: metropolitan area.",
       "anyOf": [
         {
           "type": "string"
@@ -2781,8 +2782,7 @@ Annotations:
         {
           "type": "null"
         }
-      ],
-      "description": "Where the person is: metropolitan area."
+      ]
     },
     "person_town": {
       "anyOf": [
@@ -2793,9 +2793,10 @@ Annotations:
           "type": "null"
         }
       ],
-      "description": "Where the person is: town. Needs person_country or person_region beside it."
+      "description": "Needs person_country or person_region beside it."
     },
     "company_industry": {
+      "description": "The employer's industry: a name, alias or id, such as fintech. `applied` shows what it was read as.",
       "anyOf": [
         {
           "type": "string"
@@ -2803,10 +2804,10 @@ Annotations:
         {
           "type": "null"
         }
-      ],
-      "description": "The employer's industry: a name, alias or id, such as fintech. `applied` shows what it was read as."
+      ]
     },
     "company_min_employees": {
+      "description": "The employer's fewest employees.",
       "anyOf": [
         {
           "type": "integer",
@@ -2816,10 +2817,10 @@ Annotations:
         {
           "type": "null"
         }
-      ],
-      "description": "The employer's fewest employees."
+      ]
     },
     "company_max_employees": {
+      "description": "The employer's most employees.",
       "anyOf": [
         {
           "type": "integer",
@@ -2829,8 +2830,7 @@ Annotations:
         {
           "type": "null"
         }
-      ],
-      "description": "The employer's most employees."
+      ]
     },
     "company_funding_stages": {
       "anyOf": [
@@ -2878,9 +2878,10 @@ Annotations:
     },
     "company_startups": {
       "type": "boolean",
-      "description": "Employers that are startups only."
+      "description": "Employers that are startups: private companies founded in the last ten years, of a startup type, that raised a venture round or have at most 500 employees."
     },
     "linkedin_urls": {
+      "description": "LinkedIn profile URLs. It narrows a search, so set another filter beside it.",
       "anyOf": [
         {
           "maxItems": 50,
@@ -2892,10 +2893,10 @@ Annotations:
         {
           "type": "null"
         }
-      ],
-      "description": "LinkedIn profile URLs. It narrows a search, so set another filter beside it."
+      ]
     },
     "emails": {
+      "description": "Email addresses. It narrows a search, so set another filter beside it.",
       "anyOf": [
         {
           "maxItems": 50,
@@ -2907,10 +2908,10 @@ Annotations:
         {
           "type": "null"
         }
-      ],
-      "description": "Email addresses. It narrows a search, so set another filter beside it."
+      ]
     },
     "phones": {
+      "description": "Phone numbers. It narrows a search, so set another filter beside it.",
       "anyOf": [
         {
           "maxItems": 50,
@@ -2922,8 +2923,7 @@ Annotations:
         {
           "type": "null"
         }
-      ],
-      "description": "Phone numbers. It narrows a search, so set another filter beside it."
+      ]
     }
   },
   "additionalProperties": false

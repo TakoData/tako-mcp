@@ -88,6 +88,34 @@ tools:
       token to the server URL's ?tools= allowlist. The allowlist replaces the
       default listing, so name the other tools you want too
       (?tools=search,available_data,company_agent).
+  - name: tako_company_search
+    description: >-
+      Screen active companies by industry, place, size, founding year, funding
+      stage and ownership, returned as one list card. Opt-in: add the
+      `company_search` token to the server URL's ?tools= allowlist. The
+      allowlist replaces the default listing, so name tako_contents too, which
+      fetches the card's rows (?tools=contents,company_search).
+  - name: tako_people_search
+    description: >-
+      Screen employees by role, place and employer, returned as one list card.
+      Opt-in: add the `people_search` token to the server URL's ?tools=
+      allowlist. The allowlist replaces the default listing, so name
+      tako_contents too, which fetches the card's rows
+      (?tools=contents,people_search).
+  - name: tako_company_enrich
+    description: >-
+      Match up to 25 companies you already know, each by website, LinkedIn page
+      or name, returned as per-item results and one list card. Opt-in: add the
+      `company_enrich` token to the server URL's ?tools= allowlist. The
+      allowlist replaces the default listing, so name tako_contents too, which
+      fetches the card's rows (?tools=contents,company_enrich).
+  - name: tako_person_enrich
+    description: >-
+      Match up to 25 people you already know, each by email, phone, LinkedIn
+      profile or name, returned as per-item results and one list card. Opt-in:
+      add the `person_enrich` token to the server URL's ?tools= allowlist. The
+      allowlist replaces the default listing, so name tako_contents too, which
+      fetches the card's rows (?tools=contents,person_enrich).
   - name: tako_graph_related
     description: >-
       Explore what a Tako graph node connects to — its metrics, the entities a

@@ -191,11 +191,11 @@
         },
         "min_employees": {
           "type": "integer",
-          "description": "Fewest employees, on People Data Labs' estimate."
+          "description": "People Data Labs' employee estimate."
         },
         "max_employees": {
           "type": "integer",
-          "description": "Most employees, on People Data Labs' estimate."
+          "description": "People Data Labs' employee estimate."
         },
         "industry": {
           "type": "string",
@@ -211,7 +211,7 @@
         },
         "startups": {
           "type": "boolean",
-          "description": "Startups only: private companies founded in the last ten years (unless the founded filters name other years), of a startup type, that raised a venture round or have at most 500 employees."
+          "description": "Startups: private companies founded in the last ten years (unless founded_after or founded_before names other years), of a startup type (not a government body, nonprofit, school or public company's subsidiary), that raised a venture round or have at most 500 employees."
         },
         "founded_after": {
           "type": "integer",
@@ -373,7 +373,7 @@
         },
         "person_town": {
           "type": "string",
-          "description": "Where the person is: town. Needs person_country or person_region beside it."
+          "description": "Needs person_country or person_region beside it."
         },
         "company_industry": {
           "type": "string",
@@ -393,7 +393,7 @@
         },
         "company_startups": {
           "type": "boolean",
-          "description": "Employers that are startups only."
+          "description": "Employers that are startups: private companies founded in the last ten years, of a startup type, that raised a venture round or have at most 500 employees."
         },
         "linkedin_urls": {
           "type": "array",

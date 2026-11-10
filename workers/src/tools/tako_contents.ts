@@ -41,6 +41,7 @@ import {
   DjangoTimeoutError,
   djangoPost,
   extractErrorDetail,
+  isBillingRefusal,
 } from "../django.js";
 import { BaseAPIError, ContentsHighlights, ContentsRequest, ContentsResponse } from "../generated/schemas.js";
 import {
@@ -358,7 +359,11 @@ function errorText(reason: unknown): string {
   if (reason instanceof DjangoError) {
     if (reason.modelGuidance !== undefined) return reason.modelGuidance;
     const body = "body" in reason ? (reason as { body: string }).body : undefined;
-    const detail = body !== undefined ? extractErrorDetail(body) : undefined;
+    // A 402 and a spend-budget 429 carry the backend's remedy ("Add credits",
+    // "Upgrade your plan"), which `/mcp/chatgpt` may not show. `mcp.ts` gates
+    // that copy by surface when the whole call fails; one url failing inside a
+    // batch never reaches it, so the status alone is the text here.
+    const detail = body !== undefined && !isBillingRefusal(reason) ? extractErrorDetail(body) : undefined;
     const status = reason.status !== undefined ? String(reason.status) : "transport error";
     return `Fetch failed (${status}${detail !== undefined ? `: ${detail}` : ""}).`;
   }

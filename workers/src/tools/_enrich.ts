@@ -8,6 +8,8 @@
  * every tool input is its generated request schema without the three contents
  * fields, and no request body carries them.
  *
+ * The text renderers are in `_render_markdown.ts`, beside the other tools'.
+ *
  * `_`-prefixed so `gen-registry.ts` skips it: this isn't a tool module.
  */
 import { z } from "zod";
@@ -17,17 +19,16 @@ import {
   DjangoError,
   DjangoHttpError,
   djangoPost,
+  extractErrorDetail,
 } from "../django.js";
+import { type CompanyEnrichResult, EnrichInputError, type PersonEnrichResult } from "../generated/schemas.js";
 import {
-  BaseAPIError,
-  type CompanyEnrichResult,
-  EnrichInputError,
-  type PersonEnrichResult,
-} from "../generated/schemas.js";
-import { oneLine } from "./_available_data.js";
+  COMPANY_LIST_FIELDS,
+  describeListFields,
+  type ListCardFields,
+  PERSON_LIST_FIELDS,
+} from "./_enrich_fields.js";
 import { logWireGuardFailure } from "./_log.js";
-import { looseArray, type LooseArrayOptions } from "./_loose_array.js";
-import { fenceRunFor } from "./_render_markdown.js";
 import { projectCard, takoCardSchema, withheldCellsGuidance } from "./_search_results.js";
 import type { ToolContext } from "./types.js";
 
@@ -39,37 +40,6 @@ const ENRICH_TIMEOUT_MS = 90_000;
 const UNEXPECTED_SHAPE =
   "Tako's enrichment endpoint returned an unexpected shape. Retry once; if it persists, flag it to the Tako team.";
 
-/** How one array input accepts a host's stringified array: see `_loose_array.ts`. */
-export type ArrayInputOptions = Omit<LooseArrayOptions, "field">;
-
-/**
- * Make every field of a generated request shape optional and drop the default
- * it carries, so a field the caller omits never reaches the request body.
- * `describes` replaces a field's generated description, and is the only way a
- * field without one gets a description. `arrays` names the tool's array
- * inputs, which `_loose_array.test.ts` requires to accept a stringified array.
- */
-export function optionalWithoutDefaults<T extends z.ZodRawShape>(
-  tool: string,
-  shape: T,
-  describes: Partial<Record<keyof T & string, string>>,
-  arrays: Partial<Record<keyof T & string, ArrayInputOptions>>,
-): { [K in keyof T]: z.ZodOptional<T[K] extends z.ZodDefault<infer Inner> ? Inner : T[K]> } {
-  const out: Record<string, z.ZodType> = {};
-  for (const [key, field] of Object.entries(shape)) {
-    const withoutDefault = field instanceof z.ZodDefault ? field.unwrap() : field;
-    const bare = withoutDefault instanceof z.ZodOptional ? withoutDefault.unwrap() : withoutDefault;
-    const override = describes[key as keyof T & string];
-    const optional =
-      override === undefined
-        ? (bare as z.ZodType).optional()
-        : (bare as z.ZodType).describe(override).optional();
-    const array = arrays[key as keyof T & string];
-    out[key] = array === undefined ? optional : looseArray(optional, { ...array, field: `${tool}.${key}` });
-  }
-  return out as never;
-}
-
 /** The fields the caller set, without the `undefined` ones a parsed input carries. */
 export function givenFields<T extends Record<string, unknown>>(input: T): Partial<T> {
   return Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined)) as Partial<T>;
@@ -79,22 +49,48 @@ export function givenFields<T extends Record<string, unknown>>(input: T): Partia
 // Errors
 // ---------------------------------------------------------------------------
 
-const inputErrorBody = EnrichInputError.pick({
-  error_message: true,
-  code: true,
-  field: true,
-  suggestions: true,
-});
-const apiErrorBody = BaseAPIError.pick({ error_message: true });
+/** Each enrichment tool's endpoint. `postEnrich` and the error rewrite both read it. */
+export const ENRICH_ENDPOINTS = {
+  tako_company_search: "/api/v1/companies/search",
+  tako_people_search: "/api/v1/people/search",
+  tako_company_enrich: "/api/v1/companies/enrich",
+  tako_person_enrich: "/api/v1/people/enrich",
+} as const;
+export type EnrichTool = keyof typeof ENRICH_ENDPOINTS;
 
-/** The REST calls a backend message can name, and the tool that makes each one. */
-const REST_CALL_TOOLS: ReadonlyArray<readonly [RegExp, string, string]> = [
-  [/POST \/api\/v1\/companies\/search/g, "tako_company_search", "a company search"],
-  [/POST \/api\/v1\/people\/search/g, "tako_people_search", "a people search"],
-  [/POST \/api\/v1\/companies\/enrich/g, "tako_company_enrich", "a company match"],
-  [/POST \/api\/v1\/people\/enrich/g, "tako_person_enrich", "a person match"],
-  [/POST \/api\/v1\/contents/g, "tako_contents", "a contents fetch"],
-];
+/** The list card each tool returns. Its fields are what the tool's description lists. */
+const ENRICH_CARD_FIELDS: Record<EnrichTool, ListCardFields> = {
+  tako_company_search: COMPANY_LIST_FIELDS,
+  tako_people_search: PERSON_LIST_FIELDS,
+  tako_company_enrich: COMPANY_LIST_FIELDS,
+  tako_person_enrich: PERSON_LIST_FIELDS,
+};
+
+/**
+ * The sentences of a tool's description that say which fields it returns.
+ * `llms-full.txt` carries the same text for each tool, and `gen-registry.ts`
+ * fails when it doesn't.
+ */
+export function enrichFieldSentences(tool: EnrichTool): string {
+  return describeListFields(ENRICH_CARD_FIELDS[tool]);
+}
+
+/** The `POST` paths a backend message can name: the four endpoints, and the contents call the cards point to. */
+const REST_POST_PATHS = { ...ENRICH_ENDPOINTS, tako_contents: "/api/v1/contents" } as const;
+
+/** What to call each one on a connection that doesn't register its tool. */
+const REST_CALL_PHRASES: Record<keyof typeof REST_POST_PATHS, string> = {
+  tako_company_search: "a company search",
+  tako_people_search: "a people search",
+  tako_company_enrich: "a company match",
+  tako_person_enrich: "a person match",
+  tako_contents: "a contents fetch",
+};
+
+const REST_CALLS = Object.entries(REST_POST_PATHS).map(
+  ([tool, path]) =>
+    [new RegExp(`POST ${path.replace(/[/.]/g, "\\$&")}`, "g"), tool as keyof typeof REST_POST_PATHS] as const,
+);
 
 /**
  * A backend message with each REST call it names replaced by the tool that
@@ -103,12 +99,19 @@ const REST_CALL_TOOLS: ReadonlyArray<readonly [RegExp, string, string]> = [
  * better.
  */
 export function withToolNames(message: string, registered: ReadonlySet<string> | undefined): string {
-  return REST_CALL_TOOLS.reduce(
-    (text, [call, tool, phrase]) =>
-      text.replace(call, registered?.has(tool) === true ? `\`${tool}\`` : phrase),
+  return REST_CALLS.reduce(
+    (text, [call, tool]) =>
+      text.replace(call, registered?.has(tool) === true ? `\`${tool}\`` : REST_CALL_PHRASES[tool]),
     message,
   );
 }
+
+const inputErrorBody = EnrichInputError.pick({
+  error_message: true,
+  code: true,
+  field: true,
+  suggestions: true,
+});
 
 function parseJson(body: string): unknown {
   try {
@@ -121,21 +124,20 @@ function parseJson(body: string): unknown {
 const sentence = (text: string): string => (/[.!?]$/.test(text.trim()) ? text.trim() : `${text.trim()}.`);
 
 /**
- * The model-facing text for an enrichment endpoint's error, or `undefined`
- * to keep the default mapping in `mcp.ts`.
+ * The model-facing text for the two errors these endpoints make their own, or
+ * `undefined` to keep the default mapping in `mcp.ts`, which already carries
+ * the backend's `error_message` on a 4xx.
  *
- * The default mapping reads `detail`, `error` and `message`, and these
- * endpoints answer with `error_message`, so it would drop the reason. A 400
- * also names the `field` to fix, a `code` and `suggestions`.
+ * A 400 names the `field` to fix, a `code` and `suggestions`, which the
+ * default text has no place for. A 403 is an account that can't use the API,
+ * so a retry can't clear it.
  */
 export function enrichErrorGuidance(
   err: DjangoError,
   registered: ReadonlySet<string> | undefined,
 ): string | undefined {
-  if (!(err instanceof DjangoBadRequestError) && !(err instanceof DjangoHttpError)) return undefined;
-  const body = parseJson(err.body);
-  if (err.status === 400) {
-    const parsed = inputErrorBody.safeParse(body);
+  if (err instanceof DjangoBadRequestError) {
+    const parsed = inputErrorBody.safeParse(parseJson(err.body));
     if (!parsed.success) return undefined;
     const { error_message, code, field, suggestions } = parsed.data;
     const subject = field === "" ? "this request" : `\`${field}\``;
@@ -144,13 +146,10 @@ export function enrichErrorGuidance(
     parts.push("Fix the input and call again.");
     return parts.join(" ");
   }
-  if (err.status === 403 || err.status === 503) {
-    const parsed = apiErrorBody.safeParse(body);
-    if (!parsed.success || parsed.data.error_message.trim() === "") return undefined;
-    const message = sentence(withToolNames(parsed.data.error_message, registered));
-    return err.status === 403
-      ? `${message} This connection can't use the tool, so don't retry it; tell the user.`
-      : message;
+  if (err instanceof DjangoHttpError && err.status === 403) {
+    const detail = extractErrorDetail(err.body);
+    if (detail === undefined) return undefined;
+    return `${sentence(detail)} This connection can't use the tool, so don't retry it; tell the user.`;
   }
   return undefined;
 }
@@ -176,14 +175,14 @@ function guardWire<S extends z.ZodType>(tool: string, stage: string, schema: S, 
   return parsed.data;
 }
 
-/** `POST` one enrichment endpoint and check the response against its generated schema. */
+/** `POST` a tool's endpoint and check the response against its generated schema. */
 export async function postEnrich<S extends z.ZodType>(
-  tool: string,
-  path: string,
+  tool: EnrichTool,
   body: unknown,
   response: S,
   ctx: ToolContext,
 ): Promise<z.output<S>> {
+  const path = ENRICH_ENDPOINTS[tool];
   const data = await withEnrichErrors(
     () => djangoPost<unknown>(ctx.env, ctx.token, path, body, { timeoutMs: ENRICH_TIMEOUT_MS, caller: ctx.caller }),
     ctx,
@@ -231,29 +230,6 @@ export function projectEnrichCard(tool: string, wireCard: unknown, ctx: ToolCont
   return guidance === undefined ? { card } : { card, guidance };
 }
 
-function renderCard(card: EnrichCard): string {
-  const lines = [`### ${oneLine(card.title ?? "Untitled list")}`];
-  const access: string[] = [];
-  if (card.url !== undefined) access.push(`url: ${card.url}`);
-  access.push(
-    card.exportable
-      ? card.total_rows !== undefined
-        ? `exportable, ${String(card.total_rows)} rows`
-        : "exportable"
-      : "rows locked",
-  );
-  if (card.source !== undefined) access.push(`source: ${oneLine(card.source)}`);
-  lines.push(`- ${access.join(" · ")}`);
-  if (card.description !== undefined) {
-    const fence = fenceRunFor(card.description);
-    lines.push(`${fence}\n${card.description}\n${fence}`);
-  }
-  return lines.join("\n");
-}
-
-const listLine = (label: string, values: readonly string[]): string =>
-  `- ${label}: ${values.map(oneLine).join(" · ")}`;
-
 // ---------------------------------------------------------------------------
 // Search output
 // ---------------------------------------------------------------------------
@@ -285,36 +261,6 @@ export const peopleSearchOutputShape = z.looseObject({
 
 export type ListSearchOutput = z.infer<typeof companySearchOutputShape> &
   Partial<Pick<z.infer<typeof peopleSearchOutputShape>, "unresolved" | "failed">>;
-
-/** The text channel of a search: the count, what ran, then the card. */
-export function renderListSearchMarkdown(output: ListSearchOutput, noun: string): string {
-  const blocks: string[] = [];
-  const facts: string[] = [];
-  if (output.applied.length > 0) facts.push(listLine("applied", output.applied));
-  if (output.notes.length > 0) facts.push(listLine("notes", output.notes));
-  if (output.unresolved !== undefined && output.unresolved.length > 0) {
-    facts.push(listLine("unresolved (named nothing)", output.unresolved));
-  }
-  if (output.failed !== undefined && output.failed.length > 0) {
-    facts.push(listLine("failed (lookup failed, retry these)", output.failed));
-  }
-  if (output.card === null) {
-    blocks.push(`## No ${noun} match`);
-    blocks.push(
-      `The search ran and matched no ${noun} (total: ${String(output.total)}). That's an answer, not an error. Loosen or drop a filter to widen it.`,
-    );
-    if (facts.length > 0) blocks.push(facts.join("\n"));
-    return blocks.join("\n\n");
-  }
-  const count = output.total_is_lower_bound
-    ? `at least ${String(output.total)} (the count stops there; the card's rows go past it)`
-    : String(output.total);
-  blocks.push(`## ${noun}: ${count}`);
-  if (facts.length > 0) blocks.push(facts.join("\n"));
-  blocks.push(renderCard(output.card));
-  if (output.guidance !== undefined) blocks.push(`> ${output.guidance}`);
-  return blocks.join("\n\n");
-}
 
 // ---------------------------------------------------------------------------
 // Enrich output
@@ -398,36 +344,6 @@ export function alignEnrichResults(
     if (result.matched_on != null) row.matched_on = result.matched_on;
     return row;
   });
-}
-
-function renderEnrichResult(row: EnrichResultRow): string {
-  const input = Object.entries(row.input)
-    .map(([key, value]) => `${key}=${oneLine(value)}`)
-    .join(", ");
-  const facts: string[] = [oneLine(row.status)];
-  if (row.confidence !== undefined) facts.push(`confidence ${oneLine(row.confidence)}`);
-  if (row.matched_on !== undefined) facts.push(`matched on ${oneLine(row.matched_on)}`);
-  if (row.match_id !== undefined) facts.push(`match_id \`${oneLine(row.match_id)}\``);
-  if (row.alternates > 0) facts.push(`${String(row.alternates)} alternates`);
-  if (row.unresolved.length > 0) facts.push(`unresolved: ${row.unresolved.map(oneLine).join(", ")}`);
-  if (row.failed.length > 0) facts.push(`failed, retry: ${row.failed.map(oneLine).join(", ")}`);
-  return `${String(row.index)}. ${input} → ${facts.join(" · ")}`;
-}
-
-/** The text channel of an enrich call: one line per item, then the card. */
-export function renderEnrichMarkdown(output: EnrichOutput, noun: string): string {
-  const matched = output.results.filter((row) => row.status === "matched").length;
-  const blocks = [
-    `## Results: ${String(matched)} of ${String(output.results.length)} matched`,
-    output.results.map(renderEnrichResult).join("\n"),
-  ];
-  if (output.card === null) {
-    blocks.push(`No ${noun} matched, so there's no card. That's an answer, not an error.`);
-    return blocks.join("\n\n");
-  }
-  blocks.push(renderCard(output.card));
-  if (output.guidance !== undefined) blocks.push(`> ${output.guidance}`);
-  return blocks.join("\n\n");
 }
 
 /** The sentence of an enrich description that names what each result carries. */

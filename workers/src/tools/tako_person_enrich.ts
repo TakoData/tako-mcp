@@ -1,6 +1,7 @@
 /**
  * `tako_person_enrich`: match people the caller already names, behind
- * `?tools=person_enrich` on `/mcp`.
+ * `?tools=contents,person_enrich` on `/mcp`. `tako_contents` fetches the rows of the
+ * card this tool returns, so a connection needs both.
  *
  * Wraps `POST /api/v1/people/enrich`. `items` is the generated request field,
  * so the item shape and the 25-item limit come from the API.
@@ -14,10 +15,10 @@ import {
   enrichOutputShape,
   postEnrich,
   projectEnrichCard,
-  renderEnrichMarkdown,
+  enrichFieldSentences,
 } from "./_enrich.js";
-import { describeListFields, PERSON_LIST_FIELDS } from "./_enrich_fields.js";
 import { looseArray } from "./_loose_array.js";
+import { renderEnrichMarkdown } from "./_render_markdown.js";
 import type { ToolModule } from "./types.js";
 
 const DESCRIPTION = [
@@ -25,7 +26,7 @@ const DESCRIPTION = [
   "",
   "Use to look up known people, such as a contact list.",
   "",
-  `${ENRICH_RESULT_SENTENCE} ${describeListFields(PERSON_LIST_FIELDS)}`,
+  `${ENRICH_RESULT_SENTENCE} ${enrichFieldSentences("tako_person_enrich")}`,
 ].join("\n");
 
 const inputSchema = z
@@ -64,7 +65,6 @@ const tako_person_enrich = {
   async handler(input: Input, ctx): Promise<Output> {
     const wire = await postEnrich(
       "tako_person_enrich",
-      "/api/v1/people/enrich",
       buildPersonEnrichBody(input),
       PersonEnrichResponse,
       ctx,

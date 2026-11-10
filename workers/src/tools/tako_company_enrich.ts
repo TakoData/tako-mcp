@@ -1,6 +1,7 @@
 /**
  * `tako_company_enrich`: match companies the caller already names, behind
- * `?tools=company_enrich` on `/mcp`.
+ * `?tools=contents,company_enrich` on `/mcp`. `tako_contents` fetches the rows of the
+ * card this tool returns, so a connection needs both.
  *
  * Wraps `POST /api/v1/companies/enrich`. `items` is the generated request
  * field, so the item shape and the 25-item limit come from the API.
@@ -14,10 +15,10 @@ import {
   enrichOutputShape,
   postEnrich,
   projectEnrichCard,
-  renderEnrichMarkdown,
+  enrichFieldSentences,
 } from "./_enrich.js";
-import { COMPANY_LIST_FIELDS, describeListFields } from "./_enrich_fields.js";
 import { looseArray } from "./_loose_array.js";
+import { renderEnrichMarkdown } from "./_render_markdown.js";
 import type { ToolModule } from "./types.js";
 
 const DESCRIPTION = [
@@ -25,7 +26,7 @@ const DESCRIPTION = [
   "",
   "Use to look up companies you can name, such as a list of domains.",
   "",
-  `${ENRICH_RESULT_SENTENCE} ${describeListFields(COMPANY_LIST_FIELDS)}`,
+  `${ENRICH_RESULT_SENTENCE} ${enrichFieldSentences("tako_company_enrich")}`,
 ].join("\n");
 
 const inputSchema = z
@@ -64,7 +65,6 @@ const tako_company_enrich = {
   async handler(input: Input, ctx): Promise<Output> {
     const wire = await postEnrich(
       "tako_company_enrich",
-      "/api/v1/companies/enrich",
       buildCompanyEnrichBody(input),
       CompanyEnrichResponse,
       ctx,

@@ -9,8 +9,10 @@ import {
   assertAllToolsDescribed,
   assertChatgptSnapshot,
   assertChatgptSubmissionParity,
+  assertEnrichFieldSentences,
   assertLlmsFullCoverage,
   assertNoPhantomToolsInDocs,
+  assertSmitheryNamesEveryTool,
   assertPinAdviceReachableInLlmsFull,
   assertPinFormInDocs,
   assertProseBudget,
@@ -29,6 +31,7 @@ import {
   OUTPUT_SCHEMA_MAX_CHARS,
   TOOL_ENTRY_MAX_CHARS,
 } from "./gen-registry.js";
+import { ENRICH_ENDPOINTS, enrichFieldSentences, type EnrichTool } from "../src/tools/_enrich.js";
 
 describe("registry guards", () => {
   it("every registered tool has a non-empty description", () => {
@@ -77,6 +80,50 @@ describe("buildLobehubPlugin", () => {
     expect(() => buildLobehubPlugin(committed, "9.9.9", withoutSearch)).toThrow(
       /tako_search/,
     );
+  });
+});
+
+describe("assertEnrichFieldSentences", () => {
+  const tools = Object.keys(ENRICH_ENDPOINTS) as EnrichTool[];
+  const doc = (edit: (tool: EnrichTool, sentences: string) => string = (_tool, sentences) => sentences): string =>
+    tools.map((tool) => `### ${tool}\nIntro.\n\nFields: ${edit(tool, enrichFieldSentences(tool))}\n`).join("\n");
+
+  it("passes when every enrichment section carries its description's field sentences", () => {
+    expect(tools).toHaveLength(4);
+    expect(() => assertEnrichFieldSentences(doc())).not.toThrow();
+  });
+
+  it("fails on a section whose field list drifted, naming the tool", () => {
+    const drifted = doc((tool, sentences) =>
+      tool === "tako_people_search" ? sentences.replace("skills, ", "") : sentences,
+    );
+    expect(() => assertEnrichFieldSentences(drifted)).toThrow(/### tako_people_search/);
+    expect(() => assertEnrichFieldSentences(drifted)).not.toThrow(/### tako_company_search/);
+  });
+
+  it("reads each tool's own section: the company list under the people heading fails", () => {
+    const swapped = doc((tool) =>
+      enrichFieldSentences(tool === "tako_people_search" ? "tako_company_search" : tool),
+    );
+    expect(() => assertEnrichFieldSentences(swapped)).toThrow(/### tako_people_search/);
+  });
+
+  it("fails on a missing section", () => {
+    expect(() => assertEnrichFieldSentences("### tako_company_search\n")).toThrow(/no "### tako_people_search" section/);
+  });
+});
+
+describe("assertSmitheryNamesEveryTool", () => {
+  const listing = "tools:\n  - name: tako_search\n    description: x\n  - name: tako_contents\n";
+
+  it("passes when every tool has an entry", () => {
+    expect(() => assertSmitheryNamesEveryTool(["tako_search", "tako_contents"], listing)).not.toThrow();
+  });
+
+  it("fails on a tool with no entry, even one the prose mentions", () => {
+    expect(() =>
+      assertSmitheryNamesEveryTool(["tako_search", "tako_people_search"], `${listing}# see tako_people_search\n`),
+    ).toThrow(/no tools entry for: tako_people_search/);
   });
 });
 

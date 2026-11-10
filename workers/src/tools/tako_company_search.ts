@@ -1,6 +1,7 @@
 /**
  * `tako_company_search`: screen companies by filters, behind
- * `?tools=company_search` on `/mcp`.
+ * `?tools=contents,company_search` on `/mcp`. `tako_contents` fetches the rows of the
+ * card this tool returns, so a connection needs both.
  *
  * Wraps `POST /api/v1/companies/search`. The input is the generated
  * `CompanySearchRequest` without the contents fields (see `_enrich.ts`), so a
@@ -15,12 +16,12 @@ import {
   companySearchOutputShape,
   CONTENTS_FIELDS,
   givenFields,
-  optionalWithoutDefaults,
   postEnrich,
   projectEnrichCard,
-  renderListSearchMarkdown,
+  enrichFieldSentences,
 } from "./_enrich.js";
-import { COMPANY_LIST_FIELDS, describeListFields } from "./_enrich_fields.js";
+import { optionalWithoutDefaults } from "./_optional_without_defaults.js";
+import { renderListSearchMarkdown } from "./_render_markdown.js";
 import type { ToolModule } from "./types.js";
 
 const DESCRIPTION = [
@@ -28,26 +29,25 @@ const DESCRIPTION = [
   "",
   "Use to build a list of companies from filters, such as Series B enterprise SaaS companies in the US.",
   "",
-  `${describeListFields(COMPANY_LIST_FIELDS)} \`total\` stops at 500, and \`total_is_lower_bound\` says when. It can't filter or sort by revenue.`,
+  `${enrichFieldSentences("tako_company_search")} \`total\` stops at 500, and \`total_is_lower_bound\` says when. It can't filter or sort by revenue.`,
 ].join("\n");
 
 const requestShape = CompanySearchRequest.omit(CONTENTS_FIELDS).shape;
 
+// Only what the generated description can't say: `industry` replaces a REST
+// call the model can't make, and the other three have no generated text.
 const DESCRIBES = {
-  min_employees: "Fewest employees, on People Data Labs' estimate.",
-  max_employees: "Most employees, on People Data Labs' estimate.",
   industry: "An industry name, alias or id, such as fintech or aerospace and defense. `applied` shows what it was read as.",
   ownership: "Publicly traded or privately held.",
-  startups:
-    "Startups only: private companies founded in the last ten years (unless the founded filters name other years), of a startup type, that raised a venture round or have at most 500 employees.",
   founded_after: "Founded in this year or later.",
   founded_before: "Founded in this year or earlier.",
 } satisfies Partial<Record<keyof typeof requestShape, string>>;
 
 const inputSchema = z
   .object(
-    optionalWithoutDefaults("tako_company_search", requestShape, DESCRIBES, {
-      funding_stages: { commaSeparated: true },
+    optionalWithoutDefaults(requestShape, DESCRIBES, {
+      tool: "tako_company_search",
+      fields: { funding_stages: { commaSeparated: true } },
     }),
   )
   .strict();
@@ -77,7 +77,6 @@ const tako_company_search = {
   async handler(input: Input, ctx): Promise<Output> {
     const wire = await postEnrich(
       "tako_company_search",
-      "/api/v1/companies/search",
       buildCompanySearchBody(input),
       CompanySearchResponse,
       ctx,

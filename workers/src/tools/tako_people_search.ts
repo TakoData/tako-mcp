@@ -1,6 +1,7 @@
 /**
  * `tako_people_search`: screen employees by role, place and employer, behind
- * `?tools=people_search` on `/mcp`.
+ * `?tools=contents,people_search` on `/mcp`. `tako_contents` fetches the rows of the
+ * card this tool returns, so a connection needs both.
  *
  * Wraps `POST /api/v1/people/search`. The input is the generated
  * `PersonSearchRequest` without the contents fields (see `_enrich.ts`), and
@@ -12,13 +13,13 @@ import { PersonSearchRequest, PersonSearchResponse } from "../generated/schemas.
 import {
   CONTENTS_FIELDS,
   givenFields,
-  optionalWithoutDefaults,
   peopleSearchOutputShape,
   postEnrich,
   projectEnrichCard,
-  renderListSearchMarkdown,
+  enrichFieldSentences,
 } from "./_enrich.js";
-import { describeListFields, PERSON_LIST_FIELDS } from "./_enrich_fields.js";
+import { optionalWithoutDefaults } from "./_optional_without_defaults.js";
+import { renderListSearchMarkdown } from "./_render_markdown.js";
 import type { ToolModule } from "./types.js";
 
 const DESCRIPTION = [
@@ -26,23 +27,24 @@ const DESCRIPTION = [
   "",
   "Use to build a list of people from filters, such as heads of sales at Series B startups in Texas.",
   "",
-  `${describeListFields(PERSON_LIST_FIELDS)} \`total\` stops at 500, and \`total_is_lower_bound\` says when.`,
+  `${enrichFieldSentences("tako_people_search")} \`total\` stops at 500, and \`total_is_lower_bound\` says when.`,
 ].join("\n");
 
 const requestShape = PersonSearchRequest.omit(CONTENTS_FIELDS).shape;
 
 const CONTACT_RULE = "It narrows a search, so set another filter beside it.";
 
+// Only what the generated description can't say. `company_ids` and
+// `company_industry` replace REST calls the model can't make, `linkedin_urls`
+// gains the rule its 400 enforces, and the rest have no generated text.
 const DESCRIBES = {
   company_ids: "Employer ids, such as the `match_id` of a matched company.",
   person_country: "Where the person is: ISO 3166-1 alpha-2 code or English name.",
   person_region: "Where the person is: state or province.",
   person_metro: "Where the person is: metropolitan area.",
-  person_town: "Where the person is: town. Needs person_country or person_region beside it.",
   company_industry: "The employer's industry: a name, alias or id, such as fintech. `applied` shows what it was read as.",
   company_min_employees: "The employer's fewest employees.",
   company_max_employees: "The employer's most employees.",
-  company_startups: "Employers that are startups only.",
   linkedin_urls: `LinkedIn profile URLs. ${CONTACT_RULE}`,
   emails: `Email addresses. ${CONTACT_RULE}`,
   phones: `Phone numbers. ${CONTACT_RULE}`,
@@ -52,14 +54,17 @@ const DESCRIBES = {
 // joined itself, or an address can hold one.
 const inputSchema = z
   .object(
-    optionalWithoutDefaults("tako_people_search", requestShape, DESCRIBES, {
-      role: {},
-      company_ids: {},
-      company_domains: {},
-      company_funding_stages: { commaSeparated: true },
-      linkedin_urls: {},
-      emails: {},
-      phones: {},
+    optionalWithoutDefaults(requestShape, DESCRIBES, {
+      tool: "tako_people_search",
+      fields: {
+        role: {},
+        company_ids: {},
+        company_domains: {},
+        company_funding_stages: { commaSeparated: true },
+        linkedin_urls: {},
+        emails: {},
+        phones: {},
+      },
     }),
   )
   .strict();
@@ -89,7 +94,6 @@ const tako_people_search = {
   async handler(input: Input, ctx): Promise<Output> {
     const wire = await postEnrich(
       "tako_people_search",
-      "/api/v1/people/search",
       buildPeopleSearchBody(input),
       PersonSearchResponse,
       ctx,

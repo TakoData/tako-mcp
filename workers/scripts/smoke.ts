@@ -113,6 +113,7 @@ import {
   rowColumns,
 } from "../src/tools/_enrich_fields.js";
 import { TOOL_REGISTRY } from "../src/tools/_registry.js";
+import { listDiff } from "./list-diff.js";
 import takoVisualize from "../src/tools/tako_visualize.js";
 import { skillsForSurface } from "../src/skills.js";
 
@@ -162,13 +163,6 @@ async function callOk(
     );
   }
   return result;
-}
-
-/** The names in one list and not the other, for a drift message. */
-function listDiff(expected: readonly string[], actual: readonly string[]): string {
-  const missing = expected.filter((name) => !actual.includes(name));
-  const added = actual.filter((name) => !expected.includes(name));
-  return `the API dropped [${missing.join(", ")}] and added [${added.join(", ")}]`;
 }
 
 /** The header cells of the first markdown table in a card description. */

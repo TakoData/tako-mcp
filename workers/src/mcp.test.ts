@@ -394,6 +394,15 @@ describe("extractErrorDetail", () => {
   it("lifts DRF `detail`", () => {
     expect(extractErrorDetail('{"detail":"nope"}')).toBe("nope");
   });
+  it("lifts `error_message`, the /api/v1 endpoints' own field", () => {
+    expect(
+      extractErrorDetail('{"error_message":"town needs country or region beside it","error_type":"BAD_REQUEST"}'),
+    ).toBe("town needs country or region beside it");
+  });
+  it("prefers `error_message` over the DRF and legacy keys", () => {
+    expect(extractErrorDetail('{"detail":"generic","message":"older","error_message":"specific"}')).toBe("specific");
+    expect(extractErrorDetail('{"detail":"generic","error_message":""}')).toBe("generic");
+  });
   it("lifts `error`", () => {
     expect(extractErrorDetail('{"error":"boom"}')).toBe("boom");
   });
