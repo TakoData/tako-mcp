@@ -1,21 +1,30 @@
 /**
- * The columns of the company and people list cards that the enrichment tools
- * return, as typed constants.
+ * The fields of the company and people list cards that the enrichment tools
+ * return.
  *
  * Each tool description is built from these lists, so the description can't
- * disagree with them. `scripts/smoke.ts` fetches one card of each kind after a
- * deploy and fails when the API's columns differ from them.
- *
- * Source of truth, in the Tako monorepo under
- * `app/backend/knowledge/configs/data/legal_entity/`:
- * - `company_list_card.py`: `LIST_COLUMNS`, `COMPANY_LIST_TABLE.shown_fields`,
- *   `CARD_ONLY_FIELDS`, `PREMIUM_LIST_FIELDS`.
- * - `person_list_card.py`: `PERSON_LIST_COLUMNS`,
- *   `PERSON_LIST_TABLE.shown_fields`, `CARD_ONLY_FIELDS`,
- *   `PERSON_PREMIUM_FIELDS`.
+ * disagree with them. The field names and their order come from the enums the
+ * OpenAPI spec publishes (`CompanyListField`, `PersonListField` and their
+ * preview, card-only and premium subsets), which the Tako monorepo builds from
+ * the cards' own constants. Only the card labels are written here, and each
+ * label map is typed against its enum: a field the API adds or drops fails
+ * `npm run typecheck` on the spec sync until its label is added or removed.
+ * `scripts/smoke.ts` also fetches one card of each kind after a deploy and
+ * fails when the API's columns differ.
  *
  * `_`-prefixed so `gen-registry.ts` skips it: this isn't a tool module.
  */
+
+import {
+  CompanyListCardOnlyField,
+  CompanyListField,
+  CompanyListPremiumField,
+  CompanyListPreviewField,
+  PersonListCardOnlyField,
+  PersonListField,
+  PersonListPremiumField,
+  PersonListPreviewField,
+} from "../generated/schemas.js";
 
 /** A list card's columns, and where each one reaches the model. */
 export interface ListCardFields<Key extends string = string> {
@@ -31,129 +40,100 @@ export interface ListCardFields<Key extends string = string> {
   readonly premium: ReadonlyArray<Key>;
 }
 
-const COMPANY_COLUMNS = [
-  ["name", "Name"],
-  ["status", "Status"],
-  ["company_type", "Company type"],
-  ["estimated_revenue", "Estimated revenue"],
-  ["headcount", "Headcount"],
-  ["linkedin_followers", "LinkedIn followers"],
-  ["industry", "Industry"],
-  ["funding_stage", "Funding stage"],
-  ["total_raised", "Total raised"],
-  ["last_funding_date", "Last funding date"],
-  ["investors", "Investors"],
-  ["location", "Location"],
-  ["website", "Website"],
-  ["linkedin_url", "LinkedIn"],
-  ["ticker", "Ticker"],
-  ["established", "Established"],
-  ["parent", "Parent"],
-  ["subsidiaries", "Subsidiaries"],
-  ["description", "Description"],
-  ["headcount_range", "Headcount range"],
-  ["tags", "Tags"],
-  ["metro", "Metro"],
-  ["naics_codes", "NAICS codes"],
-  ["postcode", "Postcode"],
-  ["funding_round_count", "Funding round count"],
-  ["funding_rounds", "Funding rounds"],
-  ["sic_codes", "SIC codes"],
-  ["also_known_as", "Also known as"],
-  ["other_domains", "Other domains"],
-  ["street_address", "Street address"],
-  ["twitter_url", "X (Twitter)"],
-  ["facebook_url", "Facebook"],
-  ["sources", "Sources"],
-  ["tako_url", "Tako link"],
-] as const;
-
-type CompanyField = (typeof COMPANY_COLUMNS)[number][0];
-
-export const COMPANY_LIST_FIELDS: ListCardFields<CompanyField> = {
-  record: "company",
-  columns: COMPANY_COLUMNS,
-  preview: [
-    "name",
-    "status",
-    "estimated_revenue",
-    "headcount",
-    "industry",
-    "funding_stage",
-    "total_raised",
-    "last_funding_date",
-    "investors",
-    "location",
-    "website",
-    "tako_url",
-  ],
-  cardOnly: ["investors", "last_funding_date"],
-  premium: ["estimated_revenue", "linkedin_followers", "parent", "subsidiaries"],
+/** The label each card column carries, in the table of its `description`. */
+const COMPANY_LABELS: Record<CompanyListField, string> = {
+  name: "Name",
+  status: "Status",
+  company_type: "Company type",
+  estimated_revenue: "Estimated revenue",
+  headcount: "Headcount",
+  linkedin_followers: "LinkedIn followers",
+  industry: "Industry",
+  funding_stage: "Funding stage",
+  total_raised: "Total raised",
+  last_funding_date: "Last funding date",
+  investors: "Investors",
+  location: "Location",
+  website: "Website",
+  linkedin_url: "LinkedIn",
+  ticker: "Ticker",
+  established: "Established",
+  parent: "Parent",
+  subsidiaries: "Subsidiaries",
+  description: "Description",
+  headcount_range: "Headcount range",
+  tags: "Tags",
+  metro: "Metro",
+  naics_codes: "NAICS codes",
+  postcode: "Postcode",
+  funding_round_count: "Funding round count",
+  funding_rounds: "Funding rounds",
+  sic_codes: "SIC codes",
+  also_known_as: "Also known as",
+  other_domains: "Other domains",
+  street_address: "Street address",
+  twitter_url: "X (Twitter)",
+  facebook_url: "Facebook",
+  sources: "Sources",
+  tako_url: "Tako link",
 };
 
-const PERSON_COLUMNS = [
-  ["name", "Name"],
-  ["title", "Title"],
-  ["department", "Department"],
-  ["seniority", "Seniority"],
-  ["employer", "Employer"],
-  ["schools", "Schools"],
-  ["in_role_since", "In role since"],
-  ["location", "Location"],
-  ["registry_companies", "Registry companies"],
-  ["linkedin_url", "LinkedIn"],
-  ["work_email", "Work email"],
-  ["phone", "Phone"],
-  ["personal_email", "Personal email"],
-  ["description", "Description"],
-  ["education", "Education"],
-  ["experience", "Work history"],
-  ["registry_seats", "Registry seats"],
-  ["sub_role", "Sub-role"],
-  ["business_area", "Business area"],
-  ["occupation", "Occupation"],
-  ["job_summary", "Job summary"],
-  ["skills", "Skills"],
-  ["industry", "Industry"],
-  ["metro", "Metro"],
-  ["job_verified_on", "Job verified on"],
-  ["twitter_url", "X (Twitter)"],
-  ["github_url", "GitHub"],
-  ["all_emails", "All emails"],
-  ["all_personal_emails", "All personal emails"],
-  ["employer_industry", "Employer industry"],
-  ["employer_tako_industries", "Employer Tako industries"],
-  ["employer_tags", "Employer tags"],
-  ["employer_size", "Employer size"],
-  ["employer_funding_stage", "Employer funding stage"],
-  ["employer_founded", "Employer founded"],
-  ["employer_location", "Employer location"],
-  ["employer_listing", "Employer listing"],
-  ["sources", "Sources"],
-  ["tako_url", "Tako link"],
-] as const;
+export const COMPANY_LIST_FIELDS: ListCardFields<CompanyListField> = {
+  record: "company",
+  columns: CompanyListField.options.map((key) => [key, COMPANY_LABELS[key]] as const),
+  preview: CompanyListPreviewField.options,
+  cardOnly: CompanyListCardOnlyField.options,
+  premium: CompanyListPremiumField.options,
+};
 
-type PersonField = (typeof PERSON_COLUMNS)[number][0];
+const PERSON_LABELS: Record<PersonListField, string> = {
+  name: "Name",
+  title: "Title",
+  department: "Department",
+  seniority: "Seniority",
+  employer: "Employer",
+  schools: "Schools",
+  in_role_since: "In role since",
+  location: "Location",
+  registry_companies: "Registry companies",
+  linkedin_url: "LinkedIn",
+  work_email: "Work email",
+  phone: "Phone",
+  personal_email: "Personal email",
+  description: "Description",
+  education: "Education",
+  experience: "Work history",
+  registry_seats: "Registry seats",
+  sub_role: "Sub-role",
+  business_area: "Business area",
+  occupation: "Occupation",
+  job_summary: "Job summary",
+  skills: "Skills",
+  industry: "Industry",
+  metro: "Metro",
+  job_verified_on: "Job verified on",
+  twitter_url: "X (Twitter)",
+  github_url: "GitHub",
+  all_emails: "All emails",
+  all_personal_emails: "All personal emails",
+  employer_industry: "Employer industry",
+  employer_tako_industries: "Employer Tako industries",
+  employer_tags: "Employer tags",
+  employer_size: "Employer size",
+  employer_funding_stage: "Employer funding stage",
+  employer_founded: "Employer founded",
+  employer_location: "Employer location",
+  employer_listing: "Employer listing",
+  sources: "Sources",
+  tako_url: "Tako link",
+};
 
-export const PERSON_LIST_FIELDS: ListCardFields<PersonField> = {
+export const PERSON_LIST_FIELDS: ListCardFields<PersonListField> = {
   record: "person",
-  columns: PERSON_COLUMNS,
-  preview: [
-    "name",
-    "title",
-    "department",
-    "employer",
-    "schools",
-    "in_role_since",
-    "location",
-    "linkedin_url",
-    "work_email",
-    "phone",
-    "personal_email",
-    "tako_url",
-  ],
-  cardOnly: ["schools", "registry_companies"],
-  premium: ["work_email", "phone", "personal_email", "all_emails", "all_personal_emails"],
+  columns: PersonListField.options.map((key) => [key, PERSON_LABELS[key]] as const),
+  preview: PersonListPreviewField.options,
+  cardOnly: PersonListCardOnlyField.options,
+  premium: PersonListPremiumField.options,
 };
 
 /** The header of the markdown table in the card's `description`, in order. */

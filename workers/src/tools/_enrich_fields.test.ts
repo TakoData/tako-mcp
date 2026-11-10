@@ -12,8 +12,9 @@ import {
 
 // The `columns` that `tako_contents` returned for one card of each kind on
 // production, 2026-11-10, and the header of the table in each card's
-// description. Recorded by hand, so these fail when someone edits a constant
-// without checking the API; `scripts/smoke.ts` checks the API itself.
+// description. Recorded by hand, so these fail when a spec sync changes a
+// field: update them once you've read what the descriptions now say.
+// `scripts/smoke.ts` checks the API itself.
 const COMPANY_ROW_COLUMNS = [
   "name", "status", "company_type", "estimated_revenue", "headcount", "linkedin_followers", "industry",
   "funding_stage", "total_raised", "location", "website", "linkedin_url", "ticker", "established", "parent",
