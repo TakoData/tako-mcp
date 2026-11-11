@@ -1,5 +1,38 @@
 # Changelog
 
+## [1.10.0](https://github.com/TakoData/tako-mcp/compare/v1.9.2...v1.10.0) (2026-11-11)
+
+
+### Features
+
+* **tools:** add opt-in company and people search and enrich tools (KE-2411) ([05c43d0](https://github.com/TakoData/tako-mcp/commit/05c43d02729325ff1fdd036dc60a250ce6e90800))
+* **tools:** add opt-in company and people search and enrich tools (KE-2411) ([212a595](https://github.com/TakoData/tako-mcp/commit/212a595509b2d131bc7b1acbeb678516da190ab3))
+
+
+### Bug Fixes
+
+* **tools:** classify the contents delivery field as metadata ([10d8b74](https://github.com/TakoData/tako-mcp/commit/10d8b74d32ffd2ac7553ee051ceccd8dca65fbc8))
+* **tools:** read error_message on every tool, and tighten the enrichment tools after review (KE-2411) ([2da3cc3](https://github.com/TakoData/tako-mcp/commit/2da3cc39434c383cdf5555df94c28d89c22709fe))
+
+
+### Chores
+
+* regenerate schemas + registry from synced spec ([e898b64](https://github.com/TakoData/tako-mcp/commit/e898b6449ecdebc4b41990b5f904a24be1bd34d8))
+* regenerate schemas + registry from synced spec ([c75ffc2](https://github.com/TakoData/tako-mcp/commit/c75ffc229996f737e5bc679f3aae7ef2e6de3a6d))
+* sync OpenAPI spec from monorepo ([d2cb9ec](https://github.com/TakoData/tako-mcp/commit/d2cb9ec1d3f1194afbf1c0c8f94c269ac919569a))
+* sync OpenAPI spec from monorepo ([94acb20](https://github.com/TakoData/tako-mcp/commit/94acb20ae81c8adaa72ac408f0f2b9e2fe3f8bbb))
+* sync OpenAPI spec from monorepo ([541a819](https://github.com/TakoData/tako-mcp/commit/541a819a69749ba67c4aac47625c77ed6e960ede))
+* sync OpenAPI spec from TakoData/tako ([3e030f9](https://github.com/TakoData/tako-mcp/commit/3e030f95e76726d67f6c25b055abcb7732b8d56e))
+* sync OpenAPI spec from TakoData/tako ([bf12022](https://github.com/TakoData/tako-mcp/commit/bf1202277038292468d411154dd18c3b0c2fe496))
+* sync OpenAPI spec from TakoData/tako ([cc6c5f9](https://github.com/TakoData/tako-mcp/commit/cc6c5f9c339ab633a6a9e677c99d9a625e470587))
+
+
+### Refactors
+
+* **tools:** label only the preview fields, and document finishing a field sync (KE-2411) ([30469a0](https://github.com/TakoData/tako-mcp/commit/30469a055b3af2877d297d483131393f0df0dc24))
+* **tools:** read the enrichment field lists from the spec's enums (KE-2411) ([6f683d5](https://github.com/TakoData/tako-mcp/commit/6f683d54c88fd5999cf83bfafbc727ebd21c5024))
+* **tools:** read the enrichment field lists from the spec's enums (KE-2411) ([c948241](https://github.com/TakoData/tako-mcp/commit/c948241ff9c10b15571368e0189f3ba1bf534b6f))
+
 ## [1.9.2](https://github.com/TakoData/tako-mcp/compare/v1.9.1...v1.9.2) (2026-11-06)
 
 
