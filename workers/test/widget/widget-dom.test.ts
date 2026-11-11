@@ -39,7 +39,7 @@ const EMBED_URL =
 // `EMBED_URL` itself stays plain: the click-through anchor is a link a HUMAN
 // opens in their own browser, which is an ordinary visit that should count —
 // so the href assertions below deliberately still use `EMBED_URL`.
-const EMBED_IFRAME_SRC = `${EMBED_URL}&disable_tracking=true&link_relay=1`;
+const EMBED_IFRAME_SRC = `${EMBED_URL}&disable_tracking=true`;
 const IMAGE_URL =
   "https://staging.trytako.com/api/v1/image/abc123/?dark_mode=true";
 const DATA_URL = "data:image/png;base64,AAAA";

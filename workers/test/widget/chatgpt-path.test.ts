@@ -133,7 +133,7 @@ function html(): string {
  */
 function renderedIframe(m: Mounted): boolean {
   return (
-    frame(m).getAttribute("src") === `${EMBED_URL}&disable_tracking=true&link_relay=1`
+    frame(m).getAttribute("src") === `${EMBED_URL}&disable_tracking=true`
   );
 }
 
@@ -1354,7 +1354,7 @@ describe("ChatGPT link relay", () => {
   it("asks the embed to relay its links", () => {
     const { m } = mountWithOpener();
     const src = new URL(frame(m).getAttribute("src") ?? "");
-    expect(src.searchParams.get("link_relay")).toBe("1");
+    expect(src.searchParams.get("link_relay")).toBe("true");
   });
 
   it("opens a link the embed relays through openExternal", () => {
@@ -1371,10 +1371,27 @@ describe("ChatGPT link relay", () => {
     const slides = carouselFrames(m);
     expect(slides).toHaveLength(3);
     for (const slide of slides) {
-      expect(new URL(slide.getAttribute("src") ?? "").searchParams.get("link_relay")).toBe("1");
+      expect(new URL(slide.getAttribute("src") ?? "").searchParams.get("link_relay")).toBe("true");
     }
     postOpenLink(m, nth(slides, 1).contentWindow, PROFILE_URL);
     expect(openExternal).toHaveBeenCalledWith({ href: PROFILE_URL });
+  });
+
+  it("doesn't ask for a relay when the runtime can't open external links", () => {
+    const m = mountWidget(html(), { toolOutput: PROD_STRUCTURED_CONTENT });
+    const src = new URL(frame(m).getAttribute("src") ?? "");
+    expect(src.searchParams.get("disable_tracking")).toBe("true");
+    expect(src.searchParams.get("link_relay")).toBeNull();
+  });
+
+  it("ignores a relayed link from a carousel slide on another origin", () => {
+    const { m, openExternal } = mountWithOpener({
+      toolResponseMetadata: { charts: threeCharts() },
+    });
+    const slides = carouselFrames(m);
+    expect(slides).toHaveLength(3);
+    postOpenLink(m, nth(slides, 1).contentWindow, PROFILE_URL, "https://evil.example");
+    expect(openExternal).not.toHaveBeenCalled();
   });
 
   it("ignores a relayed link from another origin", () => {

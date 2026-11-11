@@ -1162,15 +1162,23 @@ const WIDGET_HTML = `<!doctype html>
   // future \`?disable_tracking=false\`) is left alone rather than silently
   // overridden.
   function withoutTracking(url) {
-    if (!url || typeof url !== "string") return url;
-    if (url.indexOf("disable_tracking=") !== -1) return url;
-    return url + (url.indexOf("?") === -1 ? "?" : "&") + "disable_tracking=true";
+    return withParamIfAbsent(url, "disable_tracking", "true");
   }
 
-  function withLinkRelay(url) {
+  function withParamIfAbsent(url, name, value) {
     if (!url || typeof url !== "string") return url;
-    if (url.indexOf("link_relay=") !== -1) return url;
-    return url + (url.indexOf("?") === -1 ? "?" : "&") + "link_relay=1";
+    if (url.indexOf(name + "=") !== -1) return url;
+    return url + (url.indexOf("?") === -1 ? "?" : "&") + name + "=" + value;
+  }
+
+  function canRelayLinks() {
+    return hasOpenAiRuntime() && typeof window.openai.openExternal === "function";
+  }
+
+  function embedFrameSrc(url) {
+    var src = withoutTracking(url);
+    if (canRelayLinks()) src = withParamIfAbsent(src, "link_relay", "true");
+    return withHostTheme(src);
   }
 
   // The only origin the embed iframe may load. Substituted at resource-build
@@ -1913,7 +1921,7 @@ const WIDGET_HTML = `<!doctype html>
     iframe.setAttribute("frameborder", "0");
     iframe.setAttribute("allow", "fullscreen; clipboard-write");
     iframe.setAttribute("title", "Tako chart " + (index + 1) + " of " + total);
-    var src = withHostTheme(withLinkRelay(withoutTracking(chart.embed_url)));
+    var src = embedFrameSrc(chart.embed_url);
     var slide = {
       chart: chart,
       title: iframe.getAttribute("title"),
@@ -2067,30 +2075,38 @@ const WIDGET_HTML = `<!doctype html>
     return !!embedOrigin && event.origin === embedOrigin && event.source === frame.contentWindow;
   }
 
-  function openRelayedLink(href) {
-    if (typeof href !== "string") return;
-    var parsed;
+  function httpUrlOrNull(href) {
+    if (typeof href !== "string") return null;
     try {
-      parsed = new URL(href);
+      var parsed = new URL(href);
+      return parsed.protocol === "https:" || parsed.protocol === "http:" ? parsed : null;
     } catch (e) {
-      return;
+      return null;
     }
-    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return;
-    var oa = hasOpenAiRuntime() ? window.openai : null;
-    if (!oa || typeof oa.openExternal !== "function") return;
-    try {
-      var opened = oa.openExternal({ href: parsed.href });
-      if (opened && typeof opened.catch === "function") opened.catch(function () {});
-    } catch (e) {
-      return;
-    }
-    log("opened relayed link", { href: parsed.href });
   }
 
-  function onCarouselEmbedHeight(event, height) {
-    var slide = carouselSlideFor(event.source);
-    if (!slide || slide.live || event.origin !== slide.origin) return;
-    resizeSlide(slide, acceptedEmbedHeight(height));
+  function logLinkNotOpened(reason, href, error) {
+    log("relayed link not opened", { reason: reason, href: href, error: error ? String(error) : undefined });
+  }
+
+  function openRelayedLink(href) {
+    var parsed = httpUrlOrNull(href);
+    if (!parsed) return logLinkNotOpened("not an http(s) url", href);
+    if (!canRelayLinks()) return logLinkNotOpened("openExternal unavailable", parsed.href);
+    var opened;
+    try {
+      opened = window.openai.openExternal({ href: parsed.href });
+    } catch (e) {
+      return logLinkNotOpened("openExternal threw", parsed.href, e);
+    }
+    if (!opened || typeof opened.then !== "function") {
+      log("opened relayed link", { href: parsed.href });
+      return;
+    }
+    opened.then(
+      function () { log("opened relayed link", { href: parsed.href }); },
+      function (e) { logLinkNotOpened("openExternal rejected", parsed.href, e); }
+    );
   }
 
   function onLiveCardHeight(event, height) {
@@ -2255,11 +2271,11 @@ const WIDGET_HTML = `<!doctype html>
     var h = requestedHeight(structuredContent);
 
     if (validEmbed) {
-      // Tracking-free, then themed. This is the ChatGPT path: a committed
-      // cross-origin iframe of the embed page, and the surface OpenAI's iframe
-      // policy reviews — so it must not load a third-party beacon. See
-      // \`withoutTracking\`.
-      var themedUrl = withHostTheme(withLinkRelay(withoutTracking(url)));
+      // Tracking-free, link-relayed, then themed: see \`embedFrameSrc\`. This is
+      // the ChatGPT path: a committed cross-origin iframe of the embed page,
+      // and the surface OpenAI's iframe policy reviews — so it must not load a
+      // third-party beacon. See \`withoutTracking\`.
+      var themedUrl = embedFrameSrc(url);
       if (frame.src !== themedUrl) frame.src = themedUrl;
       armEmbedOrigin(themedUrl);
       // Aspect-derived when the server supplied the card's PNG dimensions,
@@ -3019,7 +3035,9 @@ const WIDGET_HTML = `<!doctype html>
   // so this is a live channel: it self-corrects chart heights, reveals a
   // veiled committed frame, and settles the committed-iframe watchdog.
   // Sanity bounds (positive integer < 4000 px) keep a hostile or buggy
-  // embed from blowing the iframe up to nonsensical sizes.
+  // embed from blowing the iframe up to nonsensical sizes. A
+  // \`tako-open-link\` message from the same embed iframe, under the same
+  // gate, opens its http(s) \`href\` through \`window.openai.openExternal\`.
   window.addEventListener("message", function (event) {
     var msg = event.data;
     if (!msg || typeof msg !== "object") return;
@@ -3032,8 +3050,9 @@ const WIDGET_HTML = `<!doctype html>
     // click-through URL; render() is one-shot). A sibling's
     // \`event.source\` is the sibling's own window, never parent or top,
     // so widening to \`top\` keeps the injection blocked. The
-    // \`tako-embed-height\` branch below is separately origin-gated to the
-    // embed iframe, so leave it reachable regardless.
+    // \`tako-embed-height\` and \`tako-open-link\` branches below are
+    // separately origin-gated to the embed iframe, so leave them reachable
+    // regardless.
     var fromHost = event.source === window.parent || event.source === window.top;
     // This gate guards Claude's only chart data path. If a host ever
     // delivers JSON-RPC from a context we don't trust, dropping it
@@ -3146,18 +3165,18 @@ const WIDGET_HTML = `<!doctype html>
       onLiveCardHeight(event, msg.height);
       return;
     }
-    if (msg.type === "tako-embed-height" && carouselSlideFor(event.source)) {
-      onCarouselEmbedHeight(event, msg.height);
-      return;
-    }
-    if (msg.type === "tako-embed-height" && embedOrigin && event.origin === embedOrigin) {
-      // Source pin, on top of the origin gate: only the widget's OWN embed
-      // iframe may drive resize/reveal. Origin alone would also admit any
-      // other browsing context running on the pinned Tako origin that can
-      // reach this window through the frame tree (e.g. a second widget's
-      // embed traversing \`top.frames\`), and this branch now controls
-      // visibility, not just size.
-      if (event.source !== frame.contentWindow) return;
+    // Source pin, on top of the origin gate: only the widget's OWN embed
+    // iframe may drive resize/reveal. Origin alone would also admit any
+    // other browsing context running on the pinned Tako origin that can
+    // reach this window through the frame tree (e.g. a second widget's
+    // embed traversing \`top.frames\`), and this branch now controls
+    // visibility, not just size.
+    if (msg.type === "tako-embed-height" && isOwnEmbedFrame(event)) {
+      var ownSlide = carouselSlideFor(event.source);
+      if (ownSlide) {
+        resizeSlide(ownSlide, acceptedEmbedHeight(msg.height));
+        return;
+      }
       var n = acceptedEmbedHeight(msg.height);
       if (n === null) return;
       // Latch BEFORE resizing: \`notifyHeight\` can reenter through the host,

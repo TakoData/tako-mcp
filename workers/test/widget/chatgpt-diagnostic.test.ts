@@ -171,7 +171,7 @@ describe("ChatGPT chart chain — link by link", () => {
   it("LINK 1+2 (delivery, commit): a full payload pins the embed iframe", () => {
     const m = mountWidget({ toolOutput: STRUCTURED_CONTENT });
     expect(frame(m).getAttribute("src")).toBe(
-      `${EMBED_URL}&disable_tracking=true&link_relay=1`,
+      `${EMBED_URL}&disable_tracking=true`,
     );
     // Veiled (height 0, layout box live) until the embed page loads —
     // reveal-on-load — then fully visible.
