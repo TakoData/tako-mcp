@@ -560,19 +560,16 @@ paths:
       tags:
       - tako
       summary: Search the data graph
-      description: Resolve a metric or entity in Tako's data graph by name. Use this
-        to discover and confirm what data exists before you query. For example, resolve
-        the entity here, find its metric with /v1/graph/related (relation=metrics,
-        q=<one keyword from the metric name, such as gdp>), then ask /v3/search or
-        /v1/answer for that entity + metric combination. Resolving the metric here
-        instead can return a same-named metric that has no data for that entity. Each
-        result's match_kind tells you whether q named it exactly; treat a fuzzy result
-        with suspicion. Requires an API key. Search checks each returned id against
-        the graph when it responds. Ids aren't durable across graph rebuilds, so search
-        again instead of storing an id for later. Pass label to prefer a NER label
-        (a ranking boost, not a filter); by default Tako infers the label from q.
-        This endpoint was previously at /beta/graph/search. That path still works
-        until 1 February 2027. Move to /v1/graph/search.
+      description: Resolve a metric or entity in Tako's data graph by name, to confirm
+        what data exists before you query. Resolve the entity here, find its metric
+        with /v1/graph/related (relation=metrics, q=<one keyword, such as gdp>), then
+        ask /v3/search or /v1/answer for that entity and metric. Resolving the metric
+        here can return a same-named metric with no data for that entity. Each result's
+        match_kind says whether q named it exactly, so treat a fuzzy match with suspicion.
+        Ids aren't durable across graph rebuilds, so search again instead of storing
+        one. Pass label to prefer a NER label; it boosts ranking and doesn't filter.
+        Requires an API key. This endpoint was previously at /beta/graph/search. That
+        path still works until 1 February 2027. Move to /v1/graph/search.
       operationId: graphSearch
       parameters:
       - description: Search text (min 1 char).
@@ -700,22 +697,17 @@ paths:
       tags:
       - tako
       summary: Get a graph node's related nodes
-      description: 'Explore what a node connects to. The overview returns an ordered
-        `relations` list: named relationships (for example `rel:competes_with`, `rel:in_industry`)
-        first, then a node''s metrics and entities, then similar nodes and membership
-        (part_of, members), then breakdowns. The metrics and entities are the entity
-        + metric combinations Tako covers — query /v3/search or /v1/answer for one.
-        A breakdown, keyed `breakdown:<dimension>`, lists the values a node''s data
-        is split by. For example, `breakdown:segment` lists the business and geographic
-        segments a company reports, such as Data Center for NVIDIA, and `breakdown:soc_code`
-        lists the occupations in an employer''s visa filings. A node can have several.
-        To get a segment''s figures, read the segment''s own `metrics` group, then
-        call /v3/search with the company, segment, and metric ids pinned in its data
-        `node_ids` field. A segment''s `metrics` lists what any company reports for
-        that segment, so the search shows which figures exist for this company. Each
-        group carries a stable `key`. Pass `relation`=<key> plus cursor to paginate
-        that one group. Pass the optional q to narrow by a case-insensitive substring
-        on names and aliases (for example, the metrics of an entity that match ''gdp'').
+      description: 'Explore what a node connects to. The response lists `relations`
+        in order: named relationships such as `rel:competes_with` and `rel:in_industry`,
+        then the node''s metrics and entities, then similar nodes and membership,
+        then breakdowns. A breakdown, keyed `breakdown:<dimension>`, lists the values
+        the node''s data is split by, such as the segments a company reports (`breakdown:segment`).
+        To get figures, call /v3/search or /v1/answer with the ids pinned in the search''s
+        data `node_ids` field. For a segment, read its own `metrics` group, which
+        lists what any company reports for that segment, then pin the company, segment,
+        and metric ids. Each group has a stable `key`. To page through one group,
+        pass the key as `relation` with `cursor`. To keep only the nodes whose name
+        or aliases contain every word you give, pass `q`, such as ''normalized ebit''.
         Requires an API key. This endpoint was previously at /beta/graph/related.
         That path still works until 1 February 2027. Move to /v1/graph/related.'
       operationId: graphRelated
@@ -742,9 +734,13 @@ paths:
           type: string
         name: relation_type
         in: query
-      - description: Optional case-insensitive substring filter on the related nodes'
-          names and aliases. It filters every group of the overview, or the single
-          paginated group when you set `relation`.
+      - description: 'Optional case-insensitive word filter on the related nodes''
+          names and aliases. A node matches when every word of `q` appears among its
+          name and aliases, in any order: ''normalized ebit'' matches EBIT (Normalized).
+          A word usually matches only as a whole word, so ''EBIT'' doesn''t match
+          EBITDA. A very common word, such as ''bank'', can also match inside a longer
+          word. It filters every group of the overview, or the single paginated group
+          when you set `relation`.'
         required: false
         schema:
           type: string
@@ -983,21 +979,12 @@ paths:
       tags:
       - tako
       summary: Download content
-      description: 'Download the content behind a search result: a CSV of a Tako card''s
-        underlying data, or the full text of a web page. Returns a short-lived presigned
-        download URL. Send `content_format: card_json` for a rich, card-type-specific
-        JSON object under `card_data` (for example a weather forecast with hourly
-        and daily records). A card_json export is truncated to `max_rows` like every
-        other format, so Tako never delivers more record rows than it bills. A card
-        whose record array is unbounded caps that array at the platform export ceiling
-        and sets `truncated`. A card type without a card_json shape returns 422. A
-        card returns 403 when Tako cannot export its data. A data provider that does
-        not permit export and a card whose sources Tako cannot confirm both return
-        403, and the error message states which. Send `quote_only: true` to get only
-        the export''s price (`cost` + `export_pricing`) with an empty payload. A quote
-        charges nothing, fetches nothing, and calls no data provider. Every format
-        prices a quote from `max_rows`, so the quote is an upper bound on the charge
-        and never falls below it.'
+      description: 'Download the content behind a search result: a Tako card''s data,
+        or the full text of a web page. By default, Tako returns a short-lived download
+        URL. Send `mode: inline` to get the content in the response, and `content_format:
+        card_json` for a card-type-specific JSON object. Send `quote_only: true` to
+        get the export''s price without fetching or charging. A card returns 403 when
+        Tako can''t export its data, and the error message says why.'
       operationId: contents
       requestBody:
         content:
@@ -1743,6 +1730,14 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorObject'
+        '403':
+          description: Your account doesn't have access to People Data Labs data,
+            which the company agent reads, so the company agent isn't available to
+            it. code is 'forbidden'.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
       security:
       - apiKey: []
   /v1/agent/company/runs/{run_id}:
@@ -2138,24 +2133,16 @@ components:
       - index
       - title
       title: AgentAnswerCitation
-      description: 'One indexed source behind the answer. Every inline [n] marker
-        in the
+      description: 'One source behind the answer, web or Tako. Each inline [n] marker
+        in
 
-        answer joins to a citation''s index. A citation can also back the answer
+        the answer matches a citation''s index, and a citation can back the answer
 
-        without a surviving inline marker — markers map to citations, not 1:1.
+        without a marker. The Answer Agent sets source_index and leaves excerpt,
 
-        This covers web and Tako sources alike, and it is the single shared
+        publish_date, and content null. The Retrieval Agent also sets excerpt and
 
-        citation object across both agent products. The extended fields
-
-        (source_index, excerpt, publish_date, content) are additive and nullable.
-
-        The Answer Agent populates source_index and leaves the rest null. The
-
-        Retrieval Agent also populates excerpt and publish_date for web
-
-        sources.'
+        publish_date for web sources.'
     AgentAnswerDefinition:
       properties:
         term:
@@ -2931,35 +2918,33 @@ components:
       - medium
       - high
       title: CompanyAgentEffort
-      description: 'Effort levels for the company-research agent (POST /v1/agent/company/runs).
+      description: 'Effort for the company agent (POST /v1/agent/company/runs).
 
 
-        All three are available. ''medium'' is the default. ''medium'' and ''high''
-        differ
-
-        in model strength and budget, and ''high'' always takes longer.
-
-
-        ''low'' is not a smaller ''medium''. It answers from the company registry
+        ''medium'' is the default. ''medium'' and ''high'' differ in model strength
         and
 
-        the web only: it screens companies by status, incorporation date, registered
+        budget, and ''high'' always takes longer.
 
-        location and industry, and it resolves named companies and people. It cannot
 
-        filter or rank by financial metrics such as revenue, market cap or
+        ''low'' answers from the company registry and the web only. It screens
 
-        headcount, and it cannot screen by SIC code. Ask it for one of those and it
+        companies by status, incorporation date, registered location, and industry,
 
-        answers the part it can and tells you which part it could not.
+        and it resolves named companies and people. It can''t filter or rank by
+
+        financial metrics such as revenue, market cap, or headcount, or screen by
+
+        SIC code. Asked for one of those, it answers the part it can and says which
+
+        part it couldn''t.
 
 
         The effort is fixed for the life of a thread. A follow-up that sends a
 
         different effort gets a 409 response with the code ''effort_mismatch''. To
-        use
 
-        a different effort, start a new thread.'
+        change it, start a new thread.'
     CompanyAgentRun:
       properties:
         run_id:
@@ -3624,14 +3609,15 @@ components:
         cost:
           type: number
           title: Cost
-          description: 'Price of this item in USD. On a /contents response this is
-            the amount actually billed. On a quote_only response it is a prospective
-            /contents export price, because Tako fetched nothing and billed nothing.
-            On a search or answer downloadable card it is also a prospective price,
-            unless Tako inlined rows for the card; then it is the amount this response
-            billed for the card. Use export_pricing on its own to price a /contents
-            export of the same card. Do not add this value to that result: they are
-            two prices for the same rows, not two charges.'
+          description: 'Price of this item in USD. On a quote_only response, it''s
+            the most a POST /v1/contents export with the same max_rows can charge.
+            On a search or answer web result, it''s the price of fetching the page,
+            because inlined web text is free. On a search, answer, or agent run card
+            without inlined rows, it''s export_pricing.baseline_usd, or the most the
+            card''s variable-cost minimum can be when that''s higher. On any other
+            item, it''s what this response billed for it, and those items sum to usage.data.cost_usd.
+            Price an export with export_pricing alone, and don''t add this value to
+            that price: they''re two prices, not two charges. See https://docs.tako.com/documentation/integrating-tako/contents/pricing.'
           default: 0.0
         data:
           anyOf:
@@ -3673,31 +3659,24 @@ components:
             type: object
           - type: 'null'
           title: Card Data
-          description: 'Inline card data as a card-type-specific JSON object. The
-            ''card_type'' field inside the object names its shape. Set only when content_format
-            is ''card_json''. Tako truncates the record rows in the object to ''max_rows'',
-            the same cap every other format takes, and bills the rows it returns.
-            A card whose record array is unbounded caps that array at the platform
-            export ceiling and reports ''truncated'': true. The payload then also
-            carries the true count for its record array. Card types without a card_json
-            shape return 422 on /contents and fall back to ''json_compact'' on search
-            and answer include_contents.'
+          description: Inline card data as a card-type-specific JSON object, set only
+            when content_format is 'card_json'. Its 'card_type' field names the shape,
+            and card_data_schema describes it. Tako cuts its record rows to max_rows,
+            like every other format, and bills the rows it returns. A card type without
+            a card_json shape returns 422 on /contents and falls back to 'json_compact'
+            on search and answer include_contents.
         card_data_schema:
           anyOf:
           - additionalProperties: true
             type: object
           - type: 'null'
           title: Card Data Schema
-          description: 'JSON Schema for the object in ''card_data''. Read it to learn
-            the shape of the payload without parsing the payload. Tako sets this whenever
-            content_format is ''card_json''. It is also set in ''url'' delivery mode
-            and on a Contents quote, where ''card_data'' is null and the shape is
-            all Tako returns. A search or answer card that you did not ask to inline
-            carries a price but no schema. The ''title'' field and the ''card_type''
-            default inside the schema name the shape. The schema describes the payload
-            type, so ''card_data'' can omit a field the schema declares: Tako drops
-            a measure the provider did not supply. Null for every other content_format
-            and for web text.'
+          description: 'JSON Schema for card_data, so you can learn its shape without
+            reading the payload. Set for every card_json export: inline, by URL, and
+            as a /contents quote. The last two leave card_data null. A search or answer
+            card that you didn''t ask to inline has no schema. card_data can omit
+            a field the schema declares when the provider didn''t supply it. Null
+            for other formats and for web text.'
         url:
           anyOf:
           - type: string
@@ -3717,58 +3696,44 @@ components:
           - type: integer
           - type: 'null'
           title: Total Rows
-          description: Total number of rows in the card's data, independent of how
-            many rows were returned. Compare with the rows returned to tell whether
-            a larger max_rows returns more. A card that lists a capped slice of a
-            larger set, such as the 30 soonest-closing of 330 open solicitations,
-            has only that slice as its data, so total_rows is 30 and total_matching
-            gives the set's size. On an agent run card, it's set for a card whose
-            rows are stored with the card, such as a people list, and null for other
-            agent run cards. On a search or answer card that returns no rows, it's
-            set when the card can hold premium values, and gives the rows a /contents
-            export of the card returns. A list of companies or people that match a
-            name or a set of filters, such as fintechs in London, shows the top of
-            a search its /contents export runs again, so on a search or answer card,
-            returned rows or not, total_rows is the most rows that export returns,
-            and truncated is true. Null for web text.
+          description: Rows in the card's data, however many this response returned.
+            Compare it with the rows returned to tell whether a larger max_rows returns
+            more. On a card that lists a capped slice of a larger set, it counts the
+            slice, and total_matching counts the set. On a search or answer list of
+            companies or people, it's the most rows a /contents export returns, and
+            truncated is true. On another search or answer card without inlined rows,
+            it's set only when the card can hold premium values. On an agent run card,
+            it's set only when the card stores its rows, as a people list does. Null
+            for web text.
         total_matching:
           anyOf:
           - type: integer
           - type: 'null'
           title: Total Matching
-          description: 'Size of the whole set behind a card that lists a capped slice
+          description: Size of the whole set behind a card that lists a capped slice
             of it, such as 330 for a card listing the 30 soonest-closing of 330 open
-            solicitations. It''s the count the card''s description states, and it''s
-            the same on every content format. A larger max_rows doesn''t return more
-            of that set. Tako reports it for the cards that list such a slice: open
-            solicitations, international tenders, a federal agency''s contracts, and
-            a company''s news. Null when the card''s rows are the whole set, when
-            Tako doesn''t count the set (truncated is still true), and for web text.'
+            solicitations. A larger max_rows doesn't return more of that set. Null
+            when the card's rows are the whole set, when Tako doesn't count the set
+            (truncated is still true), and for web text.
         truncated:
           type: boolean
           title: Truncated
-          description: True when the card has more rows than Tako returned. Tako caps
-            a card at the request max_rows or at the card's max_rows_ceiling (at most
-            100,000), and then total_rows is larger than the rows returned. It's also
-            true when the card itself lists a capped slice of a larger set; then total_matching
-            gives the set's size when Tako counts it. On a search or answer response,
-            it's also true when a /contents export of a list card returns more rows
-            than the card shows, and then total_rows counts the export's rows. An
-            inline /contents export that omits max_rows returns up to 2,000 rows.
-            On a search or answer response, all cards share a budget of 2,000 billable
-            rows and a budget of 20,000 inline rows, both spent in card order, so
-            a later card can return fewer rows than max_rows asked for. A card the
-            billable budget can no longer pay for still returns a small preview. A
-            card that arrives after the inline budget runs out returns no inline rows,
-            and its export_pricing still prices a /contents export of them.
+          description: 'True when the card holds more rows than Tako returned: max_rows
+            or the card''s max_rows_ceiling (at most 100,000) cut the rows, the card
+            lists a capped slice of a larger set (see total_matching), or, on a search
+            or answer response, a /contents export of a list card returns more rows
+            than the card shows. All cards in a search or answer response share a
+            2,000-billable-row budget and a 20,000-row budget, spent in card order,
+            so a later card can return a short preview or no rows. Its export_pricing
+            still prices a /contents export. See https://docs.tako.com/documentation/integrating-tako/contents/pricing#search-inline-contents-vs-the-contents-api.'
           default: false
         export_pricing:
           anyOf:
           - $ref: '#/components/schemas/ExportPricing'
           - type: 'null'
-          description: Rate card for a downloadable card CSV, so a caller can compute
-            a full export's cost before fetching. Null for web text and other non-downloadable
-            content.
+          description: Your rate for a POST /v1/contents export of this card, in any
+            format, so you can price the export before you fetch it. Null for web
+            text and other content you can't export.
         manifest:
           anyOf:
           - items:
@@ -3798,21 +3763,16 @@ components:
             type: object
           - type: 'null'
           title: Premium Rows
-          description: 'Per premium class (''company_record'', ''person_contact''),
-            the number of distinct records that the delivered rows hold a value for
-            in a column of that class, whether revealed or withheld: one per company
-            for ''company_record'' and one per person for ''person_contact''. A row
-            whose record can''t be identified counts as its own record. Multiply by
+          description: Per premium class ('company_record', 'person_contact'), the
+            number of distinct companies or people that the delivered rows hold a
+            value for in a column of that class, revealed or withheld. Multiply by
             export_pricing.premium_row_cpm_usd[class] / 1000 to price the premium
-            part of an export before asking for it. A row with cells of two classes
-            counts in each. Empty for a card with no premium columns; null for web
-            text. On an agent run card, it counts every row of the card, so a premium=true
-            export of all total_rows rows bills exactly these records when total_rows
-            is within max_rows_ceiling. On a search or answer card that returns no
-            rows, it counts the rows the card shows, and it''s null for a card that
-            can''t hold a premium value. When truncated is true there, an export reads
-            more rows than the card shows, so these counts are a preview''s: ask /contents
-            with quote_only for the premium price. It''s set wherever total_rows is.'
+            part of an export. Empty for a card without premium columns, and null
+            for web text. On an agent run card, it counts every row of the card. On
+            a search or answer card that inlines no rows, it counts the rows the card
+            shows, and it's null when the card can't hold a premium value. When truncated
+            is true there, ask /contents with quote_only for the premium price. See
+            https://docs.tako.com/documentation/integrating-tako/contents/pricing#premium-columns.
         redacted_cells:
           anyOf:
           - additionalProperties:
@@ -3858,9 +3818,9 @@ components:
           - url
           title: Delivery
           description: How Tako delivered the content. 'quote' means Tako delivered
-            nothing, and cost is the price of a later POST /v1/contents export. 'inline'
-            means the content is in data, records, dataset, or card_data. 'url' means
-            you download it from url before expires_at.
+            nothing, and cost is a price, not a charge. 'inline' means the content
+            is in data, records, dataset, or card_data. 'url' means you download it
+            from url before expires_at.
           readOnly: true
       type: object
       required:
@@ -3947,29 +3907,21 @@ components:
             minimum: 1
           - type: 'null'
           title: Max Rows
-          description: 'Optional cap on the rows a Tako card export returns and is
-            priced against. When omitted, it depends on mode: ''url'' returns the
-            whole card, up to the card''s export_pricing.max_rows_ceiling (at most
-            100,000 rows), and ''inline'' returns up to 2,000 rows. Tako clamps larger
-            values to that ceiling. When a card holds more rows than the cap, csv,
-            json_records, and json_compact keep the rows with the latest dates, counting
-            back from the card''s latest date even when that date is in the future,
-            as on a forecast. A card without a date column keeps its first rows instead.
-            Sports cards cut differently: a league schedule keeps the tab the card
-            shows, then the tabs nearest to it, and a game, standings, or team stats
-            card keeps an even share of each table. The kept rows stay in the card''s
-            own order. card_json cuts each card type its own way: a price or indicator
-            series keeps its newest readings, a forecast or ranking keeps its first
-            records, and those sports cards keep rows from the same tabs and tables
-            as their csv. Every row returned bills at the per-1,000-row rate, on top
-            of the flat per-export baseline. Tako never bills more rows than it returns,
-            so a card holding fewer rows than this cap bills only what it holds. Every
-            card format returns the rows up to this cap and bills them, including
-            card_json. Web URLs ignore this field. A card export can hold up to 100,000
-            rows. Don''t read a large export directly into a model''s context: at
-            about 15 tokens per row, 10,000 rows cost about 150,000 tokens. Write
-            the export to a file, on disk or in memory, and have the agent parse it
-            with code. Give the model only the rows or results it needs.'
+          description: 'Maximum rows a card export returns and bills. Omit it to get
+            the whole card in ''url'' mode or 2,000 rows in ''inline'' mode. Tako
+            clamps it to the card''s export_pricing.max_rows_ceiling (at most 100,000).
+            Every format, card_json included, bills each row it returns at the per-1,000-row
+            rate, plus the per-export baseline. When a card holds more rows than the
+            cap, csv, json_records, and json_compact keep the rows with the latest
+            dates on a card with a date column, even future ones, and the first rows
+            on a card without one. card_json cuts each card type its own way. In every
+            format, a sports card keeps the tabs nearest the one it shows, or an even
+            share of each table. See https://docs.tako.com/documentation/integrating-tako/contents/for-coding-agent#which-rows-a-capped-export-keeps.
+            Web URLs ignore this field. A card export can hold up to 100,000 rows.
+            Don''t read a large export directly into a model''s context: at about
+            15 tokens per row, 10,000 rows cost about 150,000 tokens. Write the export
+            to a file, on disk or in memory, and have the agent parse it with code.
+            Give the model only the rows or results it needs.'
           examples:
           - 100
         offset:
@@ -3977,21 +3929,16 @@ components:
           maximum: 100000
           minimum: 0
           title: Offset
-          description: 'Number of rows to skip before the export starts, counted in
-            the card''s own row order. Use it with max_rows to export one slice of
-            a long list, such as rows 100 to 149 with offset=100 and max_rows=50.
-            It works only on cards whose export keeps their first rows. A card with
-            a date column, a sports card, or content_format=card_json answers 422
-            to any offset above 0, because those exports don''t keep rows in a fixed
-            order from the top: a dated card keeps its newest rows, a sports card
-            keeps rows by tab or table, and card_json cuts each card type its own
-            way. offset plus max_rows can''t reach past the card''s export_pricing.max_rows_ceiling.
-            An offset at or past the card''s last row returns an empty payload with
-            total_rows set, and an API-key caller isn''t charged for it. To page through
-            a card, stop when a call returns fewer rows than max_rows: truncated stays
-            true on a card that lists a capped slice of a larger set. The row order
-            isn''t guaranteed to stay the same between calls, so check the rows you
-            receive, for example by name. Web URLs ignore this field.'
+          description: 'Rows to skip before the export starts, in the card''s own
+            row order. Use it with max_rows to export one slice of a list, such as
+            rows 100 to 149 with offset=100 and max_rows=50. Only a card whose export
+            keeps its first rows takes an offset: a card with a date column, a sports
+            card, or content_format=card_json returns 422 for any offset above 0.
+            offset plus max_rows can''t pass the card''s export_pricing.max_rows_ceiling.
+            An offset at or past the last row returns an empty payload, and an API-key
+            caller isn''t charged for it. To page through a card, stop when a call
+            returns fewer rows than max_rows, not when truncated turns false. The
+            row order can change between calls. Web URLs ignore this field.'
           default: 0
           examples:
           - 100
@@ -4010,46 +3957,29 @@ components:
         quote_only:
           type: boolean
           title: Quote Only
-          description: 'When true, return only the price of the export (cost + export_pricing)
-            without fetching content or charging. The response item''s payload and
-            url fields are null, and the request is free. One exception: a card_json
-            quote returns ''card_data_schema'', the shape the export would deliver.
-            The item''s delivery field reads ''quote''. `max_rows` shapes the quote.
-            An omitted `max_rows` defaults the way a real export does: the whole card
-            for mode ''url'', and 2,000 rows for ''inline''. The quote reads `mode`
-            only for that default. A quote ignores `offset` when pricing, so it stays
-            an upper bound, and it can''t tell whether the card has a date column:
-            a quote with `offset` above 0 can succeed on a card whose export then
-            answers 422. Every format prices a quote from `max_rows`, so a quote is
-            instant and makes no call to a data provider. A quote is an upper bound
-            on the charge: an export of a card with fewer rows than the cap bills
-            less. For a card with data from a source priced per unit, the quote also
-            covers the most that data can charge, which `export_pricing` reports as
-            `variable_cost_max_usd`. A card_json export is truncated to `max_rows`
-            like every other format, so the charge can never exceed the quote for
-            the same cap. A card_json quote reports no `total_rows`, because it does
-            not build the payload. The same export-safe gate applies, so an unexportable
-            card still returns 403, and a card type with no card_json shape still
-            returns 422.'
+          description: When true, return the export's price (cost and export_pricing)
+            without fetching content or charging. The item's delivery is 'quote',
+            and a card_json quote also returns card_data_schema but no total_rows.
+            Tako prices the quote from max_rows, defaulted the way an export defaults
+            it, so the quote is an upper bound on the export's charge and calls no
+            data provider. It includes the most a variable-cost source can charge,
+            export_pricing.variable_cost_max_usd. A quote ignores offset, so it can
+            succeed where the export returns 422. An unexportable card still returns
+            403, and a card type without a card_json shape still returns 422.
           default: false
         premium:
           type: boolean
           title: Premium
-          description: 'When true, reveal premium cells and bill them. A card''s premium
-            columns (see manifest[].premium_class) are withheld by default: a withheld
-            cell reads [premium: withheld] in CSV and is null in JSON formats. This
-            is the only way to receive their values. Some cards link each row to a
-            card for that single record. To reveal one record''s premium cells, request
-            the URL in that row''s tako_url column with premium=true. To reveal them
-            for every record the card''s export returns, up to max_rows, request the
-            card itself. The export then charges export_pricing.premium_row_cpm_usd[class]
-            per 1,000 premium records, on top of the standard row rate. A premium
-            record is a distinct company or person that the delivered rows hold a
-            value for in a column of that class; premium_rows on the item reports
-            the counts. The flag has no effect on a card without premium columns and
-            on web URLs, and is rejected with content_format=card_json. Over the Machine
-            Payments Protocol (MPP), premium=true is refused with a 403 before any
-            charge, unless quote_only is also true.'
+          description: 'When true, reveal premium cells and bill them. Premium columns
+            (manifest[].premium_class) are withheld by default: a withheld cell reads
+            [premium: withheld] in CSV and is null in JSON formats. The export charges
+            export_pricing.premium_row_cpm_usd[class] per 1,000 premium records on
+            top of the row rate, and the item''s premium_rows reports the counts.
+            To reveal one record, request the URL in its row''s tako_url column with
+            premium=true. It has no effect on a card without premium columns or on
+            a web URL. Tako rejects it with content_format=card_json, and refuses
+            it with 403 over the Machine Payments Protocol (MPP) unless quote_only
+            is also true. See https://docs.tako.com/documentation/integrating-tako/contents/pricing#premium-columns.'
           default: false
         max_cost_usd:
           anyOf:
@@ -4240,17 +4170,14 @@ components:
           - type: string
           - type: 'null'
           title: Coverage End
-          description: The last data point in the card's data, at the granularity
-            of the underlying series. An annual series reports a year (2026). A monthly
-            or quarterly series reports a month (2026-06). A daily or intraday series
-            reports a full date (2026-06-30). This value can be in the future when
-            the card includes projections. Null for card types without a coverage
-            date. The value uses ISO 8601 reduced precision, so examine the length
-            before you parse it. A date parser reads 2026 as 2026-01-01, which is
-            the start of the period and not the end. On a card with tabs, only the
-            tab this response built is rendered, so this date describes that tab,
-            and the same card can report a different date on a request that opens
-            a different tab. Cache it against the response, not against the card id.
+          description: 'The last data point in the card''s data, in ISO 8601 reduced
+            precision at the series'' granularity: a year (2026) for an annual series,
+            a month (2026-06) for a monthly or quarterly one, and a date (2026-06-30)
+            for a daily or intraday one. Check the length before you parse it: a date
+            parser reads 2026 as 2026-01-01, the start of the period. It can be in
+            the future when the card includes projections. On a card with tabs, it
+            describes the tab this response built, so cache it against the response,
+            not the card id. Null for card types without a coverage date.'
           examples:
           - '2026'
           - 2026-06
@@ -4356,23 +4283,20 @@ components:
             minimum: 1
           - type: 'null'
           title: Max Rows
-          description: 'Maximum number of card data rows to inline when include_contents
-            is true. Omit it and Tako uses your account''s inline row cap. That cap
-            is deliberately smaller than the whole card POST /api/v1/contents returns
-            by default: a search response inlines many cards, so the same number bills
-            once per card. Raise it to inline more rows, up to the card''s export_pricing.max_rows_ceiling
-            (at most 100,000). Tako clamps a larger value to that ceiling. Every inlined
-            row is billed: a flat per-card baseline fee plus the per-1,000-row rate,
-            the same rate POST /api/v1/contents charges. total_rows and truncated
-            report whether more rows remain. A single response also has a 2,000 billable-row
-            budget and a 20,000-row total budget, both shared across all cards. A
-            later card can therefore return fewer rows than you requested, or no inlined
-            rows at all. Such a card still carries its export_pricing quote, so you
-            can fetch its rows with POST /api/v1/contents. A card export can hold
-            up to 100,000 rows. Don''t read a large export directly into a model''s
-            context: at about 15 tokens per row, 10,000 rows cost about 150,000 tokens.
-            Write the export to a file, on disk or in memory, and have the agent parse
-            it with code. Give the model only the rows or results it needs.'
+          description: 'Maximum rows to inline per card when include_contents is true.
+            Omit it to use your account''s inline row cap, which is smaller than a
+            /contents export''s default because each card bills separately. Tako clamps
+            it to the card''s export_pricing.max_rows_ceiling (at most 100,000). Inlined
+            rows bill at the POST /api/v1/contents rate: a per-card baseline plus
+            the per-1,000-row rate. All cards in a response share a 2,000-billable-row
+            budget and a 20,000-row budget, so a later card can return fewer rows
+            or none. Check truncated, and fetch the rest with POST /api/v1/contents.
+            See https://docs.tako.com/documentation/integrating-tako/contents/pricing#search-inline-contents-vs-the-contents-api.
+            A card export can hold up to 100,000 rows. Don''t read a large export
+            directly into a model''s context: at about 15 tokens per row, 10,000 rows
+            cost about 150,000 tokens. Write the export to a file, on disk or in memory,
+            and have the agent parse it with code. Give the model only the rows or
+            results it needs.'
           examples:
           - 100
         node_ids:
@@ -4654,43 +4578,23 @@ components:
       - row_cpm_usd
       - max_rows_ceiling
       title: ExportPricing
-      description: 'Card export pricing rate for the /contents endpoint, published
-        so a
+      description: 'Your rate for a POST /v1/contents export of this card, so you
+        can price
 
-        caller can compute an export''s cost before fetching. A /contents export''s
-
-        own price = baseline_usd + row_cpm_usd * rows / 1000 + sum over classes c
-        of
-
-        premium_row_cpm_usd[c] * premium_rows[c] / 1000, rows <= max_rows_ceiling,
-        and
-
-        premium_rows[c] the export''s premium record count for class c.
-
-        For a card with data from a source priced per unit, the export charges the
-
-        larger of its own price and that source''s minimum, and
-
-        variable_cost_max_usd is the most that minimum can be.
+        the export before you fetch it.
 
 
-        row_cpm_usd is the card-level rate and is authoritative: don''t derive it
+        An export costs baseline_usd + row_cpm_usd * rows / 1000, where rows is the
 
-        from the card''s listed sources. It is the sum of the rates of the card''s
+        number of rows it returns, at most max_rows_ceiling. An export that passes
 
-        separately priced data feeds. A card with no separately priced feed bills
+        premium=true adds premium_row_cpm_usd[class] * premium_rows[class] / 1000
 
-        the standard rate once, however many sources it lists. An organization the
+        for each premium class. For a card with variable-cost data, the export
 
-        card credits only as the producer of a redistributed number, and a web page
+        charges the larger of that price and the source''s minimum, which is at most
 
-        it cites, never adds to the rate. There is no per-source breakdown. It is
-
-        per caller: an account whose row charges are waived sees 0 here, and the
-
-        same formula then yields the baseline alone, which is exactly what that
-
-        account is billed.'
+        variable_cost_max_usd.'
     FlatResult:
       properties:
         type:
@@ -5727,14 +5631,15 @@ components:
         cost:
           type: number
           title: Cost
-          description: 'Price of this item in USD. On a /contents response this is
-            the amount actually billed. On a quote_only response it is a prospective
-            /contents export price, because Tako fetched nothing and billed nothing.
-            On a search or answer downloadable card it is also a prospective price,
-            unless Tako inlined rows for the card; then it is the amount this response
-            billed for the card. Use export_pricing on its own to price a /contents
-            export of the same card. Do not add this value to that result: they are
-            two prices for the same rows, not two charges.'
+          description: 'Price of this item in USD. On a quote_only response, it''s
+            the most a POST /v1/contents export with the same max_rows can charge.
+            On a search or answer web result, it''s the price of fetching the page,
+            because inlined web text is free. On a search, answer, or agent run card
+            without inlined rows, it''s export_pricing.baseline_usd, or the most the
+            card''s variable-cost minimum can be when that''s higher. On any other
+            item, it''s what this response billed for it, and those items sum to usage.data.cost_usd.
+            Price an export with export_pricing alone, and don''t add this value to
+            that price: they''re two prices, not two charges. See https://docs.tako.com/documentation/integrating-tako/contents/pricing.'
           default: 0.0
         data:
           anyOf:
@@ -5776,31 +5681,24 @@ components:
             type: object
           - type: 'null'
           title: Card Data
-          description: 'Inline card data as a card-type-specific JSON object. The
-            ''card_type'' field inside the object names its shape. Set only when content_format
-            is ''card_json''. Tako truncates the record rows in the object to ''max_rows'',
-            the same cap every other format takes, and bills the rows it returns.
-            A card whose record array is unbounded caps that array at the platform
-            export ceiling and reports ''truncated'': true. The payload then also
-            carries the true count for its record array. Card types without a card_json
-            shape return 422 on /contents and fall back to ''json_compact'' on search
-            and answer include_contents.'
+          description: Inline card data as a card-type-specific JSON object, set only
+            when content_format is 'card_json'. Its 'card_type' field names the shape,
+            and card_data_schema describes it. Tako cuts its record rows to max_rows,
+            like every other format, and bills the rows it returns. A card type without
+            a card_json shape returns 422 on /contents and falls back to 'json_compact'
+            on search and answer include_contents.
         card_data_schema:
           anyOf:
           - additionalProperties: true
             type: object
           - type: 'null'
           title: Card Data Schema
-          description: 'JSON Schema for the object in ''card_data''. Read it to learn
-            the shape of the payload without parsing the payload. Tako sets this whenever
-            content_format is ''card_json''. It is also set in ''url'' delivery mode
-            and on a Contents quote, where ''card_data'' is null and the shape is
-            all Tako returns. A search or answer card that you did not ask to inline
-            carries a price but no schema. The ''title'' field and the ''card_type''
-            default inside the schema name the shape. The schema describes the payload
-            type, so ''card_data'' can omit a field the schema declares: Tako drops
-            a measure the provider did not supply. Null for every other content_format
-            and for web text.'
+          description: 'JSON Schema for card_data, so you can learn its shape without
+            reading the payload. Set for every card_json export: inline, by URL, and
+            as a /contents quote. The last two leave card_data null. A search or answer
+            card that you didn''t ask to inline has no schema. card_data can omit
+            a field the schema declares when the provider didn''t supply it. Null
+            for other formats and for web text.'
         url:
           anyOf:
           - type: string
@@ -5820,58 +5718,44 @@ components:
           - type: integer
           - type: 'null'
           title: Total Rows
-          description: Total number of rows in the card's data, independent of how
-            many rows were returned. Compare with the rows returned to tell whether
-            a larger max_rows returns more. A card that lists a capped slice of a
-            larger set, such as the 30 soonest-closing of 330 open solicitations,
-            has only that slice as its data, so total_rows is 30 and total_matching
-            gives the set's size. On an agent run card, it's set for a card whose
-            rows are stored with the card, such as a people list, and null for other
-            agent run cards. On a search or answer card that returns no rows, it's
-            set when the card can hold premium values, and gives the rows a /contents
-            export of the card returns. A list of companies or people that match a
-            name or a set of filters, such as fintechs in London, shows the top of
-            a search its /contents export runs again, so on a search or answer card,
-            returned rows or not, total_rows is the most rows that export returns,
-            and truncated is true. Null for web text.
+          description: Rows in the card's data, however many this response returned.
+            Compare it with the rows returned to tell whether a larger max_rows returns
+            more. On a card that lists a capped slice of a larger set, it counts the
+            slice, and total_matching counts the set. On a search or answer list of
+            companies or people, it's the most rows a /contents export returns, and
+            truncated is true. On another search or answer card without inlined rows,
+            it's set only when the card can hold premium values. On an agent run card,
+            it's set only when the card stores its rows, as a people list does. Null
+            for web text.
         total_matching:
           anyOf:
           - type: integer
           - type: 'null'
           title: Total Matching
-          description: 'Size of the whole set behind a card that lists a capped slice
+          description: Size of the whole set behind a card that lists a capped slice
             of it, such as 330 for a card listing the 30 soonest-closing of 330 open
-            solicitations. It''s the count the card''s description states, and it''s
-            the same on every content format. A larger max_rows doesn''t return more
-            of that set. Tako reports it for the cards that list such a slice: open
-            solicitations, international tenders, a federal agency''s contracts, and
-            a company''s news. Null when the card''s rows are the whole set, when
-            Tako doesn''t count the set (truncated is still true), and for web text.'
+            solicitations. A larger max_rows doesn't return more of that set. Null
+            when the card's rows are the whole set, when Tako doesn't count the set
+            (truncated is still true), and for web text.
         truncated:
           type: boolean
           title: Truncated
-          description: True when the card has more rows than Tako returned. Tako caps
-            a card at the request max_rows or at the card's max_rows_ceiling (at most
-            100,000), and then total_rows is larger than the rows returned. It's also
-            true when the card itself lists a capped slice of a larger set; then total_matching
-            gives the set's size when Tako counts it. On a search or answer response,
-            it's also true when a /contents export of a list card returns more rows
-            than the card shows, and then total_rows counts the export's rows. An
-            inline /contents export that omits max_rows returns up to 2,000 rows.
-            On a search or answer response, all cards share a budget of 2,000 billable
-            rows and a budget of 20,000 inline rows, both spent in card order, so
-            a later card can return fewer rows than max_rows asked for. A card the
-            billable budget can no longer pay for still returns a small preview. A
-            card that arrives after the inline budget runs out returns no inline rows,
-            and its export_pricing still prices a /contents export of them.
+          description: 'True when the card holds more rows than Tako returned: max_rows
+            or the card''s max_rows_ceiling (at most 100,000) cut the rows, the card
+            lists a capped slice of a larger set (see total_matching), or, on a search
+            or answer response, a /contents export of a list card returns more rows
+            than the card shows. All cards in a search or answer response share a
+            2,000-billable-row budget and a 20,000-row budget, spent in card order,
+            so a later card can return a short preview or no rows. Its export_pricing
+            still prices a /contents export. See https://docs.tako.com/documentation/integrating-tako/contents/pricing#search-inline-contents-vs-the-contents-api.'
           default: false
         export_pricing:
           anyOf:
           - $ref: '#/components/schemas/ExportPricing'
           - type: 'null'
-          description: Rate card for a downloadable card CSV, so a caller can compute
-            a full export's cost before fetching. Null for web text and other non-downloadable
-            content.
+          description: Your rate for a POST /v1/contents export of this card, in any
+            format, so you can price the export before you fetch it. Null for web
+            text and other content you can't export.
         manifest:
           anyOf:
           - items:
@@ -5901,21 +5785,16 @@ components:
             type: object
           - type: 'null'
           title: Premium Rows
-          description: 'Per premium class (''company_record'', ''person_contact''),
-            the number of distinct records that the delivered rows hold a value for
-            in a column of that class, whether revealed or withheld: one per company
-            for ''company_record'' and one per person for ''person_contact''. A row
-            whose record can''t be identified counts as its own record. Multiply by
+          description: Per premium class ('company_record', 'person_contact'), the
+            number of distinct companies or people that the delivered rows hold a
+            value for in a column of that class, revealed or withheld. Multiply by
             export_pricing.premium_row_cpm_usd[class] / 1000 to price the premium
-            part of an export before asking for it. A row with cells of two classes
-            counts in each. Empty for a card with no premium columns; null for web
-            text. On an agent run card, it counts every row of the card, so a premium=true
-            export of all total_rows rows bills exactly these records when total_rows
-            is within max_rows_ceiling. On a search or answer card that returns no
-            rows, it counts the rows the card shows, and it''s null for a card that
-            can''t hold a premium value. When truncated is true there, an export reads
-            more rows than the card shows, so these counts are a preview''s: ask /contents
-            with quote_only for the premium price. It''s set wherever total_rows is.'
+            part of an export. Empty for a card without premium columns, and null
+            for web text. On an agent run card, it counts every row of the card. On
+            a search or answer card that inlines no rows, it counts the rows the card
+            shows, and it's null when the card can't hold a premium value. When truncated
+            is true there, ask /contents with quote_only for the premium price. See
+            https://docs.tako.com/documentation/integrating-tako/contents/pricing#premium-columns.
         redacted_cells:
           anyOf:
           - additionalProperties:
@@ -5939,117 +5818,25 @@ components:
           - url
           title: Delivery
           description: How Tako delivered the content. 'quote' means Tako delivered
-            nothing, and cost is the price of a later POST /v1/contents export. 'inline'
-            means the content is in data, records, dataset, or card_data. 'url' means
-            you download it from url before expires_at.
+            nothing, and cost is a price, not a charge. 'inline' means the content
+            is in data, records, dataset, or card_data. 'url' means you download it
+            from url before expires_at.
           readOnly: true
       type: object
       title: ResultContent
-      description: 'Describes the downloadable content behind a result.
+      description: 'The downloadable content behind a result: its price, and its payload
+        once
+
+        Tako delivers it.
 
 
-        Pricing: for a Tako card CSV export, the charge is a flat per-export
+        `delivery` says how Tako delivered the content. A delivered item sets one
 
-        baseline plus a per-row CPM on every row returned, at the rate that
+        payload group: `data` (CSV or web text), `records` (json_records),
 
-        ``export_pricing.row_cpm_usd`` publishes. Web text bills at the standard Contents
+        `dataset` (json_compact), `card_data` (card_json), or `url` with
 
-        rate on POST /v1/contents; web text inlined on a search or answer response
-
-        is free.
-
-
-        The meaning of `cost` depends on the surface. On `/contents` responses,
-
-        `cost` is the actual charge, and it reconciles with what that response
-
-        billed. The exception is a `quote_only` response, where `cost` is a
-
-        prospective price: Tako neither fetched nor billed the export, and the
-
-        payload and url fields are null. On a search or answer downloadable
-
-        card, `cost` is a prospective `/contents` quote (the per-export baseline
-
-        floor) unless Tako inlined rows for the card, in which case it is what this
-
-        response billed for the card. The billed cards sum to
-
-        `usage.data.cost_usd`, never to `usage.total_cost_usd` (which always adds
-
-        the flat per-request compute rate).
-
-
-        On a search or answer WEB result, `cost` is always a prospective
-
-        `/v1/contents` quote and NEVER a charge -- including when Tako inlined the
-
-        page text, because inlined web text is free, so the card rule above does not
-
-        carry over. That quote arrives on `cost` alone: `export_pricing` is null for
-
-        web text, so zeroing `cost` on an inlined result would leave a caller no way
-
-        to price a later fetch. A response whose only inlined contents were web text
-
-        therefore reports `usage.data` as null -- nothing was billed for data.
-
-
-        `export_pricing` carries the `/contents` export rate, so a caller can
-
-        compute the full charge of a later export before fetching: baseline_usd +
-
-        row_cpm_usd * billed_rows / 1000 + sum over classes c of
-
-        premium_row_cpm_usd[c] * premium_rows[c] / 1000, where `billed_rows` is the
-
-        SMALLER of the rows the export returns and `max_rows` clamped to
-
-        `max_rows_ceiling`, `premium_rows` is this item''s per-class record count,
-        and the
-
-        premium term applies only to an export that passes `premium=true`. One
-
-        formula covers every format, card_json included: every export returns no
-
-        more rows than that cap, so a card with fewer rows than the cap bills only
-
-        the rows it returns. `row_cpm_usd` is the CALLER''S rate -- 0 where their
-        row
-
-        charges are waived, the same waiver a billed inline card''s `cost` uses, and
-
-        /contents resolves it too. `export_pricing` is null for web text
-
-        and non-downloadable content.
-
-
-        Do NOT combine `cost` with `export_pricing` on a billed inline card. There,
-
-        `cost` is the amount THIS response charged, over the rows this response
-
-        inlined, so it is not a `/contents` price for the same card: the two cover
-
-        different row counts, because a search response''s default inline cap is far
-
-        smaller than what `/contents` returns. Read `cost` for what this response
-
-        billed. Use `export_pricing` alone
-
-        to price a `/contents` export of the same card.
-
-
-        Tako populates exactly one payload group once it delivers contents:
-
-        `data` (CSV or web text), `records` (verbose JSON), `dataset` (compact
-
-        TakoDataset), `card_data` (rich card-type-specific JSON), or `url` plus
-
-        `expires_at` (presigned download). `delivery` names which one, or
-
-        `quote` when Tako delivered nothing. To get a quoted item''s content, call
-
-        the Contents endpoint.'
+        `expires_at`. To get a quoted item''s content, call POST /v1/contents.'
     ResultSource:
       properties:
         name:
@@ -6489,31 +6276,27 @@ components:
       - status
       - created_at
       title: RunSummaryEvent
-      description: 'Terminal run metadata. The stream emits it once, immediately before
+      description: 'Terminal run metadata. The stream sends it once, right before
 
-        stream_done. It mirrors the GET-poll run fields that the stream otherwise
+        stream_done, with the GET-poll run fields the stream otherwise lacks.
 
-        lacks; the result stays in the agent_result event. status, created_at,
+        status, created_at, and completed_at are always present. error appears
 
-        and completed_at are always present. error appears only on failure. usage
+        only on a failed run. usage appears only on a metered (pay-as-you-go) run
 
-        appears only on metered (pay-as-you-go) runs and is null otherwise.
-
-        agent_result plus run_summary equals the GET poll object, with one exception:
-
-        for up to 30 seconds after a run completes, the GET poll can still report
-
-        it running. Treat this frame''s status as authoritative.
+        and is null otherwise.
 
 
-        It carries the same envelope `seq` as the stream_done that follows it (it
+        agent_result plus run_summary equals the GET poll object, except that for
 
-        has no seq of its own), and the stream suppresses its SSE `id:`, so it
+        up to 30 seconds after a run completes, the poll can still report it
 
-        advances no resume cursor. Identify it by `kind`, and don''t assume `seq`
-        is
+        running. Treat this frame''s status as authoritative.
 
-        unique per frame.'
+
+        It shares the envelope `seq` of the stream_done that follows it and
+
+        advances no resume cursor. Identify it by `kind`.'
     SearchEffortLevel:
       type: string
       enum:
@@ -6521,20 +6304,18 @@ components:
       - instant
       - deep
       title: SearchEffortLevel
-      description: 'Public effort taxonomy for search and answer. `fast` is the default.
+      description: 'Effort for search and answer. `fast` is the default. `instant`
+        serves
 
-        `instant` serves cached embeds without a new data retrieval and works in all
+        cached cards without a new data retrieval. On /v1/answer, `instant` also
 
-        environments. On /v1/answer it also writes the answer with the fastest
+        writes the answer with the fastest model, trading answer quality for
 
-        synthesis model, so it trades answer quality for latency. On /v1/answer `fast`
+        speed, while `fast` and `deep` use a stronger model. `deep` also searches
 
-        and `deep` both write the answer with a stronger model. `deep` also widens
-        Tako
+        more of Tako''s data and reranks the results a second time. It''s slower,
 
-        retrieval and adds a second, higher-quality reranking pass; it''s slower and
-
-        bills at a premium tier.'
+        and it bills at a premium rate.'
     SearchRequest:
       properties:
         query:
@@ -7516,13 +7297,11 @@ components:
           type: boolean
           title: Highlights
           description: 'Return query-relevant highlight passages as each web result''s
-            snippet, instead of the opening text of the page. Highlights usually carry
-            the answer-bearing sentences, and stay within snippet_max_chars. Unless
-            you also set include_contents, Tako requests no page text, so a page with
-            no highlight returns snippet: null. The snippet can also hold more than
-            one passage from different parts of the page, joined by '' … ''. Read
-            the snippet as a whole. Do not cut the snippet to a fixed length. Do not
-            quote the snippet as one continuous sentence.'
+            snippet, instead of the page''s opening text. Highlights stay within snippet_max_chars.
+            Unless you also set include_contents, Tako fetches no page text, so a
+            page with no highlight returns snippet: null. A snippet can join passages
+            from different parts of the page with '' … '', so it isn''t one continuous
+            quote.'
           default: false
         article_content_max_chars:
           type: integer
