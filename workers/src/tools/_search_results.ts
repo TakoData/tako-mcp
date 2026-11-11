@@ -395,6 +395,10 @@ function capCsv(csv: string, cap: number): { data: string; truncated: boolean } 
  * summary, which search already returns without rows, and the second echoes
  * the request's offset.
  *
+ * `delivery` is METADATA: it says whether the content is a price quote, inline
+ * rows or a download url, and carries no rows itself. Drop-all mode removes it
+ * when it says `inline`, because the rows it points at are gone.
+ *
  * Known caveat, live now that people cards carry premium columns: both
  * `premium_rows` and `redacted_cells` are stated against the rows the BACKEND
  * delivered, and the numeric-cap branch below re-slices those rows. The count
@@ -423,6 +427,7 @@ export const CONTENT_META_KEYS = [
   "redacted_cells",
   "description",
   "offset",
+  "delivery",
 ] as const;
 
 export function slimCardContent(
@@ -437,7 +442,9 @@ export function slimCardContent(
   // card_data_schema/…).
   const { data: rawData, records, dataset, card_data: cardData, ...meta } = content as LooseContent;
   if (capRows === null) {
-    return { ...meta, data: null, records: null, dataset: null, card_data: null } as ResultContent;
+    const { delivery, ...rest } = meta;
+    const kept = delivery === "inline" ? rest : meta;
+    return { ...kept, data: null, records: null, dataset: null, card_data: null } as ResultContent;
   }
 
   // CSV payload lives in `data` — cap it in place rather than blanking it, so an
