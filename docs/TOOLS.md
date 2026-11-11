@@ -4183,7 +4183,8 @@ Annotations:
           "anyOf": [
             {
               "type": "number",
-              "minimum": 0
+              "minimum": 0,
+              "maximum": 1000000
             },
             {
               "type": "null"

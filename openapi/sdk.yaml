@@ -1045,20 +1045,26 @@ paths:
               schema:
                 $ref: '#/components/schemas/BaseAPIError'
         '422':
-          description: 'The card can''t be served in the requested form. The response
-            body''s error_type names the case. UNSUPPORTED_CONTENT_FORMAT: this card
+          description: 'Tako refused the request. The response body''s error_type
+            names the case. COST_CAP_EXCEEDED: the call''s price is above its max_cost_usd.
+            The body''s quoted_cost_usd is the most the call would cost, and Tako
+            charged nothing. For a card, lower max_rows or raise max_cost_usd. For
+            a web page, raise max_cost_usd. UNSUPPORTED_CONTENT_FORMAT: this card
             type doesn''t support content_format=''card_json''; use ''csv'', ''json_records'',
             or ''json_compact'' for that card. PLACEHOLDER_CARD: the card is a placeholder
             whose data is withheld from this caller, and every content format refuses
             it. VARIABLE_COST_NOT_REQUESTED: the card''s data comes from a variable-cost
-            source that is not served to this caller. Both apply to an MPP request
-            and to an account that isn''t served variable-cost data. Any other caller
-            gets the card''s data. For an MPP request, call the API with an API key.
-            For an account that isn''t served variable-cost data, contact support@tako.com.'
+            source that is not served to this caller. Both apply to a request paid
+            through the Machine Payments Protocol (MPP) and to an account that isn''t
+            served variable-cost data. Any other caller gets the card''s data. For
+            an MPP request, call the API with an API key. For an account that isn''t
+            served variable-cost data, contact support@tako.com.'
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/BaseAPIError'
+                anyOf:
+                - $ref: '#/components/schemas/BaseAPIError'
+                - $ref: '#/components/schemas/CostCapExceededError'
         '429':
           description: 'Too many requests. With error_type RATE_LIMIT_EXCEEDED, the
             request hit a rate limit: retry after the interval in the Retry-After
@@ -2066,6 +2072,7 @@ components:
       - PLACEHOLDER_CARD
       - VARIABLE_COST_NOT_REQUESTED
       - BUDGET_EXCEEDED
+      - COST_CAP_EXCEEDED
       title: APIErrorType
     AgentAnswerAssumption:
       properties:
@@ -2432,10 +2439,7 @@ components:
       required:
       - data
       title: AnswerAgentRunList
-      description: 'List envelope for GET /v1/agent/answer/runs. The shape follows
-        the
-
-        OpenAI and Exa list convention.'
+      description: List envelope for GET /v1/agent/answer/runs.
     AnswerAgentRunRequest:
       properties:
         query:
@@ -2887,7 +2891,7 @@ components:
           - type: string
           - type: 'null'
           title: Entity
-          description: 'What the column is measured FOR: the resolved values of every
+          description: 'What the column is measured for: the resolved values of every
             dimension the series is filtered to, joined with an em dash — for example
             ''Austin, TX — Condo''. A card filtered on one dimension reports that
             one value. This field reports resolved display values only and never an
@@ -2914,28 +2918,12 @@ components:
             which rows held a value. Null for every other column.'
       type: object
       title: ColumnDescriptor
-      description: 'Structured description of one exported value column.
+      description: 'Describes one exported column.
 
 
-        Producers set the semantic parts they know (``metric``, ``entity``,
+        Manifest entry `i` describes column `i`, and its `name` equals that
 
-        ``unit``). ``name`` and ``dtype`` are filled centrally: ``name`` is the
-
-        rendered canonical header (set by ``apply_descriptor_names``), and ``dtype``
-
-        is inferred from the real column data in ``finalize_export_frame``. A
-
-        producer-set ``dtype`` would drift from the cells, and a producer cannot know
-
-        the disambiguated ``name`` before the whole frame is rendered.
-
-
-        In the exported manifest ``name`` equals the column''s actual header, and
-        the
-
-        manifest is positionally aligned with the exported columns (manifest entry
-
-        ``i`` describes column ``i``).'
+        column''s header.'
     CompanyAgentEffort:
       type: string
       enum:
@@ -3049,10 +3037,7 @@ components:
       required:
       - data
       title: CompanyAgentRunList
-      description: 'List envelope for GET /v1/agent/company/runs. The shape follows
-        the
-
-        OpenAI and Exa list convention.'
+      description: List envelope for GET /v1/agent/company/runs.
     CompanyAgentRunRequest:
       properties:
         query:
@@ -3228,12 +3213,16 @@ components:
             minimum: 1
           - type: 'null'
           title: Max Rows
-          description: Maximum number of rows to inline when include_contents is true.
-            Omit it and Tako uses your account's inline row cap. Tako clamps a larger
-            value to the card's export_pricing.max_rows_ceiling (at most 100,000).
-            Every inlined row is billed at the POST /api/v1/contents rate. For the
-            rest of the list, call POST /api/v1/contents with the card's webpage_url
-            and an offset.
+          description: 'Maximum number of rows to inline when include_contents is
+            true. Omit it and Tako uses your account''s inline row cap. Tako clamps
+            a larger value to the card''s export_pricing.max_rows_ceiling (at most
+            100,000). Every inlined row is billed at the POST /api/v1/contents rate.
+            For the rest of the list, call POST /api/v1/contents with the card''s
+            webpage_url and an offset. A card export can hold up to 100,000 rows.
+            Don''t read a large export directly into a model''s context: at about
+            15 tokens per row, 10,000 rows cost about 150,000 tokens. Write the export
+            to a file, on disk or in memory, and have the agent parse it with code.
+            Give the model only the rows or results it needs.'
         content_format:
           $ref: '#/components/schemas/ContentsFormat'
           description: 'Serialization for the inlined rows: ''json_compact'', ''json_records'',
@@ -3352,12 +3341,16 @@ components:
             minimum: 1
           - type: 'null'
           title: Max Rows
-          description: Maximum number of rows to inline when include_contents is true.
-            Omit it and Tako uses your account's inline row cap. Tako clamps a larger
-            value to the card's export_pricing.max_rows_ceiling (at most 100,000).
-            Every inlined row is billed at the POST /api/v1/contents rate. For the
-            rest of the list, call POST /api/v1/contents with the card's webpage_url
-            and an offset.
+          description: 'Maximum number of rows to inline when include_contents is
+            true. Omit it and Tako uses your account''s inline row cap. Tako clamps
+            a larger value to the card''s export_pricing.max_rows_ceiling (at most
+            100,000). Every inlined row is billed at the POST /api/v1/contents rate.
+            For the rest of the list, call POST /api/v1/contents with the card''s
+            webpage_url and an offset. A card export can hold up to 100,000 rows.
+            Don''t read a large export directly into a model''s context: at about
+            15 tokens per row, 10,000 rows cost about 150,000 tokens. Write the export
+            to a file, on disk or in memory, and have the agent parse it with code.
+            Give the model only the rows or results it needs.'
         content_format:
           $ref: '#/components/schemas/ContentsFormat'
           description: 'Serialization for the inlined rows: ''json_compact'', ''json_records'',
@@ -3557,8 +3550,7 @@ components:
 
             - histogram: Histogram chart showing frequency distribution of values
 
-            - person_card: Person profile card from an Exa person search result (includes
-            career, education, and about tabs)
+            - person_card: Person profile card with career, education, and about tabs
 
             - pie: Pie chart showing proportional data as slices of a circle
 
@@ -3648,12 +3640,7 @@ components:
           title: Data
           description: 'Inline payload as text: card data serialized to CSV, or a
             web page''s extracted text. Set only for the ''csv'' card format and for
-            web text; null otherwise. A card export can hold up to 100,000 rows. Don''t
-            read a large export directly into a model''s context: at about 15 tokens
-            per row, 10,000 rows cost about 150,000 tokens. Write the export to a
-            file, on disk or in memory, and have the agent parse it with code. Give
-            the model only the rows or results it needs. To cap the export instead,
-            set max_rows.'
+            web text; null otherwise.'
         records:
           anyOf:
           - items:
@@ -3673,23 +3660,13 @@ components:
           - type: 'null'
           title: Records
           description: 'Inline card data as verbose JSON: a list of row objects keyed
-            by column name. Set only when content_format is ''json_records''. A card
-            export can hold up to 100,000 rows. Don''t read a large export directly
-            into a model''s context: at about 15 tokens per row, 10,000 rows cost
-            about 150,000 tokens. Write the export to a file, on disk or in memory,
-            and have the agent parse it with code. Give the model only the rows or
-            results it needs. To cap the export instead, set max_rows.'
+            by column name. Set only when content_format is ''json_records''.'
         dataset:
           anyOf:
           - $ref: '#/components/schemas/TakoDataset'
           - type: 'null'
-          description: 'Inline card data as a compact TakoDataset (typed column headers
-            plus positional row arrays). Set only when content_format is ''json_compact''.
-            A card export can hold up to 100,000 rows. Don''t read a large export
-            directly into a model''s context: at about 15 tokens per row, 10,000 rows
-            cost about 150,000 tokens. Write the export to a file, on disk or in memory,
-            and have the agent parse it with code. Give the model only the rows or
-            results it needs. To cap the export instead, set max_rows.'
+          description: Inline card data as a compact TakoDataset (typed column headers
+            plus positional row arrays). Set only when content_format is 'json_compact'.
         card_data:
           anyOf:
           - additionalProperties: true
@@ -3704,12 +3681,7 @@ components:
             export ceiling and reports ''truncated'': true. The payload then also
             carries the true count for its record array. Card types without a card_json
             shape return 422 on /contents and fall back to ''json_compact'' on search
-            and answer include_contents. A card export can hold up to 100,000 rows.
-            Don''t read a large export directly into a model''s context: at about
-            15 tokens per row, 10,000 rows cost about 150,000 tokens. Write the export
-            to a file, on disk or in memory, and have the agent parse it with code.
-            Give the model only the rows or results it needs. To cap the export instead,
-            set max_rows.'
+            and answer include_contents.'
         card_data_schema:
           anyOf:
           - additionalProperties: true
@@ -3878,6 +3850,18 @@ components:
           title: Offset
           description: The request's offset, echoed on a Tako card export. Null for
             web text and quotes.
+        delivery:
+          type: string
+          enum:
+          - quote
+          - inline
+          - url
+          title: Delivery
+          description: How Tako delivered the content. 'quote' means Tako delivered
+            nothing, and cost is the price of a later POST /v1/contents export. 'inline'
+            means the content is in data, records, dataset, or card_data. 'url' means
+            you download it from url before expires_at.
+          readOnly: true
       type: object
       required:
       - source_url
@@ -3885,42 +3869,21 @@ components:
       description: 'A single downloadable artifact.
 
 
-        It inherits `content_format`, `cost`, the payload fields (`data`,
+        `delivery` says whether this item is a quote, inline content, or a
 
-        `records`, `dataset`, `total_rows`, `truncated`), and the presigned `url`
+        download URL. A card_json quote and a card_json `url` delivery also return
 
-        and `expires_at` from ResultContent. URL mode populates `url` and
-
-        `expires_at`. INLINE mode populates one of the payload fields and leaves
-
-        `url` and `expires_at` null. A `quote_only` request yields a third shape:
-
-        `cost` (plus `export_pricing` for a card) with every payload and url
-
-        field null and `content_format` null — the price of the export, with
-
-        nothing fetched or charged.
-
-
-        `card_data_schema` is the one field that does NOT follow that rule: a
-
-        card_json quote and a card_json `url` delivery both return it beside a null
-
-        `card_data`, because the shape is what those two shapes have to offer. Test
-
-        `content_format` for null to tell a quote from a delivery; a null payload
-
-        field cannot do it.'
+        `card_data_schema`, with `card_data` null.'
     ContentsDeliveryMode:
       type: string
       enum:
       - url
       - inline
       title: ContentsDeliveryMode
-      description: 'How contents reach the caller. URL returns a short-lived presigned
+      description: 'How contents reach the caller. `url` returns a short-lived presigned
         file
 
-        download; INLINE returns the content in the response body.'
+        download; `inline` returns the content in the response body.'
     ContentsFormat:
       type: string
       enum:
@@ -3970,12 +3933,7 @@ components:
           description: 'Delivery mode. ''url'' returns a presigned download link.
             ''inline'' returns the content in the response body: card data up to 2,000
             rows unless max_rows asks for more, up to the card''s export_pricing.max_rows_ceiling,
-            at most 100,000 (with total_rows and truncated reported), or web text.
-            A card export can hold up to 100,000 rows. Don''t read a large export
-            directly into a model''s context: at about 15 tokens per row, 10,000 rows
-            cost about 150,000 tokens. Write the export to a file, on disk or in memory,
-            and have the agent parse it with code. Give the model only the rows or
-            results it needs. To cap the export instead, set max_rows.'
+            at most 100,000 (with total_rows and truncated reported), or web text.'
           default: url
         content_format:
           $ref: '#/components/schemas/ContentsFormat'
@@ -4011,8 +3969,7 @@ components:
             rows. Don''t read a large export directly into a model''s context: at
             about 15 tokens per row, 10,000 rows cost about 150,000 tokens. Write
             the export to a file, on disk or in memory, and have the agent parse it
-            with code. Give the model only the rows or results it needs. To cap the
-            export instead, set max_rows.'
+            with code. Give the model only the rows or results it needs.'
           examples:
           - 100
         offset:
@@ -4057,23 +4014,23 @@ components:
             without fetching content or charging. The response item''s payload and
             url fields are null, and the request is free. One exception: a card_json
             quote returns ''card_data_schema'', the shape the export would deliver.
-            Test ''content_format'' for null to tell a quote from a delivery. `max_rows`
-            shapes the quote. An omitted `max_rows` defaults the way a real export
-            does: the whole card for mode ''url'', and 2,000 rows for ''inline''.
-            The quote reads `mode` only for that default. A quote ignores `offset`
-            when pricing, so it stays an upper bound, and it can''t tell whether the
-            card has a date column: a quote with `offset` above 0 can succeed on a
-            card whose export then answers 422. Every format prices a quote from `max_rows`,
-            so a quote is instant and makes no call to a data provider. A quote is
-            an upper bound on the charge: an export of a card with fewer rows than
-            the cap bills less. For a card with data from a source priced per unit,
-            the quote also covers the most that data can charge, which `export_pricing`
-            reports as `variable_cost_max_usd`. A card_json export is truncated to
-            `max_rows` like every other format, so the charge can never exceed the
-            quote for the same cap. A card_json quote reports no `total_rows`, because
-            it does not build the payload. The same export-safe gate applies, so an
-            unexportable card still returns 403, and a card type with no card_json
-            shape still returns 422.'
+            The item''s delivery field reads ''quote''. `max_rows` shapes the quote.
+            An omitted `max_rows` defaults the way a real export does: the whole card
+            for mode ''url'', and 2,000 rows for ''inline''. The quote reads `mode`
+            only for that default. A quote ignores `offset` when pricing, so it stays
+            an upper bound, and it can''t tell whether the card has a date column:
+            a quote with `offset` above 0 can succeed on a card whose export then
+            answers 422. Every format prices a quote from `max_rows`, so a quote is
+            instant and makes no call to a data provider. A quote is an upper bound
+            on the charge: an export of a card with fewer rows than the cap bills
+            less. For a card with data from a source priced per unit, the quote also
+            covers the most that data can charge, which `export_pricing` reports as
+            `variable_cost_max_usd`. A card_json export is truncated to `max_rows`
+            like every other format, so the charge can never exceed the quote for
+            the same cap. A card_json quote reports no `total_rows`, because it does
+            not build the payload. The same export-safe gate applies, so an unexportable
+            card still returns 403, and a card type with no card_json shape still
+            returns 422.'
           default: false
         premium:
           type: boolean
@@ -4090,10 +4047,29 @@ components:
             record is a distinct company or person that the delivered rows hold a
             value for in a column of that class; premium_rows on the item reports
             the counts. The flag has no effect on a card without premium columns and
-            on web URLs, and is rejected with content_format=card_json, which carries
-            no premium plumbing. Over MPP, premium=true is refused with a 403 before
-            any charge, unless quote_only is also true.'
+            on web URLs, and is rejected with content_format=card_json. Over the Machine
+            Payments Protocol (MPP), premium=true is refused with a 403 before any
+            charge, unless quote_only is also true.'
           default: false
+        max_cost_usd:
+          anyOf:
+          - type: number
+            maximum: 1000000.0
+            minimum: 0.0
+          - type: 'null'
+          title: Max Cost Usd
+          description: 'The most this call can cost, in USD: the export''s base price,
+            its row charge, premium records, and per-unit data charges. Before Tako
+            builds the export or reads vendor data, it prices the call the way `quote_only`
+            does. That price is an upper bound, so Tako can refuse a call whose actual
+            charge would have fit. If the price is above this cap, Tako returns a
+            422 with `error_type` `COST_CAP_EXCEEDED` and the price in `quoted_cost_usd`,
+            and charges nothing. To get under the cap, lower `max_rows` or raise `max_cost_usd`.
+            The cap covers what Tako charges for the response. It doesn''t cover a
+            later variable-cost charge for high monthly volume from a source. Omit
+            it for no cap. A `quote_only` request and an MPP request ignore it.'
+          examples:
+          - 0.5
         highlights:
           anyOf:
           - $ref: '#/components/schemas/ContentsHighlights'
@@ -4164,6 +4140,30 @@ components:
         ever yields multiple artifacts. Today it always carries exactly one
 
         item.'
+    CostCapExceededError:
+      properties:
+        error_message:
+          type: string
+          title: Error Message
+        error_type:
+          $ref: '#/components/schemas/APIErrorType'
+          default: COST_CAP_EXCEEDED
+        quoted_cost_usd:
+          type: number
+          title: Quoted Cost Usd
+          description: 'The most the call would cost, in USD: the price a `quote_only`
+            request returns.'
+        max_cost_usd:
+          type: number
+          title: Max Cost Usd
+          description: The `max_cost_usd` cap the request sent, in USD.
+      type: object
+      required:
+      - error_message
+      - quoted_cost_usd
+      - max_cost_usd
+      title: CostCapExceededError
+      description: '422 on /contents: the call''s quoted price is above its max_cost_usd.'
     CreateCardRequest:
       properties:
         components:
@@ -4248,9 +4248,9 @@ components:
             date. The value uses ISO 8601 reduced precision, so examine the length
             before you parse it. A date parser reads 2026 as 2026-01-01, which is
             the start of the period and not the end. On a card with tabs, only the
-            tab this response built is rendered, so this date describes THAT tab --
-            the same card can report a different date on a request that opens a different
-            tab. Cache it against the response, not against the card id.
+            tab this response built is rendered, so this date describes that tab,
+            and the same card can report a different date on a request that opens
+            a different tab. Cache it against the response, not against the card id.
           examples:
           - '2026'
           - 2026-06
@@ -4372,8 +4372,7 @@ components:
             up to 100,000 rows. Don''t read a large export directly into a model''s
             context: at about 15 tokens per row, 10,000 rows cost about 150,000 tokens.
             Write the export to a file, on disk or in memory, and have the agent parse
-            it with code. Give the model only the rows or results it needs. To cap
-            the export instead, set max_rows.'
+            it with code. Give the model only the rows or results it needs.'
           examples:
           - 100
         node_ids:
@@ -4416,6 +4415,7 @@ components:
         max_variable_cost_usd:
           anyOf:
           - type: number
+            maximum: 1000000.0
             minimum: 0.0
           - type: 'null'
           title: Max Variable Cost Usd
@@ -4425,9 +4425,11 @@ components:
             fit is a placeholder whose `placeholder.reason` is `over_cap`, and Tako
             fetches none of its data. Because the check uses each card''s maximum,
             a card can be withheld when its actual charge would have fit. Send 0 to
-            pay no variable cost: Tako then serves data only for the cards whose minimum
-            the request''s `usage.compute` price covers. Omit it for no cap. You can''t
-            send it with `variable_cost` set to false.'
+            pay no variable cost with this response: Tako then serves data only for
+            the cards whose minimum the request''s `usage.compute` price covers. The
+            cap doesn''t cover a later variable-cost charge for high monthly volume
+            from a source. Omit it for no cap. You can''t send it with `variable_cost`
+            set to false.'
           examples:
           - 0.5
       additionalProperties: false
@@ -4652,7 +4654,7 @@ components:
       - row_cpm_usd
       - max_rows_ceiling
       title: ExportPricing
-      description: 'Card-CSV export pricing RATE for the /contents endpoint, published
+      description: 'Card export pricing rate for the /contents endpoint, published
         so a
 
         caller can compute an export''s cost before fetching. A /contents export''s
@@ -4684,7 +4686,7 @@ components:
 
         it cites, never adds to the rate. There is no per-source breakdown. It is
 
-        per-CALLER: an account whose row charges are waived sees 0 here, and the
+        per caller: an account whose row charges are waived sees 0 here, and the
 
         same formula then yields the baseline alone, which is exactly what that
 
@@ -5268,12 +5270,16 @@ components:
             minimum: 1
           - type: 'null'
           title: Max Rows
-          description: Maximum number of rows to inline when include_contents is true.
-            Omit it and Tako uses your account's inline row cap. Tako clamps a larger
-            value to the card's export_pricing.max_rows_ceiling (at most 100,000).
-            Every inlined row is billed at the POST /api/v1/contents rate. For the
-            rest of the list, call POST /api/v1/contents with the card's webpage_url
-            and an offset.
+          description: 'Maximum number of rows to inline when include_contents is
+            true. Omit it and Tako uses your account''s inline row cap. Tako clamps
+            a larger value to the card''s export_pricing.max_rows_ceiling (at most
+            100,000). Every inlined row is billed at the POST /api/v1/contents rate.
+            For the rest of the list, call POST /api/v1/contents with the card''s
+            webpage_url and an offset. A card export can hold up to 100,000 rows.
+            Don''t read a large export directly into a model''s context: at about
+            15 tokens per row, 10,000 rows cost about 150,000 tokens. Write the export
+            to a file, on disk or in memory, and have the agent parse it with code.
+            Give the model only the rows or results it needs.'
         content_format:
           $ref: '#/components/schemas/ContentsFormat'
           description: 'Serialization for the inlined rows: ''json_compact'', ''json_records'',
@@ -5389,12 +5395,16 @@ components:
             minimum: 1
           - type: 'null'
           title: Max Rows
-          description: Maximum number of rows to inline when include_contents is true.
-            Omit it and Tako uses your account's inline row cap. Tako clamps a larger
-            value to the card's export_pricing.max_rows_ceiling (at most 100,000).
-            Every inlined row is billed at the POST /api/v1/contents rate. For the
-            rest of the list, call POST /api/v1/contents with the card's webpage_url
-            and an offset.
+          description: 'Maximum number of rows to inline when include_contents is
+            true. Omit it and Tako uses your account''s inline row cap. Tako clamps
+            a larger value to the card''s export_pricing.max_rows_ceiling (at most
+            100,000). Every inlined row is billed at the POST /api/v1/contents rate.
+            For the rest of the list, call POST /api/v1/contents with the card''s
+            webpage_url and an offset. A card export can hold up to 100,000 rows.
+            Don''t read a large export directly into a model''s context: at about
+            15 tokens per row, 10,000 rows cost about 150,000 tokens. Write the export
+            to a file, on disk or in memory, and have the agent parse it with code.
+            Give the model only the rows or results it needs.'
         content_format:
           $ref: '#/components/schemas/ContentsFormat'
           description: 'Serialization for the inlined rows: ''json_compact'', ''json_records'',
@@ -5733,12 +5743,7 @@ components:
           title: Data
           description: 'Inline payload as text: card data serialized to CSV, or a
             web page''s extracted text. Set only for the ''csv'' card format and for
-            web text; null otherwise. A card export can hold up to 100,000 rows. Don''t
-            read a large export directly into a model''s context: at about 15 tokens
-            per row, 10,000 rows cost about 150,000 tokens. Write the export to a
-            file, on disk or in memory, and have the agent parse it with code. Give
-            the model only the rows or results it needs. To cap the export instead,
-            set max_rows.'
+            web text; null otherwise.'
         records:
           anyOf:
           - items:
@@ -5758,23 +5763,13 @@ components:
           - type: 'null'
           title: Records
           description: 'Inline card data as verbose JSON: a list of row objects keyed
-            by column name. Set only when content_format is ''json_records''. A card
-            export can hold up to 100,000 rows. Don''t read a large export directly
-            into a model''s context: at about 15 tokens per row, 10,000 rows cost
-            about 150,000 tokens. Write the export to a file, on disk or in memory,
-            and have the agent parse it with code. Give the model only the rows or
-            results it needs. To cap the export instead, set max_rows.'
+            by column name. Set only when content_format is ''json_records''.'
         dataset:
           anyOf:
           - $ref: '#/components/schemas/TakoDataset'
           - type: 'null'
-          description: 'Inline card data as a compact TakoDataset (typed column headers
-            plus positional row arrays). Set only when content_format is ''json_compact''.
-            A card export can hold up to 100,000 rows. Don''t read a large export
-            directly into a model''s context: at about 15 tokens per row, 10,000 rows
-            cost about 150,000 tokens. Write the export to a file, on disk or in memory,
-            and have the agent parse it with code. Give the model only the rows or
-            results it needs. To cap the export instead, set max_rows.'
+          description: Inline card data as a compact TakoDataset (typed column headers
+            plus positional row arrays). Set only when content_format is 'json_compact'.
         card_data:
           anyOf:
           - additionalProperties: true
@@ -5789,12 +5784,7 @@ components:
             export ceiling and reports ''truncated'': true. The payload then also
             carries the true count for its record array. Card types without a card_json
             shape return 422 on /contents and fall back to ''json_compact'' on search
-            and answer include_contents. A card export can hold up to 100,000 rows.
-            Don''t read a large export directly into a model''s context: at about
-            15 tokens per row, 10,000 rows cost about 150,000 tokens. Write the export
-            to a file, on disk or in memory, and have the agent parse it with code.
-            Give the model only the rows or results it needs. To cap the export instead,
-            set max_rows.'
+            and answer include_contents.'
         card_data_schema:
           anyOf:
           - additionalProperties: true
@@ -5941,6 +5931,18 @@ components:
             web text. Positions index the delivered rows: CSV data rows in order,
             json_records entries, or dataset.rows. In CSV, the same cells read [premium:
             withheld]; a premium cell with no value is blank.'
+        delivery:
+          type: string
+          enum:
+          - quote
+          - inline
+          - url
+          title: Delivery
+          description: How Tako delivered the content. 'quote' means Tako delivered
+            nothing, and cost is the price of a later POST /v1/contents export. 'inline'
+            means the content is in data, records, dataset, or card_data. 'url' means
+            you download it from url before expires_at.
+          readOnly: true
       type: object
       title: ResultContent
       description: 'Describes the downloadable content behind a result.
@@ -6043,24 +6045,11 @@ components:
 
         TakoDataset), `card_data` (rich card-type-specific JSON), or `url` plus
 
-        `expires_at` (presigned download).
+        `expires_at` (presigned download). `delivery` names which one, or
 
-        `content_format` names the serialization; it is null for web text and
+        `quote` when Tako delivered nothing. To get a quoted item''s content, call
 
-        for an undelivered quote. Read `content_format` to tell a quote from a
-
-        delivery: when it is null, this is just the quote (`cost`); fetch the
-
-        content later via the Contents endpoint.
-
-
-        Do NOT use "every payload field is null" as that test. `card_data_schema`
-
-        is set on a card_json quote and on a card_json `url` delivery, where
-
-        `card_data` is null, so a caller reading absent payloads as "quote" reads
-
-        those two as quotes.'
+        the Contents endpoint.'
     ResultSource:
       properties:
         name:
@@ -6283,10 +6272,7 @@ components:
       required:
       - data
       title: RetrievalAgentRunList
-      description: 'List envelope for GET /v1/agent/retrieval/runs. The shape follows
-        the
-
-        OpenAI and Exa list convention.'
+      description: List envelope for GET /v1/agent/retrieval/runs.
     RetrievalAgentRunRequest:
       properties:
         query:
@@ -6515,21 +6501,17 @@ components:
 
         agent_result plus run_summary equals the GET poll object, with one exception:
 
-        for up to the durability grace window after a run completes, the GET poll
-        can
+        for up to 30 seconds after a run completes, the GET poll can still report
 
-        report it still running while this frame reports it completed. The poll holds
-
-        such a run so the client asks again; this frame is emitted once with nothing
-
-        after it, so it cannot. Read the frame as authoritative on status.
+        it running. Treat this frame''s status as authoritative.
 
 
         It carries the same envelope `seq` as the stream_done that follows it (it
 
         has no seq of its own), and the stream suppresses its SSE `id:`, so it
 
-        advances no resume cursor. Identify it by `kind`; never assume `seq` is
+        advances no resume cursor. Identify it by `kind`, and don''t assume `seq`
+        is
 
         unique per frame.'
     SearchEffortLevel:
@@ -6539,15 +6521,16 @@ components:
       - instant
       - deep
       title: SearchEffortLevel
-      description: 'Public effort taxonomy for search and answer. FAST is the default.
+      description: 'Public effort taxonomy for search and answer. `fast` is the default.
 
-        INSTANT serves cached embeds without a new data retrieval and works in all
+        `instant` serves cached embeds without a new data retrieval and works in all
 
         environments. On /v1/answer it also writes the answer with the fastest
 
-        synthesis model, so it trades answer quality for latency. On /v1/answer FAST
+        synthesis model, so it trades answer quality for latency. On /v1/answer `fast`
 
-        and DEEP both write the answer with a stronger model. DEEP also widens Tako
+        and `deep` both write the answer with a stronger model. `deep` also widens
+        Tako
 
         retrieval and adds a second, higher-quality reranking pass; it''s slower and
 
@@ -6912,9 +6895,9 @@ components:
           description: 'Set when the card is a placeholder: it carries its title and
             no data points, because its source charges for each request and this response
             didn''t include that source''s data. A search returns a placeholder when
-            the request sets variable_cost to false, for every MPP request, and for
-            an account that isn''t served variable-cost data. Null on every card that
-            carries its data.'
+            the request sets variable_cost to false, for every request paid through
+            the Machine Payments Protocol (MPP), and for an account that isn''t served
+            variable-cost data. Null on every card that carries its data.'
       type: object
       title: TakoCard
       description: 'A Tako knowledge card on the search and answer surfaces. It carries
@@ -6997,8 +6980,8 @@ components:
           - type: 'null'
           title: Source Text
           description: Raw excerpts retrieved from the source page — the unmodified
-            web content that grounded the answer. Present for WEB sources; null for
-            DATA sources.
+            web content that grounded the answer. Set for `web` sources; null for
+            `data` sources.
       type: object
       required:
       - source_index
@@ -7465,7 +7448,7 @@ components:
       - title
       - url
       title: WebResult
-      description: 'A single raw web search result from the WEB source index.
+      description: 'A single raw web search result from the `web` source index.
 
 
         Distinct from `KnowledgeCardSource` (a citation inside a synthesized

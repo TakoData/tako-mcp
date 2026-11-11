@@ -177,6 +177,15 @@ describe("slimCardContent — drop-all mode (capRows = null)", () => {
     });
     expect((out as { total_rows?: number }).total_rows).toBe(1);
   });
+
+  it("drops an inline delivery label once the rows are gone, and keeps a quote or url label", () => {
+    const deliveryOf = (delivery: string): unknown =>
+      (slimCardContent({ ...dataset([["2024-01-01", 1]]), delivery } as ResultContent, null) as { delivery?: unknown })
+        .delivery;
+    expect(deliveryOf("inline")).toBeUndefined();
+    expect(deliveryOf("quote")).toBe("quote");
+    expect(deliveryOf("url")).toBe("url");
+  });
 });
 
 // `tako_search`'s call shape: no inlined rows, no web page text. Shared by the
