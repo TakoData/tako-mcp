@@ -1167,6 +1167,12 @@ const WIDGET_HTML = `<!doctype html>
     return url + (url.indexOf("?") === -1 ? "?" : "&") + "disable_tracking=true";
   }
 
+  function withLinkRelay(url) {
+    if (!url || typeof url !== "string") return url;
+    if (url.indexOf("link_relay=") !== -1) return url;
+    return url + (url.indexOf("?") === -1 ? "?" : "&") + "link_relay=1";
+  }
+
   // The only origin the embed iframe may load. Substituted at resource-build
   // time (see \`buildChartAppUiResourceFromOutputPubId\`) with the origin of the
   // same \`resolvePublicBase\` value \`buildChartUrls\` writes into \`embed_url\`,
@@ -1907,7 +1913,7 @@ const WIDGET_HTML = `<!doctype html>
     iframe.setAttribute("frameborder", "0");
     iframe.setAttribute("allow", "fullscreen; clipboard-write");
     iframe.setAttribute("title", "Tako chart " + (index + 1) + " of " + total);
-    var src = withHostTheme(withoutTracking(chart.embed_url));
+    var src = withHostTheme(withLinkRelay(withoutTracking(chart.embed_url)));
     var slide = {
       chart: chart,
       title: iframe.getAttribute("title"),
@@ -2053,6 +2059,32 @@ const WIDGET_HTML = `<!doctype html>
       if (s.iframe && s.iframe.contentWindow === source) return s;
     }
     return null;
+  }
+
+  function isOwnEmbedFrame(event) {
+    var slide = carouselSlideFor(event.source);
+    if (slide) return !slide.live && event.origin === slide.origin;
+    return !!embedOrigin && event.origin === embedOrigin && event.source === frame.contentWindow;
+  }
+
+  function openRelayedLink(href) {
+    if (typeof href !== "string") return;
+    var parsed;
+    try {
+      parsed = new URL(href);
+    } catch (e) {
+      return;
+    }
+    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return;
+    var oa = hasOpenAiRuntime() ? window.openai : null;
+    if (!oa || typeof oa.openExternal !== "function") return;
+    try {
+      var opened = oa.openExternal({ href: parsed.href });
+      if (opened && typeof opened.catch === "function") opened.catch(function () {});
+    } catch (e) {
+      return;
+    }
+    log("opened relayed link", { href: parsed.href });
   }
 
   function onCarouselEmbedHeight(event, height) {
@@ -2227,7 +2259,7 @@ const WIDGET_HTML = `<!doctype html>
       // cross-origin iframe of the embed page, and the surface OpenAI's iframe
       // policy reviews — so it must not load a third-party beacon. See
       // \`withoutTracking\`.
-      var themedUrl = withHostTheme(withoutTracking(url));
+      var themedUrl = withHostTheme(withLinkRelay(withoutTracking(url)));
       if (frame.src !== themedUrl) frame.src = themedUrl;
       armEmbedOrigin(themedUrl);
       // Aspect-derived when the server supplied the card's PNG dimensions,
@@ -3104,6 +3136,10 @@ const WIDGET_HTML = `<!doctype html>
         // Label now instead of leaving the box to the silent watchdog.
         collapseFailed();
       }
+      return;
+    }
+    if (msg.type === "tako-open-link" && isOwnEmbedFrame(event)) {
+      openRelayedLink(msg.href);
       return;
     }
     if (msg.type === "tako-live-card-height") {

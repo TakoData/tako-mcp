@@ -133,7 +133,7 @@ function html(): string {
  */
 function renderedIframe(m: Mounted): boolean {
   return (
-    frame(m).getAttribute("src") === `${EMBED_URL}&disable_tracking=true`
+    frame(m).getAttribute("src") === `${EMBED_URL}&disable_tracking=true&link_relay=1`
   );
 }
 
@@ -1314,5 +1314,89 @@ describe("ChatGPT agent results", () => {
   it("labels a search result whose cards have no chart at once, without waiting for _meta", () => {
     const m = mountWidget(html(), { toolOutput: { cards: [{ title: "No id" }], web_results: [], usage: {} } });
     expect(emptyLabel(m).classList.contains("hidden")).toBe(false);
+  });
+});
+
+describe("ChatGPT link relay", () => {
+  const PROFILE_URL = "https://www.linkedin.com/in/example-person/";
+
+  function mountWithOpener(extra: Record<string, unknown> = {}): {
+    m: Mounted;
+    openExternal: ReturnType<typeof vi.fn>;
+  } {
+    const openExternal = vi.fn();
+    const m = mountWidget(html(), {
+      toolOutput: PROD_STRUCTURED_CONTENT,
+      openExternal,
+      ...extra,
+    });
+    return { m, openExternal };
+  }
+
+  function postOpenLink(
+    m: Mounted,
+    source: Window | null,
+    href: unknown,
+    origin = "https://tako.com",
+  ): void {
+    const WidgetMessageEvent = (
+      m.widgetWin as unknown as { MessageEvent: typeof MessageEvent }
+    ).MessageEvent;
+    m.widgetWin.dispatchEvent(
+      new WidgetMessageEvent("message", {
+        data: { type: "tako-open-link", href },
+        origin,
+        source: source as unknown as MessageEventSource,
+      }),
+    );
+  }
+
+  it("asks the embed to relay its links", () => {
+    const { m } = mountWithOpener();
+    const src = new URL(frame(m).getAttribute("src") ?? "");
+    expect(src.searchParams.get("link_relay")).toBe("1");
+  });
+
+  it("opens a link the embed relays through openExternal", () => {
+    const { m, openExternal } = mountWithOpener();
+    postOpenLink(m, frame(m).contentWindow, PROFILE_URL);
+    expect(openExternal).toHaveBeenCalledTimes(1);
+    expect(openExternal).toHaveBeenCalledWith({ href: PROFILE_URL });
+  });
+
+  it("opens a link relayed by a carousel slide's embed", () => {
+    const { m, openExternal } = mountWithOpener({
+      toolResponseMetadata: { charts: threeCharts() },
+    });
+    const slides = carouselFrames(m);
+    expect(slides).toHaveLength(3);
+    for (const slide of slides) {
+      expect(new URL(slide.getAttribute("src") ?? "").searchParams.get("link_relay")).toBe("1");
+    }
+    postOpenLink(m, nth(slides, 1).contentWindow, PROFILE_URL);
+    expect(openExternal).toHaveBeenCalledWith({ href: PROFILE_URL });
+  });
+
+  it("ignores a relayed link from another origin", () => {
+    const { m, openExternal } = mountWithOpener();
+    postOpenLink(m, frame(m).contentWindow, PROFILE_URL, "https://evil.example");
+    expect(openExternal).not.toHaveBeenCalled();
+  });
+
+  it("ignores a relayed link from a window that isn't the embed", () => {
+    const { m, openExternal } = mountWithOpener();
+    postOpenLink(m, m.widgetWin.parent, PROFILE_URL);
+    expect(openExternal).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["a javascript: url", "javascript:alert(1)"],
+    ["a data: url", "data:text/html,hi"],
+    ["a relative path", "/in/example-person/"],
+    ["a non-string", { href: PROFILE_URL }],
+  ])("ignores %s", (_label, href) => {
+    const { m, openExternal } = mountWithOpener();
+    postOpenLink(m, frame(m).contentWindow, href);
+    expect(openExternal).not.toHaveBeenCalled();
   });
 });

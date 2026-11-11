@@ -39,7 +39,7 @@ const EMBED_URL =
 // `EMBED_URL` itself stays plain: the click-through anchor is a link a HUMAN
 // opens in their own browser, which is an ordinary visit that should count —
 // so the href assertions below deliberately still use `EMBED_URL`.
-const EMBED_IFRAME_SRC = `${EMBED_URL}&disable_tracking=true`;
+const EMBED_IFRAME_SRC = `${EMBED_URL}&disable_tracking=true&link_relay=1`;
 const IMAGE_URL =
   "https://staging.trytako.com/api/v1/image/abc123/?dark_mode=true";
 const DATA_URL = "data:image/png;base64,AAAA";
@@ -1905,6 +1905,16 @@ describe("live cards (no window.openai)", () => {
     expect(fetchedUrls(stubs)).not.toContain(charts[0]?.image_url);
     expect(m.widgetWin.document.querySelectorAll("img[src]")).toHaveLength(0);
     expect(widgetFrame(m).getAttribute("src")).toBeNull();
+  });
+
+  it("doesn't ask a live card to relay its links", async () => {
+    const m = mountWidget(liveHtml());
+    const stubs = stubLive(m);
+    deliverLive(m, liveCharts(2));
+    await settle();
+
+    expect(fetchedUrls(stubs).length).toBeGreaterThan(0);
+    for (const url of fetchedUrls(stubs)) expect(url).not.toContain("link_relay");
   });
 
   it("writes the card, the host scheme, and a tako-live-card-height reporter into the blob", async () => {
