@@ -172,12 +172,16 @@ function previewHeader(description: string): string[] {
   return header.split("|").map((cell) => cell.trim()).filter((cell) => cell !== "");
 }
 
+const SPEC_DRIFT_FIX =
+  "Sync the spec (openapi/sdk.yaml, then schemas:gen, a label for a new preview field, and registry:gen), or fix the published enum in the monorepo if the spec is wrong.";
+
 /**
- * Run one enrichment search and compare its card's columns with the constants
- * the tool descriptions are built from: the preview table in the result, then
- * the row columns `tako_contents` returns. Each description tells a model
- * which fields the tool returns, so a column the API renamed, added or dropped
- * has to fail here until `_enrich_fields.ts` follows.
+ * Run one enrichment search and compare its card's columns with the lists the
+ * tool descriptions are built from: the preview table in the result, then the
+ * row columns `tako_contents` returns. Each description tells a model which
+ * fields the tool returns, so a column the API renamed, added or dropped has
+ * to fail here. The lists come from the spec's enums, so a failure means the
+ * synced spec and the API disagree.
  */
 async function assertEnrichFieldsMatch(
   client: Client,
@@ -207,7 +211,7 @@ async function assertEnrichFieldsMatch(
   const kept = expectedPreview.filter((label) => preview.includes(label));
   assert(
     preview.length > 0 && preview.join("|") === kept.join("|"),
-    `${tool} preview table drifted from _enrich_fields.ts (${fields.record}.preview): ${listDiff(kept, preview)}`,
+    `${tool} preview table differs from the spec's ${fields.record} preview enum: ${listDiff(kept, preview)}. ${SPEC_DRIFT_FIX}`,
   );
   const contents = await callOk(client, "tako_contents", { urls: [card.url], max_rows: 1 });
   const columns = (
@@ -217,10 +221,9 @@ async function assertEnrichFieldsMatch(
   const expectedColumns = rowColumns(fields);
   assert(
     columns.join("|") === expectedColumns.join("|"),
-    `${tool} row columns drifted from _enrich_fields.ts (${fields.record}.columns or .cardOnly): ${listDiff(expectedColumns, columns)}. ` +
-      `Update the constants, which rebuild the four enrichment tool descriptions, then run registry:gen.`,
+    `${tool} row columns differ from the spec's ${fields.record} field and card-only enums: ${listDiff(expectedColumns, columns)}. ${SPEC_DRIFT_FIX}`,
   );
-  ok(`${tool} → ${preview.length} preview columns and ${columns.length} row columns match _enrich_fields.ts`);
+  ok(`${tool} → ${preview.length} preview columns and ${columns.length} row columns match the spec's enums`);
 }
 
 console.log(`smoke target: ${baseUrl}`);

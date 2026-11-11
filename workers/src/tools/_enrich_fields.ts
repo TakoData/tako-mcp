@@ -6,11 +6,16 @@
  * disagree with them. The field names and their order come from the enums the
  * OpenAPI spec publishes (`CompanyListField`, `PersonListField` and their
  * preview, card-only and premium subsets), which the Tako monorepo builds from
- * the cards' own constants. Only the card labels are written here, and each
- * label map is typed against its enum: a field the API adds or drops fails
- * `npm run typecheck` on the spec sync until its label is added or removed.
- * `scripts/smoke.ts` also fetches one card of each kind after a deploy and
- * fails when the API's columns differ.
+ * the cards' own constants. Only the labels of the preview table are written
+ * here, and each label map is typed against its preview enum: a preview field
+ * the API adds or drops fails `npm run typecheck` until its label is added or
+ * removed. `scripts/smoke.ts` also fetches one card of each kind after a
+ * deploy and fails when the API's columns differ.
+ *
+ * A spec sync that adds or drops any list field changes the descriptions'
+ * field sentences, so `registry:gen` and `registry:check` fail on it and the
+ * sync bot commits no regenerated code, unrelated schema changes included.
+ * `AGENTS.md` ("Enrichment field lists") has the steps to finish that sync.
  *
  * `_`-prefixed so `gen-registry.ts` skips it: this isn't a tool module.
  */
@@ -30,24 +35,22 @@ import {
 export interface ListCardFields<Key extends string = string> {
   /** One row's noun, as the description names it. */
   readonly record: string;
-  /** Every column in display order, as `[field key, card label]`. */
-  readonly columns: ReadonlyArray<readonly [Key, string]>;
-  /** The columns of the markdown table in the card's `description`. */
-  readonly preview: ReadonlyArray<Key>;
+  /** Every column, in display order. */
+  readonly columns: ReadonlyArray<Key>;
+  /** The columns of the markdown table in the card's `description`, in order, as `[field key, label]`. */
+  readonly preview: ReadonlyArray<readonly [Key, string]>;
   /** Columns the card shows and `tako_contents` rows leave out. */
   readonly cardOnly: ReadonlyArray<Key>;
   /** Columns withheld until `tako_contents` is called with `premium: true`. */
   readonly premium: ReadonlyArray<Key>;
 }
 
-/** The label each card column carries, in the table of its `description`. */
-const COMPANY_LABELS: Record<CompanyListField, string> = {
+/** The header of the table in the card's `description`, one label per preview field. */
+const COMPANY_PREVIEW_LABELS: Record<CompanyListPreviewField, string> = {
   name: "Name",
   status: "Status",
-  company_type: "Company type",
   estimated_revenue: "Estimated revenue",
   headcount: "Headcount",
-  linkedin_followers: "LinkedIn followers",
   industry: "Industry",
   funding_stage: "Funding stage",
   total_raised: "Total raised",
@@ -55,97 +58,49 @@ const COMPANY_LABELS: Record<CompanyListField, string> = {
   investors: "Investors",
   location: "Location",
   website: "Website",
-  linkedin_url: "LinkedIn",
-  ticker: "Ticker",
-  established: "Established",
-  parent: "Parent",
-  subsidiaries: "Subsidiaries",
-  description: "Description",
-  headcount_range: "Headcount range",
-  tags: "Tags",
-  metro: "Metro",
-  naics_codes: "NAICS codes",
-  postcode: "Postcode",
-  funding_round_count: "Funding round count",
-  funding_rounds: "Funding rounds",
-  sic_codes: "SIC codes",
-  also_known_as: "Also known as",
-  other_domains: "Other domains",
-  street_address: "Street address",
-  twitter_url: "X (Twitter)",
-  facebook_url: "Facebook",
-  sources: "Sources",
   tako_url: "Tako link",
 };
 
 export const COMPANY_LIST_FIELDS: ListCardFields<CompanyListField> = {
   record: "company",
-  columns: CompanyListField.options.map((key) => [key, COMPANY_LABELS[key]] as const),
-  preview: CompanyListPreviewField.options,
+  columns: CompanyListField.options,
+  preview: CompanyListPreviewField.options.map((key) => [key, COMPANY_PREVIEW_LABELS[key]] as const),
   cardOnly: CompanyListCardOnlyField.options,
   premium: CompanyListPremiumField.options,
 };
 
-const PERSON_LABELS: Record<PersonListField, string> = {
+const PERSON_PREVIEW_LABELS: Record<PersonListPreviewField, string> = {
   name: "Name",
   title: "Title",
   department: "Department",
-  seniority: "Seniority",
   employer: "Employer",
   schools: "Schools",
   in_role_since: "In role since",
   location: "Location",
-  registry_companies: "Registry companies",
   linkedin_url: "LinkedIn",
   work_email: "Work email",
   phone: "Phone",
   personal_email: "Personal email",
-  description: "Description",
-  education: "Education",
-  experience: "Work history",
-  registry_seats: "Registry seats",
-  sub_role: "Sub-role",
-  business_area: "Business area",
-  occupation: "Occupation",
-  job_summary: "Job summary",
-  skills: "Skills",
-  industry: "Industry",
-  metro: "Metro",
-  job_verified_on: "Job verified on",
-  twitter_url: "X (Twitter)",
-  github_url: "GitHub",
-  all_emails: "All emails",
-  all_personal_emails: "All personal emails",
-  employer_industry: "Employer industry",
-  employer_tako_industries: "Employer Tako industries",
-  employer_tags: "Employer tags",
-  employer_size: "Employer size",
-  employer_funding_stage: "Employer funding stage",
-  employer_founded: "Employer founded",
-  employer_location: "Employer location",
-  employer_listing: "Employer listing",
-  sources: "Sources",
   tako_url: "Tako link",
 };
 
 export const PERSON_LIST_FIELDS: ListCardFields<PersonListField> = {
   record: "person",
-  columns: PersonListField.options.map((key) => [key, PERSON_LABELS[key]] as const),
-  preview: PersonListPreviewField.options,
+  columns: PersonListField.options,
+  preview: PersonListPreviewField.options.map((key) => [key, PERSON_PREVIEW_LABELS[key]] as const),
   cardOnly: PersonListCardOnlyField.options,
   premium: PersonListPremiumField.options,
 };
 
 /** The header of the markdown table in the card's `description`, in order. */
 export function previewLabels(fields: ListCardFields): string[] {
-  const shown = new Set<string>(fields.preview);
-  return fields.columns.filter(([key]) => shown.has(key)).map(([, label]) => label);
+  return fields.preview.map(([, label]) => label);
 }
 
 /** The `columns` that `tako_contents` returns for the card's rows, in order. */
 export function rowColumns(fields: ListCardFields): string[] {
   const cardOnly = new Set<string>(fields.cardOnly);
-  return fields.columns.map(([key]) => key).filter((key) => !cardOnly.has(key));
+  return fields.columns.filter((key) => !cardOnly.has(key));
 }
 
 /** How a premium field is marked in a description's field list. */
@@ -185,10 +140,10 @@ export function joinFieldKeys(keys: readonly string[], mark: (key: string) => st
  */
 export function describeListFields(fields: ListCardFields): string {
   const premium = new Set<string>(fields.premium);
-  const preview = new Set<string>(fields.preview);
+  const preview = new Set<string>(fields.preview.map(([key]) => key));
   const cardOnly = new Set<string>(fields.cardOnly);
   const mark = (key: string): string => (premium.has(key) ? `${key}${PREMIUM_MARK}` : key);
-  const keys = fields.columns.map(([key]) => key);
+  const keys = fields.columns;
   const previewed = keys.filter((key) => preview.has(key));
   const dropped = previewed.filter((key) => cardOnly.has(key));
   const added = keys.filter((key) => !preview.has(key) && !cardOnly.has(key));

@@ -10,50 +10,31 @@ import {
   rowColumns,
 } from "./_enrich_fields.js";
 
-// The `columns` that `tako_contents` returned for one card of each kind on
-// production, 2026-11-10, and the header of the table in each card's
-// description. Recorded by hand, so these fail when a spec sync changes a
-// field: update them once you've read what the descriptions now say.
-// `scripts/smoke.ts` checks the API itself.
-const COMPANY_ROW_COLUMNS = [
-  "name", "status", "company_type", "estimated_revenue", "headcount", "linkedin_followers", "industry",
-  "funding_stage", "total_raised", "location", "website", "linkedin_url", "ticker", "established", "parent",
-  "subsidiaries", "description", "headcount_range", "tags", "metro", "naics_codes", "postcode",
-  "funding_round_count", "funding_rounds", "sic_codes", "also_known_as", "other_domains", "street_address",
-  "twitter_url", "facebook_url", "sources", "tako_url",
-];
-const PERSON_ROW_COLUMNS = [
-  "name", "title", "department", "seniority", "employer", "in_role_since", "location", "linkedin_url",
-  "work_email", "phone", "personal_email", "description", "education", "experience", "registry_seats",
-  "sub_role", "business_area", "occupation", "job_summary", "skills", "industry", "metro", "job_verified_on",
-  "twitter_url", "github_url", "all_emails", "all_personal_emails", "employer_industry",
-  "employer_tako_industries", "employer_tags", "employer_size", "employer_funding_stage", "employer_founded",
-  "employer_location", "employer_listing", "sources", "tako_url",
-];
+// A made-up card, so these tests check the functions, not the spec's lists.
+// `registry:check` catches a description change and `scripts/smoke.ts` checks
+// the API's columns.
+const CARD: ListCardFields = {
+  record: "widget",
+  columns: ["name", "price", "owner", "notes", "badge", "tako_url"],
+  preview: [["name", "Name"], ["price", "Price"], ["badge", "Badge"], ["tako_url", "Tako link"]],
+  cardOnly: ["badge"],
+  premium: ["price", "owner"],
+};
 
 describe("list card fields", () => {
-  it("names the row columns tako_contents returns, in order", () => {
-    expect(rowColumns(COMPANY_LIST_FIELDS)).toEqual(COMPANY_ROW_COLUMNS);
-    expect(rowColumns(PERSON_LIST_FIELDS)).toEqual(PERSON_ROW_COLUMNS);
+  it("names the row columns tako_contents returns, in order, without the card-only ones", () => {
+    expect(rowColumns(CARD)).toEqual(["name", "price", "owner", "notes", "tako_url"]);
   });
 
   it("names the preview table's header, in order", () => {
-    expect(previewLabels(COMPANY_LIST_FIELDS)).toEqual([
-      "Name", "Status", "Estimated revenue", "Headcount", "Industry", "Funding stage", "Total raised",
-      "Last funding date", "Investors", "Location", "Website", "Tako link",
-    ]);
-    expect(previewLabels(PERSON_LIST_FIELDS)).toEqual([
-      "Name", "Title", "Department", "Employer", "Schools", "In role since", "Location", "LinkedIn",
-      "Work email", "Phone", "Personal email", "Tako link",
-    ]);
+    expect(previewLabels(CARD)).toEqual(["Name", "Price", "Badge", "Tako link"]);
   });
 
-  it("marks the premium fields the API withholds", () => {
-    expect([...COMPANY_LIST_FIELDS.premium].sort()).toEqual(
-      ["estimated_revenue", "linkedin_followers", "parent", "subsidiaries"],
-    );
-    expect([...PERSON_LIST_FIELDS.premium].sort()).toEqual(
-      ["all_emails", "all_personal_emails", "personal_email", "phone", "work_email"],
+  it("splits the fields between the preview, the rows and the premium mark", () => {
+    expect(describeListFields(CARD)).toBe(
+      "Card `description` previews 10 rows: name, price*, badge, tako_url. " +
+        "`tako_contents` on its `url` returns every row: those fields except badge, plus owner*, notes. " +
+        "* is premium: null unless that call sets `premium: true`.",
     );
   });
 });
@@ -97,15 +78,16 @@ describe.each([
   const premium = new Set<string>(fields.premium);
 
   it("names every column, with * on exactly the premium ones", () => {
-    for (const [key] of fields.columns) {
-      if (fields.cardOnly.includes(key) && !fields.preview.includes(key)) continue;
+    const previewed = new Set(fields.preview.map(([key]) => key));
+    for (const key of fields.columns) {
+      if (fields.cardOnly.includes(key) && !previewed.has(key)) continue;
       expect(named.has(premium.has(key) ? `${key}*` : key), key).toBe(true);
       expect(named.has(premium.has(key) ? key : `${key}*`), key).toBe(false);
     }
   });
 
   it("says which previewed fields the rows leave out", () => {
-    const dropped = fields.preview.filter((key) => fields.cardOnly.includes(key));
+    const dropped = fields.preview.map(([key]) => key).filter((key) => fields.cardOnly.includes(key));
     expect(dropped.length).toBeGreaterThan(0);
     expect(text).toContain(`except ${dropped.join(" and ")}`);
   });
