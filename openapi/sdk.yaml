@@ -1965,6 +1965,14 @@ components:
         and `POST /v1/companies/enrich` return. `POST /api/v1/contents` withholds
         them unless the call sets `premium=true`. `content_format=card_json` carries
         no premium fields and rejects `premium=true`.
+    CompanyListRoleField:
+      type: string
+      enum:
+      - person_title
+      - person_start_date
+      - person_end_date
+      description: 'The fields a company list adds when POST /v1/companies/search
+        sets person_id: that person''s role at each company.'
     PersonListField:
       type: string
       enum:
@@ -1997,6 +2005,7 @@ components:
       - github_url
       - all_emails
       - all_personal_emails
+      - all_phone_numbers
       - employer_industry
       - employer_tako_industries
       - employer_tags
@@ -2006,6 +2015,7 @@ components:
       - employer_location
       - employer_listing
       - sources
+      - employer_tako_url
       - tako_url
       description: Every field of the person list card that `POST /v1/people/search`
         and `POST /v1/people/enrich` return, in column order. `POST /api/v1/contents`
@@ -2045,6 +2055,7 @@ components:
       - personal_email
       - all_emails
       - all_personal_emails
+      - all_phone_numbers
       description: The premium fields of the person list card that `POST /v1/people/search`
         and `POST /v1/people/enrich` return. `POST /api/v1/contents` withholds them
         unless the call sets `premium=true`. `content_format=card_json` carries no
@@ -3134,6 +3145,14 @@ components:
       title: CompanyAgentRunSummary
     CompanyEnrichItem:
       properties:
+        id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Id
+          description: 'The company''s id: the co_ id from its row''s Tako link, or
+            the link itself. It names the company exactly, and Tako ignores the item''s
+            other fields.'
         domain:
           anyOf:
           - type: string
@@ -3261,7 +3280,8 @@ components:
           - type: string
           - type: 'null'
           title: Match Id
-          description: The matched company's id; its profile is a row of card.
+          description: 'The matched company''s co_ id: the last segment of its row''s
+            Tako link.'
         confidence:
           anyOf:
           - type: string
@@ -3271,7 +3291,7 @@ components:
             - ambiguous
           - type: 'null'
           title: Confidence
-          description: 'exact: a domain or LinkedIn page named the company. Registry
+          description: 'exact: an id, domain or LinkedIn page named the company. Registry
             records that only list the same website, such as a subsidiary''s local
             registration, don''t count against it, unless the name you give picks
             one out: that registration is then the match, as ambiguous. high: the
@@ -3282,6 +3302,7 @@ components:
           anyOf:
           - type: string
             enum:
+            - id
             - domain
             - linkedin_url
             - name
@@ -3460,8 +3481,18 @@ components:
             - -founded
           - type: 'null'
           title: Order By
-          description: A field to sort by. A leading minus sorts it in descending
-            order.
+          description: 'A field to sort by. A leading minus sorts it in descending
+            order. Beside person_id alone, it doesn''t apply: the list is in order
+            of the person''s most recent role.'
+        person_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Person Id
+          description: Keep only companies this person has worked at, past and present.
+            A pe_ id from a person row's Tako link, or the link itself. Each row then
+            carries the person's title and dates there; `CompanyListRoleField` names
+            those fields.
       additionalProperties: false
       type: object
       title: CompanySearchRequest
@@ -4397,8 +4428,8 @@ components:
 
         invalid_body (the body isn''t valid JSON), invalid_value, no_filters,
 
-        contacts_need_a_filter and unavailable_filter. field is the request field
-        at fault, or "" for an
+        contacts_need_a_filter, unavailable_filter and unknown_person. field is the
+        request field at fault, or "" for an
 
         error about the whole request. suggestions holds near-miss values to use instead.'
     EntityClassName:
@@ -5114,6 +5145,14 @@ components:
       description: Settings that control the response shape.
     PersonEnrichItem:
       properties:
+        id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Id
+          description: 'The person''s id: the pe_ id from their row''s Tako link,
+            or the link itself. It names the person exactly, and Tako ignores the
+            item''s other fields.'
         name:
           anyOf:
           - type: string
@@ -5138,6 +5177,15 @@ components:
           - type: 'null'
           title: Phone
           description: A phone number, matched exactly.
+        company_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Company Id
+          description: 'A hint for a name: the employer''s co_ id, or its Tako link.
+            When it names a company, it wins over company_domain and company_name.
+            When it names none, Tako lists it in unresolved and uses company_domain
+            and company_name.'
         company_domain:
           anyOf:
           - type: string
@@ -5237,7 +5285,8 @@ components:
           - type: string
           - type: 'null'
           title: Match Id
-          description: The matched person's id; their profile is a row of card.
+          description: 'The matched person''s pe_ id: the last segment of their row''s
+            Tako link.'
         confidence:
           anyOf:
           - type: string
@@ -5247,13 +5296,14 @@ components:
             - ambiguous
           - type: 'null'
           title: Confidence
-          description: 'exact: an email, phone or LinkedIn profile named the person.
+          description: 'exact: an id, email, phone or LinkedIn profile named the person.
             high: the name match is well ahead of the next. ambiguous: other people
             match nearly as well; alternates counts them.'
         matched_on:
           anyOf:
           - type: string
             enum:
+            - id
             - linkedin_url
             - email
             - phone
@@ -5331,7 +5381,8 @@ components:
             maxItems: 100
           - type: 'null'
           title: Company Ids
-          description: Employer ids from the companies endpoints.
+          description: 'Employer ids: the co_ id from a company row''s Tako link,
+            or the link itself.'
         company_domains:
           anyOf:
           - items:
