@@ -37,6 +37,13 @@ describe("tako_company_enrich", () => {
     expect(await bodyOf(request)).toEqual({ items });
   });
 
+  it("posts an item named only by its id or Tako link", async () => {
+    const fetchMock = mockFetchSequence([jsonResponse(200, { results: [matched, matched], card: listCard("2 companies") })]);
+    const items = [{ id: "co_4kTqZ2vYb8LmN0pRs7WxAa" }, { id: "/card/co_0000000000000000000001/" }];
+    await takoCompanyEnrich.handler(takoCompanyEnrich.inputSchema.parse({ items }), CTX);
+    expect(await bodyOf(requestFrom(fetchMock.mock.calls[0]))).toEqual({ items });
+  });
+
   it("lines each result up with its item, in request order", async () => {
     mockFetchSequence([jsonResponse(200, { results: [matched, missed], card: listCard("1 company") })]);
     const output = await takoCompanyEnrich.handler(

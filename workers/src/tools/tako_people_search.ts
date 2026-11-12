@@ -25,7 +25,7 @@ import type { ToolModule } from "./types.js";
 const DESCRIPTION = [
   "Screen employees by role, place and employer. Returns `total`, the filters `applied`, `notes`, `unresolved`, `failed` and one list card.",
   "",
-  "Use to build a list of people from filters, such as heads of sales at Series B startups in Texas.",
+  "Use to build a list of people from filters, such as heads of sales at Series B startups in Texas, or a company's people, with its id in `company_ids`.",
   "",
   `${enrichFieldSentences("tako_people_search")} \`total\` stops at 500, and \`total_is_lower_bound\` says when.`,
 ].join("\n");
@@ -38,7 +38,8 @@ const CONTACT_RULE = "It narrows a search, so set another filter beside it.";
 // `company_industry` replace REST calls the model can't make, `linkedin_urls`
 // gains the rule its 400 enforces, and the rest have no generated text.
 const DESCRIBES = {
-  company_ids: "Employer ids, such as the `match_id` of a matched company.",
+  company_ids:
+    "Employer ids: the co_ id that ends a company row's `tako_url`, a company `match_id`, or the link. An id that names no company is listed in `unresolved`.",
   person_country: "Where the person is: ISO 3166-1 alpha-2 code or English name.",
   person_region: "Where the person is: state or province.",
   person_metro: "Where the person is: metropolitan area.",

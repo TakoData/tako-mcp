@@ -1284,7 +1284,7 @@ Parameters:
 
 | Name | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `items` | array | yes |  | The companies to match, 1 to 25. Each needs `domain`, `linkedin_url` or `name`. `domain` and `linkedin_url` match exactly, and `name` by score. `city`, `region`, `country` and `industry` rank a name's matches and never exclude one. |
+| `items` | array | yes |  | The companies to match, 1 to 25. Each needs `id` (a co_ id or Tako link; other fields are then ignored), `domain`, `linkedin_url` or `name`. All but `name` match exactly; `name` matches by score. `city`, `region`, `country` and `industry` rank a name's matches and never exclude one. |
 
 Fixed request inputs (the caller cannot change these):
 
@@ -1309,6 +1309,17 @@ Annotations:
       "items": {
         "type": "object",
         "properties": {
+          "id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The company's id: the co_ id from its row's Tako link, or the link itself. It names the company exactly, and Tako ignores the item's other fields."
+          },
           "domain": {
             "anyOf": [
               {
@@ -1389,7 +1400,7 @@ Annotations:
         },
         "additionalProperties": false
       },
-      "description": "The companies to match, 1 to 25. Each needs `domain`, `linkedin_url` or `name`. `domain` and `linkedin_url` match exactly, and `name` by score. `city`, `region`, `country` and `industry` rank a name's matches and never exclude one."
+      "description": "The companies to match, 1 to 25. Each needs `id` (a co_ id or Tako link; other fields are then ignored), `domain`, `linkedin_url` or `name`. All but `name` match exactly; `name` matches by score. `city`, `region`, `country` and `industry` rank a name's matches and never exclude one."
     }
   },
   "required": [
@@ -1540,7 +1551,7 @@ Description:
 
 Screen active companies by industry, place, size, founding year, funding stage and ownership. Returns `total`, the filters `applied`, `notes` and one list card.
 
-Use to build a list of companies from filters, such as Series B enterprise SaaS companies in the US.
+Use to list companies from filters, such as Series B SaaS companies in the US, or a person's employers.
 
 Card `description` previews 10 rows: name, status, estimated_revenue*, headcount, industry, funding_stage, total_raised, last_funding_date, investors, location, website, tako_url. `tako_contents` on its `url` returns every row: those fields except last_funding_date and investors, plus company_type, linkedin_followers*, linkedin_url, ticker, established, parent*, subsidiaries*, description, headcount_range, tags, metro, naics_codes, postcode, funding_round_count, funding_rounds, sic_codes, also_known_as, other_domains, street_address, twitter_url, facebook_url, sources. * is premium: null unless that call sets `premium: true`. `total` stops at 500, and `total_is_lower_bound` says when. It can't filter or sort by revenue.
 
@@ -1550,16 +1561,17 @@ Parameters:
 |---|---|---|---|---|
 | `country` | string | no |  | ISO 3166-1 alpha-2 code or English name. |
 | `region` | string | no |  | State or province, as a name or an ISO 3166-2 code. |
-| `town` | string | no |  | Town of the headquarters, or of the registered office when there's no headquarters. Needs country or region beside it. |
+| `town` | string | no |  | Headquarters town. Needs country or region beside it. |
 | `min_employees` | integer | no |  | People Data Labs' employee estimate. |
 | `max_employees` | integer | no |  | People Data Labs' employee estimate. |
-| `industry` | string | no |  | An industry name, alias or id, such as fintech or aerospace and defense. `applied` shows what it was read as. |
+| `industry` | string | no |  | An industry name, alias or id, such as fintech. `applied` shows how it was read. |
 | `funding_stages` | array | no |  | Latest funding stages. |
 | `ownership` | string | no |  | Publicly traded or privately held. |
 | `startups` | boolean | no |  | Startups: private companies founded in the last ten years (unless founded_after or founded_before names other years), of a startup type (not a government body, nonprofit, school or public company's subsidiary), that raised a venture round or have at most 500 employees. |
 | `founded_after` | integer | no |  | Founded in this year or later. |
 | `founded_before` | integer | no |  | Founded in this year or earlier. |
-| `order_by` | string | no |  | A field to sort by. A leading minus sorts it in descending order. |
+| `order_by` | string | no |  | A field to sort by. A leading minus sorts it in descending order. Beside person_id alone, it doesn't apply: the list is in order of the person's most recent role. |
+| `person_id` | string | no |  | A person's pe_ id or Tako link. Lists their employers, past and present, with person_title, person_start_date and person_end_date. |
 
 Fixed request inputs (the caller cannot change these):
 
@@ -1600,6 +1612,7 @@ Annotations:
       "description": "State or province, as a name or an ISO 3166-2 code."
     },
     "town": {
+      "description": "Headquarters town. Needs country or region beside it.",
       "anyOf": [
         {
           "type": "string"
@@ -1607,8 +1620,7 @@ Annotations:
         {
           "type": "null"
         }
-      ],
-      "description": "Town of the headquarters, or of the registered office when there's no headquarters. Needs country or region beside it."
+      ]
     },
     "min_employees": {
       "anyOf": [
@@ -1637,7 +1649,7 @@ Annotations:
       "description": "People Data Labs' employee estimate."
     },
     "industry": {
-      "description": "An industry name, alias or id, such as fintech or aerospace and defense. `applied` shows what it was read as.",
+      "description": "An industry name, alias or id, such as fintech. `applied` shows how it was read.",
       "anyOf": [
         {
           "type": "string"
@@ -1751,7 +1763,18 @@ Annotations:
           "type": "null"
         }
       ],
-      "description": "A field to sort by. A leading minus sorts it in descending order."
+      "description": "A field to sort by. A leading minus sorts it in descending order. Beside person_id alone, it doesn't apply: the list is in order of the person's most recent role."
+    },
+    "person_id": {
+      "description": "A person's pe_ id or Tako link. Lists their employers, past and present, with person_title, person_start_date and person_end_date.",
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
     }
   },
   "additionalProperties": false
@@ -2666,16 +2689,16 @@ Description:
 
 Screen employees by role, place and employer. Returns `total`, the filters `applied`, `notes`, `unresolved`, `failed` and one list card.
 
-Use to build a list of people from filters, such as heads of sales at Series B startups in Texas.
+Use to build a list of people from filters, such as heads of sales at Series B startups in Texas, or a company's people, with its id in `company_ids`.
 
-Card `description` previews 10 rows: name, title, department, employer, schools, in_role_since, location, linkedin_url, work_email*, phone*, personal_email*, tako_url. `tako_contents` on its `url` returns every row: those fields except schools, plus seniority, description, education, experience, registry_seats, sub_role, business_area, occupation, job_summary, skills, industry, metro, job_verified_on, twitter_url, github_url, all_emails*, all_personal_emails*, employer_{industry, tako_industries, tags, size, funding_stage, founded, location, listing}, sources. * is premium: null unless that call sets `premium: true`. `total` stops at 500, and `total_is_lower_bound` says when.
+Card `description` previews 10 rows: name, title, department, employer, schools, in_role_since, location, linkedin_url, work_email*, phone*, personal_email*, tako_url. `tako_contents` on its `url` returns every row: those fields except schools, plus seniority, description, education, experience, registry_seats, sub_role, business_area, occupation, job_summary, skills, industry, metro, job_verified_on, twitter_url, github_url, all_emails*, all_personal_emails*, employer_{industry, tako_industries, tags, size, funding_stage, founded, location, listing}, sources, employer_tako_url. * is premium: null unless that call sets `premium: true`. `total` stops at 500, and `total_is_lower_bound` says when.
 
 Parameters:
 
 | Name | Type | Required | Default | Description |
 |---|---|---|---|---|
 | `role` | array | no |  | Title, seniority or function phrases, such as 'head of sales'. |
-| `company_ids` | array | no |  | Employer ids, such as the `match_id` of a matched company. |
+| `company_ids` | array | no |  | Employer ids: the co_ id that ends a company row's `tako_url`, a company `match_id`, or the link. An id that names no company is listed in `unresolved`. |
 | `company_domains` | array | no |  | Employer websites. |
 | `person_country` | string | no |  | Where the person is: ISO 3166-1 alpha-2 code or English name. |
 | `person_region` | string | no |  | Where the person is: state or province. |
@@ -2722,7 +2745,7 @@ Annotations:
       "description": "Title, seniority or function phrases, such as 'head of sales'."
     },
     "company_ids": {
-      "description": "Employer ids, such as the `match_id` of a matched company.",
+      "description": "Employer ids: the co_ id that ends a company row's `tako_url`, a company `match_id`, or the link. An id that names no company is listed in `unresolved`.",
       "anyOf": [
         {
           "maxItems": 100,
@@ -3047,13 +3070,13 @@ Match up to 25 known people by email, phone, LinkedIn profile or name. Returns p
 
 Use to look up known people, such as a contact list.
 
-`results` has one entry per item, in order: status (matched, no_match, failed), match_id, confidence (exact, high, ambiguous), matched_on, alternates, unresolved, failed. Card `description` previews 10 rows: name, title, department, employer, schools, in_role_since, location, linkedin_url, work_email*, phone*, personal_email*, tako_url. `tako_contents` on its `url` returns every row: those fields except schools, plus seniority, description, education, experience, registry_seats, sub_role, business_area, occupation, job_summary, skills, industry, metro, job_verified_on, twitter_url, github_url, all_emails*, all_personal_emails*, employer_{industry, tako_industries, tags, size, funding_stage, founded, location, listing}, sources. * is premium: null unless that call sets `premium: true`.
+`results` has one entry per item, in order: status (matched, no_match, failed), match_id, confidence (exact, high, ambiguous), matched_on, alternates, unresolved, failed. Card `description` previews 10 rows: name, title, department, employer, schools, in_role_since, location, linkedin_url, work_email*, phone*, personal_email*, tako_url. `tako_contents` on its `url` returns every row: those fields except schools, plus seniority, description, education, experience, registry_seats, sub_role, business_area, occupation, job_summary, skills, industry, metro, job_verified_on, twitter_url, github_url, all_emails*, all_personal_emails*, employer_{industry, tako_industries, tags, size, funding_stage, founded, location, listing}, sources, employer_tako_url. * is premium: null unless that call sets `premium: true`.
 
 Parameters:
 
 | Name | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `items` | array | yes |  | The people to match, 1 to 25. Each needs `email`, `phone`, `linkedin_url` or `name`. The first three match exactly, and `name` by score. `company_domain`, `company_name` and `title` are hints for a name. Give a phone with its country code. |
+| `items` | array | yes |  | The people to match, 1 to 25. Each needs `id` (a pe_ id or Tako link; other fields are then ignored), `email`, `phone`, `linkedin_url` or `name`. All but `name` match exactly. Hints for a name: `company_id` (a co_ id), `company_domain`, `company_name`, `title`. Give a phone with its country code. |
 
 Fixed request inputs (the caller cannot change these):
 
@@ -3078,6 +3101,17 @@ Annotations:
       "items": {
         "type": "object",
         "properties": {
+          "id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The person's id: the pe_ id from their row's Tako link, or the link itself. It names the person exactly, and Tako ignores the item's other fields."
+          },
           "name": {
             "anyOf": [
               {
@@ -3122,6 +3156,17 @@ Annotations:
             ],
             "description": "A phone number, matched exactly."
           },
+          "company_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A hint for a name: the employer's co_ id, or its Tako link. When it names a company, it wins over company_domain and company_name. When it names none, Tako lists it in unresolved and uses company_domain and company_name."
+          },
           "company_domain": {
             "anyOf": [
               {
@@ -3158,7 +3203,7 @@ Annotations:
         },
         "additionalProperties": false
       },
-      "description": "The people to match, 1 to 25. Each needs `email`, `phone`, `linkedin_url` or `name`. The first three match exactly, and `name` by score. `company_domain`, `company_name` and `title` are hints for a name. Give a phone with its country code."
+      "description": "The people to match, 1 to 25. Each needs `id` (a pe_ id or Tako link; other fields are then ignored), `email`, `phone`, `linkedin_url` or `name`. All but `name` match exactly. Hints for a name: `company_id` (a co_ id), `company_domain`, `company_name`, `title`. Give a phone with its country code."
     }
   },
   "required": [

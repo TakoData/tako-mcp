@@ -33,7 +33,7 @@ const inputSchema = z
   .object({
     items: looseArray(
       PersonEnrichRequest.shape.items.describe(
-        "The people to match, 1 to 25. Each needs `email`, `phone`, `linkedin_url` or `name`. The first three match exactly, and `name` by score. `company_domain`, `company_name` and `title` are hints for a name. Give a phone with its country code.",
+        "The people to match, 1 to 25. Each needs `id` (a pe_ id or Tako link; other fields are then ignored), `email`, `phone`, `linkedin_url` or `name`. All but `name` match exactly. Hints for a name: `company_id` (a co_ id), `company_domain`, `company_name`, `title`. Give a phone with its country code.",
       ),
       { field: "tako_person_enrich.items", jsonObjectAsItem: true },
     ),

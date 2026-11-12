@@ -33,7 +33,7 @@ const inputSchema = z
   .object({
     items: looseArray(
       CompanyEnrichRequest.shape.items.describe(
-        "The companies to match, 1 to 25. Each needs `domain`, `linkedin_url` or `name`. `domain` and `linkedin_url` match exactly, and `name` by score. `city`, `region`, `country` and `industry` rank a name's matches and never exclude one.",
+        "The companies to match, 1 to 25. Each needs `id` (a co_ id or Tako link; other fields are then ignored), `domain`, `linkedin_url` or `name`. All but `name` match exactly; `name` matches by score. `city`, `region`, `country` and `industry` rank a name's matches and never exclude one.",
       ),
       { field: "tako_company_enrich.items", jsonObjectAsItem: true },
     ),
