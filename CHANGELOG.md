@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.11.0](https://github.com/TakoData/tako-mcp/compare/v1.10.0...v1.11.0) (2026-11-12)
+
+
+### Features
+
+* **widget:** open links in ChatGPT cards through window.openai.openExternal ([#410](https://github.com/TakoData/tako-mcp/issues/410)) ([0f81cff](https://github.com/TakoData/tako-mcp/commit/0f81cfff2285aa2ac054916ad8a0dfe1aa81558f))
+
+
+### Chores
+
+* regenerate schemas + registry from synced spec ([2d17104](https://github.com/TakoData/tako-mcp/commit/2d171041e7b7b12c1b4b114865205c317faf3b1c))
+* sync OpenAPI spec from monorepo ([f481482](https://github.com/TakoData/tako-mcp/commit/f4814828f942aab28aea9ac3ecc62b505ce9e36d))
+* sync OpenAPI spec from TakoData/tako ([22d10d4](https://github.com/TakoData/tako-mcp/commit/22d10d48878ac585795d79fa4add99d0f4dc8773))
+
 ## [1.10.0](https://github.com/TakoData/tako-mcp/compare/v1.9.2...v1.10.0) (2026-11-11)
 
 
