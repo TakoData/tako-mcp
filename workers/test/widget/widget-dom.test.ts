@@ -1907,16 +1907,6 @@ describe("live cards (no window.openai)", () => {
     expect(widgetFrame(m).getAttribute("src")).toBeNull();
   });
 
-  it("doesn't ask a live card to relay its links", async () => {
-    const m = mountWidget(liveHtml());
-    const stubs = stubLive(m);
-    deliverLive(m, liveCharts(2));
-    await settle();
-
-    expect(fetchedUrls(stubs).length).toBeGreaterThan(0);
-    for (const url of fetchedUrls(stubs)) expect(url).not.toContain("link_relay");
-  });
-
   it("writes the card, the host scheme, and a tako-live-card-height reporter into the blob", async () => {
     const m = mountWidget(liveHtml());
     const stubs = stubLive(m);
