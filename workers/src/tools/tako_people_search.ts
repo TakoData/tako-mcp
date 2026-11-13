@@ -25,7 +25,7 @@ import type { ToolModule } from "./types.js";
 const DESCRIPTION = [
   "Screen employees by role, place and employer. Returns `total`, the filters `applied`, `notes`, `unresolved`, `failed` and one list card.",
   "",
-  "Use to build a list of people from filters, such as heads of sales at Series B startups in Texas, or a company's people, with its id in `company_ids`.",
+  "Use to list people from filters, such as heads of sales at Series B startups in Texas, or a company's people, with its id in `company_ids`.",
   "",
   `${enrichFieldSentences("tako_people_search")} \`total\` stops at 500, and \`total_is_lower_bound\` says when.`,
 ].join("\n");

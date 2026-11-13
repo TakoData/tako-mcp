@@ -122,7 +122,7 @@ describe("tako_people_search", () => {
     const text = takoPeopleSearch.description;
     expect(text.split("\n")[0]).toMatch(/^Screen employees/);
     expect(text.split("\n")[2]).toMatch(/^Use to /);
-    for (const field of ["work_email*", "phone*", "personal_email*", "all_emails*", "skills", "employer_{industry"]) {
+    for (const field of ["work_email*", "phone*", "personal_email*", "all_{emails*, personal_emails*, phone_numbers*}", "skills", "employer_{industry"]) {
       expect(text, field).toContain(field);
     }
     expect(text).toContain("except schools");
