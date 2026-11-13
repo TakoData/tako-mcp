@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { PersonSearchRequest } from "../generated/schemas.js";
+import { enrichFieldSentences } from "./_enrich.js";
 import takoPeopleSearch from "./tako_people_search.js";
 import { CTX, errorTextOf, inputKeys, listCard, OPT_IN_ONLY, surfaceMembership } from "./__enrich_test_helpers.js";
 import { bodyOf, inputPropertyDescription, jsonResponse, mockFetchSequence, requestFrom } from "./__test_helpers.js";
@@ -122,9 +123,7 @@ describe("tako_people_search", () => {
     const text = takoPeopleSearch.description;
     expect(text.split("\n")[0]).toMatch(/^Screen employees/);
     expect(text.split("\n")[2]).toMatch(/^Use to /);
-    for (const field of ["work_email*", "phone*", "personal_email*", "all_{emails*, personal_emails*, phone_numbers*}", "skills", "employer_{industry"]) {
-      expect(text, field).toContain(field);
-    }
+    expect(text).toContain(enrichFieldSentences("tako_people_search"));
     expect(text).toContain("except schools");
     expect(text).toContain("`total` stops at 500");
     expect(text).not.toMatch(/\$|credit|price/i);
