@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.12.0](https://github.com/TakoData/tako-mcp/compare/v1.11.0...v1.12.0) (2026-11-13)
+
+
+### Features
+
+* **tools:** describe entity ids on the enrichment tools (KE-2445) ([632a2c9](https://github.com/TakoData/tako-mcp/commit/632a2c9aa1b5485a341da08761689b73b7514aa6))
+* **tools:** describe entity ids on the enrichment tools, and finish the spec sync ([798c7d8](https://github.com/TakoData/tako-mcp/commit/798c7d834fc4c297d14bd18d4afce72dae3cd7c7))
+
+
+### Chores
+
+* sync OpenAPI spec from TakoData/tako ([eeccccc](https://github.com/TakoData/tako-mcp/commit/eeccccc4b654c9607080a7edfd982826db0ccee4))
+
 ## [1.11.0](https://github.com/TakoData/tako-mcp/compare/v1.10.0...v1.11.0) (2026-11-12)
 
 
