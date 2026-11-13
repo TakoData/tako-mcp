@@ -3743,9 +3743,11 @@ components:
           title: Total Matching
           description: Size of the whole set behind a card that lists a capped slice
             of it, such as 330 for a card listing the 30 soonest-closing of 330 open
-            solicitations. A larger max_rows doesn't return more of that set. Null
-            when the card's rows are the whole set, when Tako doesn't count the set
-            (truncated is still true), and for web text.
+            solicitations. On a card with several row arrays, it counts the set behind
+            the one capped array, such as a grant year's patents beside the per-year
+            counts. A larger max_rows doesn't return more of that set. Null when the
+            card's rows are the whole set, when Tako doesn't count the set (truncated
+            is still true), and for web text.
         truncated:
           type: boolean
           title: Truncated
@@ -5785,9 +5787,11 @@ components:
           title: Total Matching
           description: Size of the whole set behind a card that lists a capped slice
             of it, such as 330 for a card listing the 30 soonest-closing of 330 open
-            solicitations. A larger max_rows doesn't return more of that set. Null
-            when the card's rows are the whole set, when Tako doesn't count the set
-            (truncated is still true), and for web text.
+            solicitations. On a card with several row arrays, it counts the set behind
+            the one capped array, such as a grant year's patents beside the per-year
+            counts. A larger max_rows doesn't return more of that set. Null when the
+            card's rows are the whole set, when Tako doesn't count the set (truncated
+            is still true), and for web text.
         truncated:
           type: boolean
           title: Truncated
