@@ -27,7 +27,7 @@ import type { ToolModule } from "./types.js";
 const DESCRIPTION = [
   "Screen active companies by industry, place, size, founding year, funding stage and ownership. Returns `total`, the filters `applied`, `notes` and one list card.",
   "",
-  "Use to build a list of companies from filters, such as Series B enterprise SaaS companies in the US.",
+  "Use to list companies from filters, such as Series B SaaS companies in the US, or a person's employers.",
   "",
   `${enrichFieldSentences("tako_company_search")} \`total\` stops at 500, and \`total_is_lower_bound\` says when. It can't filter or sort by revenue.`,
 ].join("\n");
@@ -35,9 +35,14 @@ const DESCRIPTION = [
 const requestShape = CompanySearchRequest.omit(CONTENTS_FIELDS).shape;
 
 // Only what the generated description can't say: `industry` replaces a REST
-// call the model can't make, and the other three have no generated text.
+// call the model can't make, `person_id` names the role fields through an
+// enum the model never sees, `town` is shortened to fit the tool entry's
+// budget, and the other three have no generated text.
 const DESCRIBES = {
-  industry: "An industry name, alias or id, such as fintech or aerospace and defense. `applied` shows what it was read as.",
+  town: "Headquarters town. Needs country or region beside it.",
+  person_id:
+    "A person's pe_ id or Tako link. Lists their employers, past and present, with person_title, person_start_date and person_end_date.",
+  industry: "An industry name, alias or id, such as fintech. `applied` shows how it was read.",
   ownership: "Publicly traded or privately held.",
   founded_after: "Founded in this year or later.",
   founded_before: "Founded in this year or earlier.",

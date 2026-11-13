@@ -37,6 +37,16 @@ describe("tako_person_enrich", () => {
     expect(await bodyOf(request)).toEqual({ items });
   });
 
+  it("posts an item named by id, and a name with its employer's id as a hint", async () => {
+    const fetchMock = mockFetchSequence([jsonResponse(200, { results: [byEmail, byName], card: listCard("2 people") })]);
+    const items = [
+      { id: "pe_4kTqZ2vYb8LmN0pRs7WxAa" },
+      { name: "Jo Doe", company_id: "https://tako.com/card/co_0000000000000000000001/" },
+    ];
+    await takoPersonEnrich.handler(takoPersonEnrich.inputSchema.parse({ items }), CTX);
+    expect(await bodyOf(requestFrom(fetchMock.mock.calls[0]))).toEqual({ items });
+  });
+
   it("lines each result up with its item, a failed lookup included", async () => {
     mockFetchSequence([jsonResponse(200, { results: [byEmail, byName, failed], card: listCard("2 people") })]);
     const output = await takoPersonEnrich.handler(

@@ -61,6 +61,13 @@ describe("tako_company_search", () => {
     });
   });
 
+  it("posts a person's Tako link as person_id, its only filter, to list their employers", async () => {
+    const fetchMock = mockFetchSequence([jsonResponse(200, response(listCard("Jo Doe's employers")))]);
+    const link = "https://tako.com/card/pe_4kTqZ2vYb8LmN0pRs7WxAa/";
+    await takoCompanySearch.handler(takoCompanySearch.inputSchema.parse({ person_id: link }), CTX);
+    expect(await bodyOf(requestFrom(fetchMock.mock.calls[0]))).toEqual({ person_id: link });
+  });
+
   it("sends no default the caller didn't choose", async () => {
     const fetchMock = mockFetchSequence([jsonResponse(200, response(null, { total: 0 }))]);
     await takoCompanySearch.handler(takoCompanySearch.inputSchema.parse({ country: "US" }), CTX);

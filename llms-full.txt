@@ -163,15 +163,16 @@ Parameters (all optional; set at least one filter):
 - `startups` (boolean): Startups only.
 - `founded_after`, `founded_before` (integer): Founding year range, inclusive.
 - `order_by` (string): `employees` or `founded`; a leading minus sorts in descending order.
+- `person_id` (string): A person's id, the `pe_` id that ends a person row's tako_url, a person `match_id`, or the link itself. It lists the companies that person has worked at, past and present, and each row adds `person_title`, `person_start_date` and `person_end_date` (blank while the role is current). Alone, it lists every employer whatever its status, most recent role first; beside another filter, it narrows the usual screen of active companies.
 
 ### tako_people_search
 Opt-in tool — connect with `?tools=contents,people_search` on the endpoint URL (see Connecting); `tako_contents` fetches the rows of the card it returns. Screen employees by role, place and employer. It returns `total`, `total_is_lower_bound`, `applied`, `notes` and one list `card`, as `tako_company_search` does, plus `unresolved` (inputs that named nothing) and `failed` (inputs whose lookup failed; retry them).
 
-Fields: Card `description` previews 10 rows: name, title, department, employer, schools, in_role_since, location, linkedin_url, work_email*, phone*, personal_email*, tako_url. `tako_contents` on its `url` returns every row: those fields except schools, plus seniority, description, education, experience, registry_seats, sub_role, business_area, occupation, job_summary, skills, industry, metro, job_verified_on, twitter_url, github_url, all_emails*, all_personal_emails*, employer_{industry, tako_industries, tags, size, funding_stage, founded, location, listing}, sources. * is premium: null unless that call sets `premium: true`.
+Fields: Card `description` previews 10 rows: name, title, department, employer, schools, in_role_since, location, linkedin_url, work_email*, phone*, personal_email*, tako_url. `tako_contents` on its `url` returns every row: those fields except schools, plus seniority, description, education, experience, registry_seats, sub_role, business_area, occupation, job_summary, skills, industry, metro, job_verified_on, twitter_url, github_url, all_emails*, all_personal_emails*, employer_{industry, tako_industries, tags, size, funding_stage, founded, location, listing}, sources, employer_tako_url. * is premium: null unless that call sets `premium: true`.
 
 Parameters (all optional; set at least one filter):
 - `role` (array): Title, seniority or function phrases, such as "head of sales".
-- `company_ids` (array): Employer ids, such as the `match_id` of a matched company.
+- `company_ids` (array): Employer ids: the `co_` id that ends a company row's tako_url, a company `match_id`, or the link itself. An id that names no company is listed in `unresolved`. Each person row's `employer_tako_url` links back to the employer.
 - `company_domains` (array): Employer websites.
 - `person_country`, `person_region`, `person_metro`, `person_town` (string): Where the person is. `person_town` needs `person_country` or `person_region` beside it.
 - `company_industry` (string): The employer's industry, as a name, alias or id.
@@ -186,12 +187,19 @@ Opt-in tool — connect with `?tools=contents,company_enrich` on the endpoint UR
 Fields: Card `description` previews 10 rows: name, status, estimated_revenue*, headcount, industry, funding_stage, total_raised, last_funding_date, investors, location, website, tako_url. `tako_contents` on its `url` returns every row: those fields except last_funding_date and investors, plus company_type, linkedin_followers*, linkedin_url, ticker, established, parent*, subsidiaries*, description, headcount_range, tags, metro, naics_codes, postcode, funding_round_count, funding_rounds, sic_codes, also_known_as, other_domains, street_address, twitter_url, facebook_url, sources. * is premium: null unless that call sets `premium: true`.
 
 Parameters:
-- `items` (array, required): 1 to 25 companies. Each needs `domain`, `linkedin_url` or `name`; `city`, `region`, `country` and `industry` rank a name's matches and never exclude one.
+- `items` (array, required): 1 to 25 companies. Each needs `id`, `domain`, `linkedin_url` or `name`. `id` is a `co_` id or the row's link, and names the company exactly; Tako ignores the item's other fields. `city`, `region`, `country` and `industry` rank a name's matches and never exclude one.
+
+`match_id` is the matched company's `co_` id, the same id that ends its row's tako_url. `tako_people_search` takes it in `company_ids`.
 
 ### tako_person_enrich
 Opt-in tool — connect with `?tools=contents,person_enrich` on the endpoint URL (see Connecting); `tako_contents` fetches the rows of the card it returns. Match up to 25 people you already know. It returns `results` in the shape `tako_company_enrich` returns, and the matches as one list `card`.
 
-Fields: Card `description` previews 10 rows: name, title, department, employer, schools, in_role_since, location, linkedin_url, work_email*, phone*, personal_email*, tako_url. `tako_contents` on its `url` returns every row: those fields except schools, plus seniority, description, education, experience, registry_seats, sub_role, business_area, occupation, job_summary, skills, industry, metro, job_verified_on, twitter_url, github_url, all_emails*, all_personal_emails*, employer_{industry, tako_industries, tags, size, funding_stage, founded, location, listing}, sources. * is premium: null unless that call sets `premium: true`.
+Fields: Card `description` previews 10 rows: name, title, department, employer, schools, in_role_since, location, linkedin_url, work_email*, phone*, personal_email*, tako_url. `tako_contents` on its `url` returns every row: those fields except schools, plus seniority, description, education, experience, registry_seats, sub_role, business_area, occupation, job_summary, skills, industry, metro, job_verified_on, twitter_url, github_url, all_emails*, all_personal_emails*, employer_{industry, tako_industries, tags, size, funding_stage, founded, location, listing}, sources, employer_tako_url. * is premium: null unless that call sets `premium: true`.
 
 Parameters:
-- `items` (array, required): 1 to 25 people. Each needs `email`, `phone`, `linkedin_url` or `name`; `company_domain`, `company_name` and `title` are hints for a name. Give a phone with its country code.
+- `items` (array, required): 1 to 25 people. Each needs `id`, `email`, `phone`, `linkedin_url` or `name`. `id` is a `pe_` id or the row's link, and names the person exactly; Tako ignores the item's other fields. `company_id` (the employer's `co_` id or link), `company_domain`, `company_name` and `title` are hints for a name; a `company_id` that names a company wins over the other two. Give a phone with its country code.
+
+`match_id` is the matched person's `pe_` id. `tako_company_search` takes it as `person_id`.
+
+### Entity ids
+A company or person from these four tools has one id: `co_` or `pe_` followed by 22 letters and digits. It's the last segment of the row's tako_url and the `match_id` of an enrich result, and every id input also takes the link itself. An id is stable, though a major data migration can change it. A bare uuid is not an id, and the tools reject it.
