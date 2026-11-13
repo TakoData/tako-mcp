@@ -88,7 +88,7 @@ Each enrichment tool description lists the card's columns and marks the premium 
 1. Check out `auto/sdk-sync` and run `npm run schemas:gen`.
 2. If the field is a preview field, add its label to `COMPANY_PREVIEW_LABELS` or `PERSON_PREVIEW_LABELS` in `_enrich_fields.ts`; `npm run typecheck` names the missing one. No other field needs a hand edit there.
 3. Run `npm run registry:gen`. It fails and prints, for each tool, the sentences its `llms-full.txt` section must contain. Replace each section's old field sentences in the root `llms-full.txt` with them.
-4. Run `npm run registry:gen` again. The company descriptions sit a few characters under the 1,000-character cap, so a new company field usually fails `[prose-budget]` here: shorten that tool's own prose in its module (`tako_company_search.ts`, `tako_company_enrich.ts`), not the field sentences.
+4. Run `npm run registry:gen` again. All four enrichment descriptions sit a few characters under the 1,000-character cap, so a new field in either list usually fails `[prose-budget]` here: shorten that tool's own prose in its module (`tako_company_search.ts`, `tako_company_enrich.ts`, `tako_people_search.ts`, `tako_person_enrich.ts`), not the field sentences.
 5. Run `npm run registry:check`, and commit the regenerated files with `llms-full.txt`.
 
 On `/mcp`, items 5-10 are opt-in: name the tool in `?tools=` (an allowlist that replaces the defaults; see `workers/src/tools/_tools_param.ts` and `_surface.ts`). `/mcp/chatgpt` lists items 6-8 by default. The generated reference is `docs/TOOLS.md`; `registry:check` fails when it is stale.

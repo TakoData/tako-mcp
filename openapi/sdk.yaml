@@ -2005,6 +2005,7 @@ components:
       - github_url
       - all_emails
       - all_personal_emails
+      - all_phone_numbers
       - employer_industry
       - employer_tako_industries
       - employer_tags
@@ -2054,6 +2055,7 @@ components:
       - personal_email
       - all_emails
       - all_personal_emails
+      - all_phone_numbers
       description: The premium fields of the person list card that `POST /v1/people/search`
         and `POST /v1/people/enrich` return. `POST /api/v1/contents` withholds them
         unless the call sets `premium=true`. `content_format=card_json` carries no

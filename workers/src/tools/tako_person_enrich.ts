@@ -22,9 +22,9 @@ import { renderEnrichMarkdown } from "./_render_markdown.js";
 import type { ToolModule } from "./types.js";
 
 const DESCRIPTION = [
-  "Match up to 25 known people by email, phone, LinkedIn profile or name. Returns per-item `results` and one list card of matches.",
+  "Match up to 25 known people by email, phone, LinkedIn or name. Returns per-item `results` and one list card of matches.",
   "",
-  "Use to look up known people, such as a contact list.",
+  "Use to look up known people, such as contacts.",
   "",
   `${ENRICH_RESULT_SENTENCE} ${enrichFieldSentences("tako_person_enrich")}`,
 ].join("\n");
