@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.13.0](https://github.com/TakoData/tako-mcp/compare/v1.12.0...v1.13.0) (2026-11-14)
+
+
+### Features
+
+* **tools:** list all_phone_numbers on the people tools, and finish the spec sync ([#415](https://github.com/TakoData/tako-mcp/issues/415)) ([3a52844](https://github.com/TakoData/tako-mcp/commit/3a52844c8c49faa3669889b97248d016021c5f3b))
+
+
+### Chores
+
+* sync OpenAPI spec from monorepo ([#417](https://github.com/TakoData/tako-mcp/issues/417)) ([bcdfd76](https://github.com/TakoData/tako-mcp/commit/bcdfd76fd7754f13c95028f2584da86dab67a7e9))
+
 ## [1.12.0](https://github.com/TakoData/tako-mcp/compare/v1.11.0...v1.12.0) (2026-11-13)
 
 
