@@ -708,8 +708,10 @@ paths:
         and metric ids. Each group has a stable `key`. To page through one group,
         pass the key as `relation` with `cursor`. To keep only the nodes whose name
         or aliases contain every word you give, pass `q`, such as ''normalized ebit''.
-        Requires an API key. This endpoint was previously at /beta/graph/related.
-        That path still works until 1 February 2027. Move to /v1/graph/related.'
+        When `q` matches none of a node''s `metrics` but does match a breakdown, the
+        page lists that breakdown in `suggestions`. Requires an API key. This endpoint
+        was previously at /beta/graph/related. That path still works until 1 February
+        2027. Move to /v1/graph/related.'
       operationId: graphRelated
       parameters:
       - description: Opaque public id of the node.
@@ -5001,6 +5003,18 @@ components:
           - type: string
           - type: 'null'
           title: Next Cursor
+        suggestions:
+          anyOf:
+          - items:
+              $ref: '#/components/schemas/GraphRelation'
+            type: array
+          - type: 'null'
+          title: Suggestions
+          description: Other relations of the node where `q` matches. Set only on
+            the first page of a `metrics` drill that matched nothing, when `q` matches
+            one of the node's breakdowns. For a company, `q=data center` names a segment,
+            not a metric, so the match is listed here under `breakdown:segment`. Each
+            entry holds its first matches; drill its `key` to page the rest.
       type: object
       required:
       - key
