@@ -4340,21 +4340,25 @@ components:
           type: array
           maxItems: 20
           title: Node Ids
-          description: 'Graph node ids to pin into the search, from /v1/graph/search
-            or /v1/graph/related. For example, pin a company, one of its segments,
-            and a metric to get that segment''s figures without wording the query
-            exactly. Pinned nodes always become retrieval candidates and get a strong
-            boost; organic results do not change. Ids are not durable across knowledge-graph
-            rebuilds: the search skips an id that no longer resolves (in strict mode
-            it simply cannot match). Malformed ids fail the request with a 400. Max
-            20.'
+          description: 'Ids to pin into the search, max 20. Takes two kinds of id.
+            A graph node id, from /v1/graph/search or /v1/graph/related: for example,
+            pin a company, one of its segments, and a metric to get that segment''s
+            figures without wording the query exactly. Graph ids aren''t durable across
+            knowledge-graph rebuilds. A company or person id (`co_` or `pe_`), from
+            an enrichment response row or its Tako card link: that company''s or person''s
+            profile card becomes a candidate, served when it''s relevant to the query.
+            It doesn''t narrow the other cards to that company or person. Every pinned
+            id becomes a retrieval candidate, a graph node gets a strong boost, and
+            organic results don''t change. The search skips an id that no longer resolves,
+            and a company or person id when your account isn''t served that data.
+            A malformed id fails the request with a 400.'
         strict:
           type: boolean
           title: Strict
-          description: When true, return only data cards that match at least one node
-            in node_ids (which must then be non-empty). When false, pinned nodes rank
-            first but organic results still return. Web results do not change either
-            way.
+          description: When true, return only data cards that match at least one id
+            in node_ids (which must then be non-empty). A company or person id matches
+            its own profile card. When false, pinned nodes rank first but organic
+            results still return. Web results do not change either way.
           default: false
         variable_cost:
           anyOf:
