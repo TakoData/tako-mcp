@@ -1310,92 +1310,60 @@ Annotations:
         "type": "object",
         "properties": {
           "id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "The company's id: the co_ id from its row's Tako link, or the link itself. It names the company exactly, and Tako ignores the item's other fields."
+            "description": "The company's id: the co_ id from its row's Tako link, or the link itself. It names the company exactly, and Tako ignores the item's other fields.",
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "domain": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "The company's website, matched exactly."
+            "description": "The company's website, matched exactly.",
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "The company's name, matched by the scored lookup."
+            "description": "The company's name, matched by the scored lookup.",
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "linkedin_url": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "The company's LinkedIn page, matched exactly."
+            "description": "The company's LinkedIn page, matched exactly.",
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "city": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "A hint for a name match: ranks companies based in this city or town higher, and never excludes one."
+            "description": "A hint for a name match: ranks companies based in this city or town higher, and never excludes one.",
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "region": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "A hint for a name match: ranks companies based in this state or province higher, and never excludes one."
+            "description": "A hint for a name match: ranks companies based in this state or province higher, and never excludes one.",
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "country": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "A hint for a name match: ranks companies based in this country higher, and never excludes one."
+            "description": "A hint for a name match: ranks companies based in this country higher, and never excludes one.",
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "industry": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "A hint for a name match: ranks companies in this industry, in words such as 'aircraft parts' higher, and never excludes one."
+            "description": "A hint for a name match: ranks companies in this industry, in words such as 'aircraft parts' higher, and never excludes one.",
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "additionalProperties": false
@@ -1590,36 +1558,24 @@ Annotations:
   "type": "object",
   "properties": {
     "country": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "description": "ISO 3166-1 alpha-2 code or English name."
+      "description": "ISO 3166-1 alpha-2 code or English name.",
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "region": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "description": "State or province, as a name or an ISO 3166-2 code."
+      "description": "State or province, as a name or an ISO 3166-2 code.",
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "town": {
       "description": "Headquarters town. Needs country or region beside it.",
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
+      "type": [
+        "string",
+        "null"
       ]
     },
     "min_employees": {
@@ -1650,13 +1606,9 @@ Annotations:
     },
     "industry": {
       "description": "An industry name, alias or id, such as fintech. `applied` shows how it was read.",
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
+      "type": [
+        "string",
+        "null"
       ]
     },
     "funding_stages": {
@@ -1767,13 +1719,9 @@ Annotations:
     },
     "person_id": {
       "description": "A person's pe_ id or Tako link. Lists their employers, past and present, with person_title, person_start_date and person_end_date.",
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
+      "type": [
+        "string",
+        "null"
       ]
     }
   },
@@ -2776,57 +2724,37 @@ Annotations:
     },
     "person_country": {
       "description": "Where the person is: ISO 3166-1 alpha-2 code or English name.",
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
+      "type": [
+        "string",
+        "null"
       ]
     },
     "person_region": {
       "description": "Where the person is: state or province.",
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
+      "type": [
+        "string",
+        "null"
       ]
     },
     "person_metro": {
       "description": "Where the person is: metropolitan area.",
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
+      "type": [
+        "string",
+        "null"
       ]
     },
     "person_town": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "description": "Needs person_country or person_region beside it."
+      "description": "Needs person_country or person_region beside it.",
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "company_industry": {
       "description": "The employer's industry: a name, alias or id, such as fintech. `applied` shows what it was read as.",
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
+      "type": [
+        "string",
+        "null"
       ]
     },
     "company_min_employees": {
@@ -3102,103 +3030,67 @@ Annotations:
         "type": "object",
         "properties": {
           "id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "The person's id: the pe_ id from their row's Tako link, or the link itself. It names the person exactly, and Tako ignores the item's other fields."
+            "description": "The person's id: the pe_ id from their row's Tako link, or the link itself. It names the person exactly, and Tako ignores the item's other fields.",
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "The person's name, matched by the scored lookup."
+            "description": "The person's name, matched by the scored lookup.",
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "linkedin_url": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "A LinkedIn profile URL, matched exactly."
+            "description": "A LinkedIn profile URL, matched exactly.",
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "email": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "An email address, matched exactly."
+            "description": "An email address, matched exactly.",
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "phone": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "A phone number, matched exactly."
+            "description": "A phone number, matched exactly.",
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "company_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "A hint for a name: the employer's co_ id, or its Tako link. When it names a company, it wins over company_domain and company_name. When it names none, Tako lists it in unresolved and uses company_domain and company_name."
+            "description": "A hint for a name: the employer's co_ id, or its Tako link. When it names a company, it wins over company_domain and company_name. When it names none, Tako lists it in unresolved and uses company_domain and company_name.",
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "company_domain": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "A hint for a name: the employer's website."
+            "description": "A hint for a name: the employer's website.",
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "company_name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "A hint for a name: the employer's name."
+            "description": "A hint for a name: the employer's name.",
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "title": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "A hint for a name: the person's job title."
+            "description": "A hint for a name: the person's job title.",
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "additionalProperties": false
@@ -3538,26 +3430,18 @@ Annotations:
           },
           "snippet": {
             "description": "Passages selected against the query. A ' … ' marks a discontinuity — joined passages or the page's own ellipsis — so never quote across it as one sentence. null → no relevant passage, url still fetchable.",
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "source": {
             "type": "string"
           },
           "published": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "content": {
@@ -3724,26 +3608,18 @@ The chart-widget fields are declared only here; the widget reads them from `wind
           },
           "snippet": {
             "description": "Passages selected against the query. A ' … ' marks a discontinuity — joined passages or the page's own ellipsis — so never quote across it as one sentence. null → no relevant passage, url still fetchable.",
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "source": {
             "type": "string"
           },
           "published": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "content": {
@@ -4097,13 +3973,9 @@ Annotations:
     },
     "timezone": {
       "description": "IANA timezone. It formats dates in rendered card images only.",
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
+      "type": [
+        "string",
+        "null"
       ]
     },
     "output_settings": {
@@ -4113,15 +3985,11 @@ Annotations:
           "type": "object",
           "properties": {
             "image_dark_mode": {
-              "anyOf": [
-                {
-                  "type": "boolean"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Whether to render card preview images in dark mode. Omit it and Tako renders dark."
+              "description": "Whether to render card preview images in dark mode. Omit it and Tako renders dark.",
+              "type": [
+                "boolean",
+                "null"
+              ]
             },
             "force_refresh": {
               "type": "boolean",
@@ -4214,13 +4082,9 @@ Annotations:
         },
         "variable_cost": {
           "description": "Web traffic and SEO data, which adds a per-unit charge. Default true; false gets placeholders.",
-          "anyOf": [
-            {
-              "type": "boolean"
-            },
-            {
-              "type": "null"
-            }
+          "type": [
+            "boolean",
+            "null"
           ]
         },
         "max_variable_cost_usd": {
@@ -4506,26 +4370,18 @@ Annotations:
           },
           "snippet": {
             "description": "Passages selected against the query. A ' … ' marks a discontinuity — joined passages or the page's own ellipsis — so never quote across it as one sentence. null → no relevant passage, url still fetchable.",
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "source": {
             "type": "string"
           },
           "published": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "content": {
@@ -4942,15 +4798,11 @@ Annotations:
                             "type": "object",
                             "properties": {
                               "x": {
-                                "anyOf": [
-                                  {
-                                    "type": "string"
-                                  },
-                                  {
-                                    "type": "number"
-                                  }
-                                ],
-                                "description": "Timestamp, date string, or label."
+                                "description": "Timestamp, date string, or label.",
+                                "type": [
+                                  "string",
+                                  "number"
+                                ]
                               },
                               "y": {
                                 "description": "Value.",
@@ -5001,15 +4853,11 @@ Annotations:
                               "type": "object",
                               "properties": {
                                 "x": {
-                                  "anyOf": [
-                                    {
-                                      "type": "string"
-                                    },
-                                    {
-                                      "type": "number"
-                                    }
-                                  ],
-                                  "description": "Timestamp, date string, or label."
+                                  "description": "Timestamp, date string, or label.",
+                                  "type": [
+                                    "string",
+                                    "number"
+                                  ]
                                 },
                                 "y": {
                                   "description": "Value.",

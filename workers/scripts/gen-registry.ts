@@ -1456,19 +1456,21 @@ async function loadToolModules(): Promise<LoadedModule[]> {
  * integer (`include_related`) among them, on the discovery card MCP directories
  * and non-Zod consumers read.
  *
+ * zod 4.6 and later collapse a union of bare primitives into a `type` array
+ * instead (`{"type": ["string", "null"]}`), so an array reads the same way.
+ *
  * A union with more than one non-null branch stays "unknown" on purpose: the
  * registry format carries one type per parameter and has nowhere to put the
  * rest.
  */
 export function declaredType(prop: {
-  type?: string;
+  type?: string | string[];
   anyOf?: Array<{ type?: string }>;
   oneOf?: Array<{ type?: string }>;
 }): string {
-  if (prop.type !== undefined) return prop.type;
-  const named = (prop.anyOf ?? prop.oneOf ?? [])
-    .map((branch) => branch.type)
-    .filter((t): t is string => t !== undefined && t !== "null");
+  if (typeof prop.type === "string") return prop.type;
+  const candidates = prop.type ?? (prop.anyOf ?? prop.oneOf ?? []).map((branch) => branch.type);
+  const named = candidates.filter((t): t is string => t !== undefined && t !== "null");
   const only = named.length === 1 ? named[0] : undefined;
   return only ?? "unknown";
 }
@@ -1502,7 +1504,7 @@ function flattenParameters(
   const out: Record<string, ParameterSpec> = {};
   for (const [name, rawPropSchema] of Object.entries(properties)) {
     const prop = rawPropSchema as {
-      type?: string;
+      type?: string | string[];
       anyOf?: Array<{ type?: string }>;
       oneOf?: Array<{ type?: string }>;
       description?: string;

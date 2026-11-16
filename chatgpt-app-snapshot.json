@@ -31,12 +31,12 @@
     "tako_search": {
       "description_sha256": "a345df73655f0d1e6116aedf752fa6c4d6cf29844eb8502206620e259285c560",
       "input_schema_sha256": "6e68fc1dffa7cb7d5f117c1288c673c9f07085aac608b0535d846876d196f13d",
-      "output_schema_sha256": "01213e17b8451b3ebc3c7be81ee8a3371efe96fc961dd8992c5dfb720a878fc3",
+      "output_schema_sha256": "9db9f6f55e02c6ba40b40386a2ce187afa2652e5a333988e1b96ba01febba27e",
       "widget_description_sha256": "396efa3bfd68169c7631587c01ecb3d51e4d268af4b70be66c5eb3651d2865d5"
     },
     "tako_visualize": {
       "description_sha256": "8f5f2862aff0f94e6cbd4cca9436926e3ec4859a7a9c8a6beb690f243389e93d",
-      "input_schema_sha256": "f99b017501c673d46898066f77418ded67215e7c982b8f9d0bcd523bb65ddf5e",
+      "input_schema_sha256": "36332d436d39912280c9dbc864b26eaa6dbdeb37160ea293de45c7a04c61c297",
       "output_schema_sha256": "2bdfeaabaa1eb68bc056ecfa3073410f8f5417604453228b3a6f422dc7f82752",
       "widget_description_sha256": "396efa3bfd68169c7631587c01ecb3d51e4d268af4b70be66c5eb3651d2865d5"
     }
