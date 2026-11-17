@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.13.1](https://github.com/TakoData/tako-mcp/compare/v1.13.0...v1.13.1) (2026-11-17)
+
+
+### Bug Fixes
+
+* **deps:** bump zod, body-parser and undici to clear Vanta CVEs ([ea442a7](https://github.com/TakoData/tako-mcp/commit/ea442a7e9ba153f920605fcb093374c56a607783))
+* **deps:** bump zod, body-parser and undici to clear Vanta CVEs ([48f7a52](https://github.com/TakoData/tako-mcp/commit/48f7a527b85b0f2bb3f6247ac937e5819b9f117c))
+
+
+### Chores
+
+* sync OpenAPI spec from monorepo ([#418](https://github.com/TakoData/tako-mcp/issues/418)) ([58f5227](https://github.com/TakoData/tako-mcp/commit/58f5227940eb2fec0841f188c179cf15dbb655d2))
+* sync OpenAPI spec from monorepo ([#421](https://github.com/TakoData/tako-mcp/issues/421)) ([e41d937](https://github.com/TakoData/tako-mcp/commit/e41d9379e13027aa64874953fdbaa553d8cf7943))
+
 ## [1.13.0](https://github.com/TakoData/tako-mcp/compare/v1.12.0...v1.13.0) (2026-11-14)
 
 
