@@ -666,6 +666,12 @@ describe("declaredType", () => {
     ).toBe("object");
   });
 
+  it("reads THROUGH a type array, which is how zod 4.6+ emits a union of primitives", () => {
+    expect(declaredType({ type: ["string", "null"] })).toBe("string");
+    expect(declaredType({ type: ["string", "number"] })).toBe("unknown");
+    expect(declaredType({ type: ["null"] })).toBe("unknown");
+  });
+
   it("handles oneOf the same way", () => {
     expect(
       declaredType({ oneOf: [{ type: "number" }, { type: "null" }] }),
