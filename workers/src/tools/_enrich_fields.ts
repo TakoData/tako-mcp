@@ -58,6 +58,7 @@ const COMPANY_PREVIEW_LABELS: Record<CompanyListPreviewField, string> = {
   investors: "Investors",
   location: "Location",
   website: "Website",
+  headcount_range: "Headcount range",
   tako_url: "Tako link",
 };
 

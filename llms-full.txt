@@ -150,13 +150,13 @@ Parameters:
 ### tako_company_search
 Opt-in tool — connect with `?tools=contents,company_search` on the endpoint URL (see Connecting); `tako_contents` fetches the rows of the card it returns. Screen active companies by industry, place, size, founding year, funding stage and ownership. It returns `total` (it stops at 500, and `total_is_lower_bound` says when), the filters as `applied`, `notes`, and one list `card`. A null `card` means nothing matched. It can't filter or sort by revenue.
 
-Fields: Card `description` previews 10 rows: name, status, estimated_revenue*, headcount, industry, funding_stage, total_raised, last_funding_date, investors, location, website, tako_url. `tako_contents` on its `url` returns every row: those fields except last_funding_date and investors, plus company_type, linkedin_followers*, linkedin_url, ticker, established, parent*, subsidiaries*, description, headcount_range, tags, metro, naics_codes, postcode, funding_round_count, funding_rounds, sic_codes, also_known_as, other_domains, street_address, twitter_url, facebook_url, sources. * is premium: null unless that call sets `premium: true`.
+Fields: Card `description` previews 10 rows: name, status, estimated_revenue*, headcount, industry, funding_stage, total_raised, last_funding_date, investors, location, website, headcount_range, tako_url. `tako_contents` on its `url` returns every row: those fields except last_funding_date and investors, plus company_type, linkedin_followers*, linkedin_url, ticker, established, parent*, subsidiaries*, description, tags, metro, naics_codes, postcode, funding_round_count, funding_rounds, sic_codes, also_known_as, other_domains, street_address, twitter_url, facebook_url, sources. * is premium: null unless that call sets `premium: true`.
 
 Parameters (all optional; set at least one filter):
 - `country` (string): ISO 3166-1 alpha-2 code or English name.
 - `region` (string): State or province, as a name or an ISO 3166-2 code.
 - `town` (string): Town of the headquarters. Needs `country` or `region` beside it.
-- `min_employees`, `max_employees` (integer): Employee range, on People Data Labs' estimate.
+- `min_employees`, `max_employees` (integer): Employee range, matched on whole People Data Labs size bands: a bound inside a band keeps the whole band, so 300 or more keeps every 201-500 company.
 - `industry` (string): An industry name, alias or id, such as fintech. `applied` shows what it was read as, and an unknown one returns the closest ids.
 - `funding_stages` (array): Latest funding stages, such as `series_b`.
 - `ownership` (string): `public` or `private`.
@@ -184,7 +184,7 @@ Parameters (all optional; set at least one filter):
 ### tako_company_enrich
 Opt-in tool — connect with `?tools=contents,company_enrich` on the endpoint URL (see Connecting); `tako_contents` fetches the rows of the card it returns. Match up to 25 companies you already know. `results` has one entry per item, in order, with its `index`, the `input` as sent, `status` (`matched`, `no_match` or `failed`), `match_id`, `confidence` (`exact`, `high` or `ambiguous`), `matched_on`, `alternates`, `unresolved` and `failed`. The matches come back as one list `card`; a null `card` means nothing matched.
 
-Fields: Card `description` previews 10 rows: name, status, estimated_revenue*, headcount, industry, funding_stage, total_raised, last_funding_date, investors, location, website, tako_url. `tako_contents` on its `url` returns every row: those fields except last_funding_date and investors, plus company_type, linkedin_followers*, linkedin_url, ticker, established, parent*, subsidiaries*, description, headcount_range, tags, metro, naics_codes, postcode, funding_round_count, funding_rounds, sic_codes, also_known_as, other_domains, street_address, twitter_url, facebook_url, sources. * is premium: null unless that call sets `premium: true`.
+Fields: Card `description` previews 10 rows: name, status, estimated_revenue*, headcount, industry, funding_stage, total_raised, last_funding_date, investors, location, website, headcount_range, tako_url. `tako_contents` on its `url` returns every row: those fields except last_funding_date and investors, plus company_type, linkedin_followers*, linkedin_url, ticker, established, parent*, subsidiaries*, description, tags, metro, naics_codes, postcode, funding_round_count, funding_rounds, sic_codes, also_known_as, other_domains, street_address, twitter_url, facebook_url, sources. * is premium: null unless that call sets `premium: true`.
 
 Parameters:
 - `items` (array, required): 1 to 25 companies. Each needs `id`, `domain`, `linkedin_url` or `name`. `id` is a `co_` id or the row's link, and names the company exactly; Tako ignores the item's other fields. `city`, `region`, `country` and `industry` rank a name's matches and never exclude one.
