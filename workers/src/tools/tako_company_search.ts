@@ -36,8 +36,9 @@ const requestShape = CompanySearchRequest.omit(CONTENTS_FIELDS).shape;
 
 // Only what the generated description can't say: `industry` replaces a REST
 // call the model can't make, `person_id` names the role fields through an
-// enum the model never sees, `town` is shortened to fit the tool entry's
-// budget, and the other three have no generated text.
+// enum the model never sees, `town`, `min_employees` and `max_employees` are
+// shortened to fit the tool entry's budget, and the other three have no
+// generated text.
 const DESCRIBES = {
   town: "Headquarters town. Needs country or region beside it.",
   person_id:
@@ -46,6 +47,8 @@ const DESCRIBES = {
   ownership: "Publicly traded or privately held.",
   founded_after: "Founded in this year or later.",
   founded_before: "Founded in this year or earlier.",
+  min_employees: "Fewest employees, by whole size band: 300 keeps 201-500.",
+  max_employees: "Most employees, by whole size band.",
 } satisfies Partial<Record<keyof typeof requestShape, string>>;
 
 const inputSchema = z

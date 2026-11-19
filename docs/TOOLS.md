@@ -1278,7 +1278,7 @@ Match up to 25 known companies by website, LinkedIn page or name. Returns per-it
 
 Use to look up companies you can name, such as a list of domains.
 
-`results` has one entry per item, in order: status (matched, no_match, failed), match_id, confidence (exact, high, ambiguous), matched_on, alternates, unresolved, failed. Card `description` previews 10 rows: name, status, estimated_revenue*, headcount, industry, funding_stage, total_raised, last_funding_date, investors, location, website, tako_url. `tako_contents` on its `url` returns every row: those fields except last_funding_date and investors, plus company_type, linkedin_followers*, linkedin_url, ticker, established, parent*, subsidiaries*, description, headcount_range, tags, metro, naics_codes, postcode, funding_round_count, funding_rounds, sic_codes, also_known_as, other_domains, street_address, twitter_url, facebook_url, sources. * is premium: null unless that call sets `premium: true`.
+`results` has one entry per item, in order: status (matched, no_match, failed), match_id, confidence (exact, high, ambiguous), matched_on, alternates, unresolved, failed. Card `description` previews 10 rows: name, status, estimated_revenue*, headcount, industry, funding_stage, total_raised, last_funding_date, investors, location, website, headcount_range, tako_url. `tako_contents` on its `url` returns every row: those fields except last_funding_date and investors, plus company_type, linkedin_followers*, linkedin_url, ticker, established, parent*, subsidiaries*, description, tags, metro, naics_codes, postcode, funding_round_count, funding_rounds, sic_codes, also_known_as, other_domains, street_address, twitter_url, facebook_url, sources. * is premium: null unless that call sets `premium: true`.
 
 Parameters:
 
@@ -1521,7 +1521,7 @@ Screen active companies by industry, place, size, founding year, funding stage a
 
 Use to list companies from filters, such as Series B SaaS companies in the US, or a person's employers.
 
-Card `description` previews 10 rows: name, status, estimated_revenue*, headcount, industry, funding_stage, total_raised, last_funding_date, investors, location, website, tako_url. `tako_contents` on its `url` returns every row: those fields except last_funding_date and investors, plus company_type, linkedin_followers*, linkedin_url, ticker, established, parent*, subsidiaries*, description, headcount_range, tags, metro, naics_codes, postcode, funding_round_count, funding_rounds, sic_codes, also_known_as, other_domains, street_address, twitter_url, facebook_url, sources. * is premium: null unless that call sets `premium: true`. `total` stops at 500, and `total_is_lower_bound` says when. It can't filter or sort by revenue.
+Card `description` previews 10 rows: name, status, estimated_revenue*, headcount, industry, funding_stage, total_raised, last_funding_date, investors, location, website, headcount_range, tako_url. `tako_contents` on its `url` returns every row: those fields except last_funding_date and investors, plus company_type, linkedin_followers*, linkedin_url, ticker, established, parent*, subsidiaries*, description, tags, metro, naics_codes, postcode, funding_round_count, funding_rounds, sic_codes, also_known_as, other_domains, street_address, twitter_url, facebook_url, sources. * is premium: null unless that call sets `premium: true`. `total` stops at 500, and `total_is_lower_bound` says when. It can't filter or sort by revenue.
 
 Parameters:
 
@@ -1530,8 +1530,8 @@ Parameters:
 | `country` | string | no |  | ISO 3166-1 alpha-2 code or English name. |
 | `region` | string | no |  | State or province, as a name or an ISO 3166-2 code. |
 | `town` | string | no |  | Headquarters town. Needs country or region beside it. |
-| `min_employees` | integer | no |  | People Data Labs' employee estimate. |
-| `max_employees` | integer | no |  | People Data Labs' employee estimate. |
+| `min_employees` | integer | no |  | Fewest employees, by whole size band: 300 keeps 201-500. |
+| `max_employees` | integer | no |  | Most employees, by whole size band. |
 | `industry` | string | no |  | An industry name, alias or id, such as fintech. `applied` shows how it was read. |
 | `funding_stages` | array | no |  | Latest funding stages. |
 | `ownership` | string | no |  | Publicly traded or privately held. |
@@ -1579,6 +1579,7 @@ Annotations:
       ]
     },
     "min_employees": {
+      "description": "Fewest employees, by whole size band: 300 keeps 201-500.",
       "anyOf": [
         {
           "type": "integer",
@@ -1588,10 +1589,10 @@ Annotations:
         {
           "type": "null"
         }
-      ],
-      "description": "People Data Labs' employee estimate."
+      ]
     },
     "max_employees": {
+      "description": "Most employees, by whole size band.",
       "anyOf": [
         {
           "type": "integer",
@@ -1601,8 +1602,7 @@ Annotations:
         {
           "type": "null"
         }
-      ],
-      "description": "People Data Labs' employee estimate."
+      ]
     },
     "industry": {
       "description": "An industry name, alias or id, such as fintech. `applied` shows how it was read.",

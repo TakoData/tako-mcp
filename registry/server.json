@@ -157,7 +157,7 @@
     },
     {
       "name": "tako_company_enrich",
-      "description": "Match up to 25 known companies by website, LinkedIn page or name. Returns per-item `results` and one list card of matches.\n\nUse to look up companies you can name, such as a list of domains.\n\n`results` has one entry per item, in order: status (matched, no_match, failed), match_id, confidence (exact, high, ambiguous), matched_on, alternates, unresolved, failed. Card `description` previews 10 rows: name, status, estimated_revenue*, headcount, industry, funding_stage, total_raised, last_funding_date, investors, location, website, tako_url. `tako_contents` on its `url` returns every row: those fields except last_funding_date and investors, plus company_type, linkedin_followers*, linkedin_url, ticker, established, parent*, subsidiaries*, description, headcount_range, tags, metro, naics_codes, postcode, funding_round_count, funding_rounds, sic_codes, also_known_as, other_domains, street_address, twitter_url, facebook_url, sources. * is premium: null unless that call sets `premium: true`.",
+      "description": "Match up to 25 known companies by website, LinkedIn page or name. Returns per-item `results` and one list card of matches.\n\nUse to look up companies you can name, such as a list of domains.\n\n`results` has one entry per item, in order: status (matched, no_match, failed), match_id, confidence (exact, high, ambiguous), matched_on, alternates, unresolved, failed. Card `description` previews 10 rows: name, status, estimated_revenue*, headcount, industry, funding_stage, total_raised, last_funding_date, investors, location, website, headcount_range, tako_url. `tako_contents` on its `url` returns every row: those fields except last_funding_date and investors, plus company_type, linkedin_followers*, linkedin_url, ticker, established, parent*, subsidiaries*, description, tags, metro, naics_codes, postcode, funding_round_count, funding_rounds, sic_codes, also_known_as, other_domains, street_address, twitter_url, facebook_url, sources. * is premium: null unless that call sets `premium: true`.",
       "parameters": {
         "items": {
           "type": "array",
@@ -175,7 +175,7 @@
     },
     {
       "name": "tako_company_search",
-      "description": "Screen active companies by industry, place, size, founding year, funding stage and ownership. Returns `total`, the filters `applied`, `notes` and one list card.\n\nUse to list companies from filters, such as Series B SaaS companies in the US, or a person's employers.\n\nCard `description` previews 10 rows: name, status, estimated_revenue*, headcount, industry, funding_stage, total_raised, last_funding_date, investors, location, website, tako_url. `tako_contents` on its `url` returns every row: those fields except last_funding_date and investors, plus company_type, linkedin_followers*, linkedin_url, ticker, established, parent*, subsidiaries*, description, headcount_range, tags, metro, naics_codes, postcode, funding_round_count, funding_rounds, sic_codes, also_known_as, other_domains, street_address, twitter_url, facebook_url, sources. * is premium: null unless that call sets `premium: true`. `total` stops at 500, and `total_is_lower_bound` says when. It can't filter or sort by revenue.",
+      "description": "Screen active companies by industry, place, size, founding year, funding stage and ownership. Returns `total`, the filters `applied`, `notes` and one list card.\n\nUse to list companies from filters, such as Series B SaaS companies in the US, or a person's employers.\n\nCard `description` previews 10 rows: name, status, estimated_revenue*, headcount, industry, funding_stage, total_raised, last_funding_date, investors, location, website, headcount_range, tako_url. `tako_contents` on its `url` returns every row: those fields except last_funding_date and investors, plus company_type, linkedin_followers*, linkedin_url, ticker, established, parent*, subsidiaries*, description, tags, metro, naics_codes, postcode, funding_round_count, funding_rounds, sic_codes, also_known_as, other_domains, street_address, twitter_url, facebook_url, sources. * is premium: null unless that call sets `premium: true`. `total` stops at 500, and `total_is_lower_bound` says when. It can't filter or sort by revenue.",
       "parameters": {
         "country": {
           "type": "string",
@@ -191,11 +191,11 @@
         },
         "min_employees": {
           "type": "integer",
-          "description": "People Data Labs' employee estimate."
+          "description": "Fewest employees, by whole size band: 300 keeps 201-500."
         },
         "max_employees": {
           "type": "integer",
-          "description": "People Data Labs' employee estimate."
+          "description": "Most employees, by whole size band."
         },
         "industry": {
           "type": "string",
