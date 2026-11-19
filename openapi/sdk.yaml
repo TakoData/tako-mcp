@@ -1943,6 +1943,7 @@ components:
       - investors
       - location
       - website
+      - headcount_range
       - tako_url
       description: The fields in the `description` table of the company list card
         that `POST /v1/companies/search` and `POST /v1/companies/enrich` return. The
@@ -3389,14 +3390,24 @@ components:
             minimum: 0
           - type: 'null'
           title: Min Employees
-          description: People Data Labs' employee estimate.
+          description: Company size is matched on People Data Labs size bands (1-10,
+            11-50, 51-200, 201-500, 501-1000, 1001-5000, 5001-10000, 10001+). A company's
+            band is the one it states, raised to the band its People Data Labs profile
+            count falls in when the count is larger. A bound inside a band keeps the
+            whole band (300 or more keeps every 201-500 company), and a bound on a
+            band's edge doesn't (500 or more starts at 501-1000).
         max_employees:
           anyOf:
           - type: integer
             minimum: 0
           - type: 'null'
           title: Max Employees
-          description: People Data Labs' employee estimate.
+          description: Company size is matched on People Data Labs size bands (1-10,
+            11-50, 51-200, 201-500, 501-1000, 1001-5000, 5001-10000, 10001+). A company's
+            band is the one it states, raised to the band its People Data Labs profile
+            count falls in when the count is larger. A bound inside a band keeps the
+            whole band (300 or fewer keeps every 201-500 company), and a bound on
+            a band's edge doesn't (201 or fewer ends at 51-200).
         industry:
           anyOf:
           - type: string
