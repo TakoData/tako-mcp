@@ -23,11 +23,11 @@ import { renderListSearchMarkdown } from "./_render_markdown.js";
 import type { ToolModule } from "./types.js";
 
 const DESCRIPTION = [
-  "Screen employees by role, place and employer. Returns `total`, the filters `applied`, `notes`, `unresolved`, `failed` and one list card.",
+  "Screen employees by role, place and employer. Returns `total`, the filters `applied`, `notes`, `unresolved`, `failed` and a list card.",
   "",
-  "Use to list people from filters, such as heads of sales at Series B startups in Texas, or a company's people, with its id in `company_ids`.",
+  "Use to list people by filter, such as sales heads at Texas startups, or a company's staff via `company_ids`.",
   "",
-  `${enrichFieldSentences("tako_people_search")} \`total\` stops at 500, and \`total_is_lower_bound\` says when.`,
+  `${enrichFieldSentences("tako_people_search")} \`total\` stops at 500; \`total_is_lower_bound\` says when.`,
 ].join("\n");
 
 const requestShape = PersonSearchRequest.omit(CONTENTS_FIELDS).shape;

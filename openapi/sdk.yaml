@@ -1981,6 +1981,7 @@ components:
       enum:
       - name
       - title
+      - certification_match
       - department
       - seniority
       - employer
@@ -2001,6 +2002,7 @@ components:
       - occupation
       - job_summary
       - skills
+      - certifications
       - industry
       - metro
       - job_verified_on

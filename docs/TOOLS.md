@@ -2635,11 +2635,11 @@ NVIDIA Corporation operates as a data center scale AI infrastructure company. Th
 
 Description:
 
-Screen employees by role, place and employer. Returns `total`, the filters `applied`, `notes`, `unresolved`, `failed` and one list card.
+Screen employees by role, place and employer. Returns `total`, the filters `applied`, `notes`, `unresolved`, `failed` and a list card.
 
-Use to list people from filters, such as heads of sales at Series B startups in Texas, or a company's people, with its id in `company_ids`.
+Use to list people by filter, such as sales heads at Texas startups, or a company's staff via `company_ids`.
 
-Card `description` previews 10 rows: name, title, department, employer, schools, in_role_since, location, linkedin_url, work_email*, phone*, personal_email*, tako_url. `tako_contents` on its `url` returns every row: those fields except schools, plus seniority, description, education, experience, registry_seats, sub_role, business_area, occupation, job_summary, skills, industry, metro, job_verified_on, twitter_url, github_url, all_{emails*, personal_emails*, phone_numbers*}, employer_{industry, tako_industries, tags, size, funding_stage, founded, location, listing}, sources, employer_tako_url. * is premium: null unless that call sets `premium: true`. `total` stops at 500, and `total_is_lower_bound` says when.
+Card `description` previews 10 rows: name, title, department, employer, schools, in_role_since, location, linkedin_url, work_email*, phone*, personal_email*, tako_url. `tako_contents` on its `url` returns every row: those fields except schools, plus certification_match, seniority, description, education, experience, registry_seats, sub_role, business_area, occupation, job_summary, skills, certifications, industry, metro, job_verified_on, twitter_url, github_url, all_{emails*, personal_emails*, phone_numbers*}, employer_{industry, tako_industries, tags, size, funding_stage, founded, location, listing}, sources, employer_tako_url. * is premium: null unless that call sets `premium: true`. `total` stops at 500; `total_is_lower_bound` says when.
 
 Parameters:
 
@@ -2994,11 +2994,11 @@ Annotations:
 
 Description:
 
-Match up to 25 known people by email, phone, LinkedIn or name. Returns per-item `results` and one list card of matches.
+Match up to 25 known people by email, phone, LinkedIn or name. Returns per-item `results` and a match card.
 
-Use to look up known people, such as contacts.
+Use to look up contacts.
 
-`results` has one entry per item, in order: status (matched, no_match, failed), match_id, confidence (exact, high, ambiguous), matched_on, alternates, unresolved, failed. Card `description` previews 10 rows: name, title, department, employer, schools, in_role_since, location, linkedin_url, work_email*, phone*, personal_email*, tako_url. `tako_contents` on its `url` returns every row: those fields except schools, plus seniority, description, education, experience, registry_seats, sub_role, business_area, occupation, job_summary, skills, industry, metro, job_verified_on, twitter_url, github_url, all_{emails*, personal_emails*, phone_numbers*}, employer_{industry, tako_industries, tags, size, funding_stage, founded, location, listing}, sources, employer_tako_url. * is premium: null unless that call sets `premium: true`.
+`results` has one entry per item, in order: status (matched, no_match, failed), match_id, confidence (exact, high, ambiguous), matched_on, alternates, unresolved, failed. Card `description` previews 10 rows: name, title, department, employer, schools, in_role_since, location, linkedin_url, work_email*, phone*, personal_email*, tako_url. `tako_contents` on its `url` returns every row: those fields except schools, plus certification_match, seniority, description, education, experience, registry_seats, sub_role, business_area, occupation, job_summary, skills, certifications, industry, metro, job_verified_on, twitter_url, github_url, all_{emails*, personal_emails*, phone_numbers*}, employer_{industry, tako_industries, tags, size, funding_stage, founded, location, listing}, sources, employer_tako_url. * is premium: null unless that call sets `premium: true`.
 
 Parameters:
 
