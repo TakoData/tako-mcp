@@ -43,6 +43,8 @@ export interface ListCardFields<Key extends string = string> {
   readonly cardOnly: ReadonlyArray<Key>;
   /** Columns withheld until `tako_contents` is called with `premium: true`. */
   readonly premium: ReadonlyArray<Key>;
+  /** Row columns `tako_contents` returns only on some cards, so a card without them still matches the spec. */
+  readonly conditional: ReadonlyArray<Key>;
 }
 
 /** The header of the table in the card's `description`, one label per preview field. */
@@ -68,6 +70,7 @@ export const COMPANY_LIST_FIELDS: ListCardFields<CompanyListField> = {
   preview: CompanyListPreviewField.options.map((key) => [key, COMPANY_PREVIEW_LABELS[key]] as const),
   cardOnly: CompanyListCardOnlyField.options,
   premium: CompanyListPremiumField.options,
+  conditional: [],
 };
 
 const PERSON_PREVIEW_LABELS: Record<PersonListPreviewField, string> = {
@@ -91,6 +94,9 @@ export const PERSON_LIST_FIELDS: ListCardFields<PersonListField> = {
   preview: PersonListPreviewField.options.map((key) => [key, PERSON_PREVIEW_LABELS[key]] as const),
   cardOnly: PersonListCardOnlyField.options,
   premium: PersonListPremiumField.options,
+  // The API exports certification_match only on a list screened for a
+  // certification, which a smoke search for a role and a place never is.
+  conditional: ["certification_match"],
 };
 
 /** The header of the markdown table in the card's `description`, in order. */
@@ -102,6 +108,16 @@ export function previewLabels(fields: ListCardFields): string[] {
 export function rowColumns(fields: ListCardFields): string[] {
   const cardOnly = new Set<string>(fields.cardOnly);
   return fields.columns.filter((key) => !cardOnly.has(key));
+}
+
+/**
+ * The row columns a card's `tako_contents` rows should carry, given the ones
+ * they did: `rowColumns`, minus each conditional column the rows left out.
+ */
+export function expectedRowColumns(fields: ListCardFields, returned: readonly string[]): string[] {
+  const conditional = new Set<string>(fields.conditional);
+  const present = new Set(returned);
+  return rowColumns(fields).filter((key) => !conditional.has(key) || present.has(key));
 }
 
 /** How a premium field is marked in a description's field list. */
