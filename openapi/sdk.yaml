@@ -3415,10 +3415,12 @@ components:
           - type: string
           - type: 'null'
           title: Industry
-          description: An industry's name or id, such as 'fintech' or 'aerospace_and_defense'.
-            applied names the industries the screen ran on. An industry Tako doesn't
-            recognize is a 400 unknown_industry whose suggestions are the closest
-            industry ids.
+          description: An industry's name or id, such as 'fintech' or 'aerospace_and_defense',
+            or the industry in your own words, such as 'healthcare technology'. Separate
+            several with commas. A phrase that names no Tako industry screens the
+            industries closest to it in meaning, and the response's industry field
+            names them. A phrase that nothing is close to is a 400 unknown_industry
+            whose suggestions are the closest industry ids.
         funding_stages:
           anyOf:
           - items:
@@ -3537,6 +3539,11 @@ components:
           type: array
           title: Applied
           description: The filters the screen ran, with their resolved values.
+        industry:
+          anyOf:
+          - $ref: '#/components/schemas/IndustryMatch'
+          - type: 'null'
+          description: What the industry filter resolved to.
         notes:
           items:
             type: string
@@ -3848,9 +3855,9 @@ components:
           description: 'The card''s description: what the card shows and what its
             data says. It describes the whole card, not only the rows this request
             delivered, so a figure it states may fall outside them. Null for a web
-            URL. For a card that search returned as a placeholder, it describes the
-            data the request unlocked, and it''s null when the request fetched no
-            data, such as a `quote_only` request.'
+            URL. For a card that search returned as a placeholder, or a card Tako
+            hasn''t loaded yet, it describes the data the request fetched, and it''s
+            null when the request fetched no data, such as a `quote_only` request.'
         offset:
           anyOf:
           - type: integer
@@ -5075,6 +5082,64 @@ components:
           default: heartbeat
       type: object
       title: HeartbeatEvent
+    IndustryFacet:
+      properties:
+        id:
+          type: string
+          title: Id
+        name:
+          type: string
+          title: Name
+      type: object
+      required:
+      - id
+      - name
+      title: IndustryFacet
+    IndustryMatch:
+      properties:
+        requested:
+          type: string
+          title: Requested
+          description: The industry as the request gave it.
+        read_by_meaning:
+          type: boolean
+          title: Read By Meaning
+          description: 'True when the phrase, or a part of a comma-separated list,
+            names no Tako industry, so the screen ran the industries closest to it
+            in meaning. guessed names them. Check them before you rely on the list:
+            a reading by meaning can pick the wrong ones.'
+        industries:
+          items:
+            $ref: '#/components/schemas/IndustryFacet'
+          type: array
+          title: Industries
+          description: 'Every industry the screen ran, with the industries under them:
+            the ones the phrase names exactly and the guessed ones.'
+        guessed:
+          items:
+            $ref: '#/components/schemas/IndustryFacet'
+          type: array
+          title: Guessed
+          description: The industries the screen picked by meaning, for the parts
+            of the phrase that name no Tako industry. Empty when every part names
+            one.
+          default: []
+        close_not_screened:
+          items:
+            $ref: '#/components/schemas/IndustryFacet'
+          type: array
+          title: Close Not Screened
+          description: Industries close in meaning that the screen left out. To screen
+            exact industries, pass their ids as the industry filter, several separated
+            by commas.
+          default: []
+      type: object
+      required:
+      - requested
+      - read_by_meaning
+      - industries
+      title: IndustryMatch
+      description: What an industry filter resolved to.
     KnowledgeCardMethodology:
       properties:
         methodology_name:
@@ -5451,8 +5516,8 @@ components:
           - type: string
           - type: 'null'
           title: Company Industry
-          description: The employer's industry, by name or id, as companies/search
-            takes it.
+          description: 'The employer''s industry, as companies/search takes it: a
+            name, an id, or your own words, several separated by commas.'
         company_min_employees:
           anyOf:
           - type: integer
@@ -5579,6 +5644,11 @@ components:
           description: 'Inputs whose lookup failed or timed out, as field=value: retry
             them. Not a miss.'
           default: []
+        company_industry:
+          anyOf:
+          - $ref: '#/components/schemas/IndustryMatch'
+          - type: 'null'
+          description: What the company_industry filter resolved to.
         notes:
           items:
             type: string
