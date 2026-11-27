@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   COMPANY_LIST_FIELDS,
   describeListFields,
+  expectedRowColumns,
   joinFieldKeys,
   type ListCardFields,
   PERSON_LIST_FIELDS,
@@ -19,11 +20,26 @@ const CARD: ListCardFields = {
   preview: [["name", "Name"], ["price", "Price"], ["badge", "Badge"], ["tako_url", "Tako link"]],
   cardOnly: ["badge"],
   premium: ["price", "owner"],
+  conditional: ["notes"],
 };
 
 describe("list card fields", () => {
   it("names the row columns tako_contents returns, in order, without the card-only ones", () => {
     expect(rowColumns(CARD)).toEqual(["name", "price", "owner", "notes", "tako_url"]);
+  });
+
+  it("expects a conditional column only when the rows carry it", () => {
+    expect(expectedRowColumns(CARD, ["name", "price", "owner", "tako_url"])).toEqual([
+      "name",
+      "price",
+      "owner",
+      "tako_url",
+    ]);
+    expect(expectedRowColumns(CARD, ["name", "price", "owner", "notes", "tako_url"])).toEqual(rowColumns(CARD));
+  });
+
+  it("still expects every column that isn't conditional", () => {
+    expect(expectedRowColumns(CARD, ["name", "tako_url"])).toEqual(["name", "price", "owner", "tako_url"]);
   });
 
   it("names the preview table's header, in order", () => {

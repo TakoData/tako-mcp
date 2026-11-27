@@ -109,8 +109,8 @@ import {
   COMPANY_LIST_FIELDS,
   type ListCardFields,
   PERSON_LIST_FIELDS,
+  expectedRowColumns,
   previewLabels,
-  rowColumns,
 } from "../src/tools/_enrich_fields.js";
 import { TOOL_REGISTRY } from "../src/tools/_registry.js";
 import { listDiff } from "./list-diff.js";
@@ -218,7 +218,7 @@ async function assertEnrichFieldsMatch(
     contents.structuredContent as { results?: Array<{ rows?: { columns?: string[] } }> } | undefined
   )?.results?.[0]?.rows?.columns;
   assert(Array.isArray(columns), `tako_contents returned no columns for the ${tool} card`);
-  const expectedColumns = rowColumns(fields);
+  const expectedColumns = expectedRowColumns(fields, columns);
   assert(
     columns.join("|") === expectedColumns.join("|"),
     `${tool} row columns differ from the spec's ${fields.record} field and card-only enums: ${listDiff(expectedColumns, columns)}. ${SPEC_DRIFT_FIX}`,
